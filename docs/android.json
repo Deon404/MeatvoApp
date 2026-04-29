@@ -1,0 +1,878 @@
+{
+  "repository": "Local Folder",
+  "analyzedAt": "2026-04-29T19:12:36.630Z",
+  "codeflowVersion": "1.0",
+  "summary": {
+    "healthScore": 80,
+    "healthGrade": "B",
+    "totalFiles": 52,
+    "totalFunctions": 5,
+    "totalConnections": 0,
+    "linesOfCode": 2506,
+    "unusedFunctions": 1,
+    "securityIssues": 0,
+    "patterns": 1,
+    "duplicates": 0,
+    "layerViolations": 0,
+    "highSecurityIssues": 0
+  },
+  "files": [
+    {
+      "path": ".gradle/8.10.2/checksums/checksums.lock",
+      "name": "checksums.lock",
+      "folder": ".gradle/8.10.2/checksums",
+      "layer": "utils",
+      "lines": 1,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.10.2/dependencies-accessors/gc.properties",
+      "name": "gc.properties",
+      "folder": ".gradle/8.10.2/dependencies-accessors",
+      "layer": "utils",
+      "lines": 0,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.10.2/executionHistory/executionHistory.lock",
+      "name": "executionHistory.lock",
+      "folder": ".gradle/8.10.2/executionHistory",
+      "layer": "utils",
+      "lines": 1,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.10.2/fileHashes/fileHashes.lock",
+      "name": "fileHashes.lock",
+      "folder": ".gradle/8.10.2/fileHashes",
+      "layer": "utils",
+      "lines": 2,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.10.2/gc.properties",
+      "name": "gc.properties",
+      "folder": ".gradle/8.10.2",
+      "layer": "utils",
+      "lines": 0,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.14.3/checksums/checksums.lock",
+      "name": "checksums.lock",
+      "folder": ".gradle/8.14.3/checksums",
+      "layer": "utils",
+      "lines": 1,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.14.3/executionHistory/executionHistory.lock",
+      "name": "executionHistory.lock",
+      "folder": ".gradle/8.14.3/executionHistory",
+      "layer": "utils",
+      "lines": 1,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.14.3/fileHashes/fileHashes.lock",
+      "name": "fileHashes.lock",
+      "folder": ".gradle/8.14.3/fileHashes",
+      "layer": "utils",
+      "lines": 2,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/8.14.3/gc.properties",
+      "name": "gc.properties",
+      "folder": ".gradle/8.14.3",
+      "layer": "utils",
+      "lines": 0,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/buildOutputCleanup/buildOutputCleanup.lock",
+      "name": "buildOutputCleanup.lock",
+      "folder": ".gradle/buildOutputCleanup",
+      "layer": "utils",
+      "lines": 1,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/buildOutputCleanup/cache.properties",
+      "name": "cache.properties",
+      "folder": ".gradle/buildOutputCleanup",
+      "layer": "utils",
+      "lines": 3,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/vcs-1/gc.properties",
+      "name": "gc.properties",
+      "folder": ".gradle/vcs-1",
+      "layer": "utils",
+      "lines": 0,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gradle/config.properties",
+      "name": "config.properties",
+      "folder": ".gradle",
+      "layer": "config",
+      "lines": 3,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/caches/deviceStreaming.xml",
+      "name": "deviceStreaming.xml",
+      "folder": ".idea/caches",
+      "layer": "utils",
+      "lines": 1462,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/compiler.xml",
+      "name": "compiler.xml",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 6,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/.gitignore",
+      "name": ".gitignore",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 4,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/deploymentTargetSelector.xml",
+      "name": "deploymentTargetSelector.xml",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 10,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/migrations.xml",
+      "name": "migrations.xml",
+      "folder": ".idea",
+      "layer": "data",
+      "lines": 10,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/gradle.xml",
+      "name": "gradle.xml",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 26,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/misc.xml",
+      "name": "misc.xml",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 10,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/runConfigurations.xml",
+      "name": "runConfigurations.xml",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 17,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".idea/workspace.xml",
+      "name": "workspace.xml",
+      "folder": ".idea",
+      "layer": "utils",
+      "lines": 126,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java",
+      "name": "ExampleInstrumentedTest.java",
+      "folder": "app/src/androidTest/java/com/getcapacitor/myapp",
+      "layer": "utils",
+      "lines": 27,
+      "churn": 0,
+      "isCode": true,
+      "functions": [
+        {
+          "name": "useAppContext",
+          "line": 20,
+          "internalCalls": 1,
+          "externalCalls": 0,
+          "totalCalls": 1,
+          "isUnused": false,
+          "isExported": false,
+          "isClassMethod": false,
+          "isTopLevel": false,
+          "type": "method",
+          "callers": [],
+          "code": "    public void useAppContext() throws Exception {\n        // Context of the app under test.\n        Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();\n\n        assertEquals(\"com.getcapacitor.app\", appContext.getPackageName());\n    }\n}\n"
+        }
+      ],
+      "functionCount": 1
+    },
+    {
+      "path": "app/src/main/assets/capacitor.plugins.json",
+      "name": "capacitor.plugins.json",
+      "folder": "app/src/main/assets",
+      "layer": "utils",
+      "lines": 23,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/assets/capacitor.config.json",
+      "name": "capacitor.config.json",
+      "folder": "app/src/main/assets",
+      "layer": "utils",
+      "lines": 45,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/java/com/meatvo/app/MainActivity.java",
+      "name": "MainActivity.java",
+      "folder": "app/src/main/java/com/meatvo/app",
+      "layer": "utils",
+      "lines": 6,
+      "churn": 0,
+      "isCode": true,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/drawable/ic_launcher_background.xml",
+      "name": "ic_launcher_background.xml",
+      "folder": "app/src/main/res/drawable",
+      "layer": "utils",
+      "lines": 171,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/drawable-v24/ic_launcher_foreground.xml",
+      "name": "ic_launcher_foreground.xml",
+      "folder": "app/src/main/res/drawable-v24",
+      "layer": "utils",
+      "lines": 35,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/layout/activity_main.xml",
+      "name": "activity_main.xml",
+      "folder": "app/src/main/res/layout",
+      "layer": "utils",
+      "lines": 13,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml",
+      "name": "ic_launcher.xml",
+      "folder": "app/src/main/res/mipmap-anydpi-v26",
+      "layer": "utils",
+      "lines": 5,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml",
+      "name": "ic_launcher_round.xml",
+      "folder": "app/src/main/res/mipmap-anydpi-v26",
+      "layer": "utils",
+      "lines": 5,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/values/ic_launcher_background.xml",
+      "name": "ic_launcher_background.xml",
+      "folder": "app/src/main/res/values",
+      "layer": "utils",
+      "lines": 4,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/values/strings.xml",
+      "name": "strings.xml",
+      "folder": "app/src/main/res/values",
+      "layer": "utils",
+      "lines": 8,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/values/styles.xml",
+      "name": "styles.xml",
+      "folder": "app/src/main/res/values",
+      "layer": "utils",
+      "lines": 22,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/xml/config.xml",
+      "name": "config.xml",
+      "folder": "app/src/main/res/xml",
+      "layer": "config",
+      "lines": 6,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/res/xml/file_paths.xml",
+      "name": "file_paths.xml",
+      "folder": "app/src/main/res/xml",
+      "layer": "utils",
+      "lines": 5,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/main/AndroidManifest.xml",
+      "name": "AndroidManifest.xml",
+      "folder": "app/src/main",
+      "layer": "utils",
+      "lines": 49,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java",
+      "name": "ExampleUnitTest.java",
+      "folder": "app/src/test/java/com/getcapacitor/myapp",
+      "layer": "test",
+      "lines": 19,
+      "churn": 0,
+      "isCode": true,
+      "functions": [
+        {
+          "name": "addition_isCorrect",
+          "line": 15,
+          "internalCalls": 1,
+          "externalCalls": 0,
+          "totalCalls": 1,
+          "isUnused": false,
+          "isExported": false,
+          "isClassMethod": false,
+          "isTopLevel": false,
+          "type": "method",
+          "callers": [],
+          "code": "    public void addition_isCorrect() throws Exception {\n        assertEquals(4, 2 + 2);\n    }\n}\n"
+        }
+      ],
+      "functionCount": 1
+    },
+    {
+      "path": "app/.gitignore",
+      "name": ".gitignore",
+      "folder": "app",
+      "layer": "utils",
+      "lines": 3,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "app/build.gradle",
+      "name": "build.gradle",
+      "folder": "app",
+      "layer": "utils",
+      "lines": 64,
+      "churn": 0,
+      "isCode": true,
+      "functions": [
+        {
+          "name": "servicesJSON",
+          "line": 57,
+          "internalCalls": 0,
+          "externalCalls": 0,
+          "totalCalls": 0,
+          "isUnused": true,
+          "isExported": false,
+          "isClassMethod": false,
+          "isTopLevel": true,
+          "type": "function",
+          "callers": [],
+          "code": "    def servicesJSON = file('google-services.json')\n    if (servicesJSON.text) {\n        apply plugin: 'com.google.gms.google-services'\n    }\n} catch(Exception e) {\n    logger.info(\"google-services.json not found, google-services plugin not applied. Push Notifications won't work\")\n}\n"
+        }
+      ],
+      "functionCount": 1
+    },
+    {
+      "path": "app/capacitor.build.gradle",
+      "name": "capacitor.build.gradle",
+      "folder": "app",
+      "layer": "utils",
+      "lines": 24,
+      "churn": 0,
+      "isCode": true,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "capacitor-cordova-android-plugins/src/main/AndroidManifest.xml",
+      "name": "AndroidManifest.xml",
+      "folder": "capacitor-cordova-android-plugins/src/main",
+      "layer": "utils",
+      "lines": 8,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "capacitor-cordova-android-plugins/build.gradle",
+      "name": "build.gradle",
+      "folder": "capacitor-cordova-android-plugins",
+      "layer": "utils",
+      "lines": 59,
+      "churn": 0,
+      "isCode": true,
+      "functions": [
+        {
+          "name": "func",
+          "line": 57,
+          "internalCalls": 1,
+          "externalCalls": 0,
+          "totalCalls": 1,
+          "isUnused": false,
+          "isExported": false,
+          "isClassMethod": false,
+          "isTopLevel": true,
+          "type": "function",
+          "callers": [],
+          "code": "for (def func : cdvPluginPostBuildExtras) {\n    func()\n}"
+        }
+      ],
+      "functionCount": 1
+    },
+    {
+      "path": "capacitor-cordova-android-plugins/cordova.variables.gradle",
+      "name": "cordova.variables.gradle",
+      "folder": "capacitor-cordova-android-plugins",
+      "layer": "utils",
+      "lines": 7,
+      "churn": 0,
+      "isCode": true,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "name": "gradle-wrapper.properties",
+      "folder": "gradle/wrapper",
+      "layer": "utils",
+      "lines": 8,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": ".gitignore",
+      "name": ".gitignore",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 102,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "build.gradle",
+      "name": "build.gradle",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 30,
+      "churn": 0,
+      "isCode": true,
+      "functions": [
+        {
+          "name": "clean",
+          "line": 27,
+          "internalCalls": 1,
+          "externalCalls": 0,
+          "totalCalls": 1,
+          "isUnused": false,
+          "isExported": false,
+          "isClassMethod": false,
+          "isTopLevel": true,
+          "type": "function",
+          "callers": [],
+          "code": "task clean(type: Delete) {\n    delete rootProject.buildDir\n}\n"
+        }
+      ],
+      "functionCount": 1
+    },
+    {
+      "path": "capacitor.settings.gradle",
+      "name": "capacitor.settings.gradle",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 19,
+      "churn": 0,
+      "isCode": true,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "gradle.properties",
+      "name": "gradle.properties",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 23,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "settings.gradle",
+      "name": "settings.gradle",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 5,
+      "churn": 0,
+      "isCode": true,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "local.properties",
+      "name": "local.properties",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 9,
+      "churn": 0,
+      "isCode": false,
+      "functions": [],
+      "functionCount": 0
+    },
+    {
+      "path": "variables.gradle",
+      "name": "variables.gradle",
+      "folder": "root",
+      "layer": "utils",
+      "lines": 16,
+      "churn": 0,
+      "isCode": true,
+      "functions": [],
+      "functionCount": 0
+    }
+  ],
+  "unusedFunctions": [
+    {
+      "name": "servicesJSON",
+      "file": "app/build.gradle",
+      "folder": "app",
+      "line": 57,
+      "codeLines": 8,
+      "code": "    def servicesJSON = file('google-services.json')\n    if (servicesJSON.text) {\n        apply plugin: 'com.google.gms.google-services'\n    }\n} catch(Exception e) {\n    logger.info(\"google-services.json not found, google-services plugin not applied. Push Notifications won't work\")\n}\n",
+      "extension": "gradle"
+    }
+  ],
+  "dependencies": [],
+  "architectureIssues": [
+    {
+      "type": "warning",
+      "title": "1 Unused Functions",
+      "description": "Functions not called from other files",
+      "affectedFiles": [
+        "app/build.gradle"
+      ],
+      "affectedItems": [
+        {
+          "name": "servicesJSON",
+          "file": "app/build.gradle",
+          "line": 57,
+          "code": "    def servicesJSON = file('google-services.json')\n    if (servicesJSON.text) {\n        apply plugin: 'com.google.gms.google-services'\n    }\n} catch(Exception e) {\n    logger.info(\"google-services.json not found, google-services plugin not applied. Push Notifications won't work\")\n}\n"
+        }
+      ]
+    }
+  ],
+  "patterns": [
+    {
+      "name": "Context Provider",
+      "description": "React Context for global state. Alternative to prop drilling.",
+      "isAntiPattern": false,
+      "severity": "info",
+      "icon": "globe",
+      "files": [
+        "app/src/main/AndroidManifest.xml"
+      ],
+      "fileDetails": [
+        {
+          "name": "AndroidManifest.xml",
+          "path": "app/src/main/AndroidManifest.xml"
+        }
+      ],
+      "metrics": {
+        "contexts": 1
+      }
+    }
+  ],
+  "securityIssues": [],
+  "duplicates": [],
+  "layerViolations": [],
+  "suggestions": [
+    {
+      "priority": "medium",
+      "icon": "beaker",
+      "title": "Add Test Coverage",
+      "desc": "Only 0 test files found (0%). Consider adding more tests.",
+      "action": "Focus on testing critical paths and high-complexity files",
+      "impact": "Prevents regressions and improves confidence"
+    }
+  ],
+  "languageBreakdown": [
+    {
+      "ext": "xml",
+      "lines": 1998,
+      "pct": 80
+    },
+    {
+      "ext": "gradle",
+      "lines": 224,
+      "pct": 9
+    },
+    {
+      "ext": "gitignore",
+      "lines": 109,
+      "pct": 4
+    },
+    {
+      "ext": "json",
+      "lines": 68,
+      "pct": 3
+    },
+    {
+      "ext": "java",
+      "lines": 52,
+      "pct": 2
+    },
+    {
+      "ext": "properties",
+      "lines": 46,
+      "pct": 2
+    },
+    {
+      "ext": "lock",
+      "lines": 9,
+      "pct": 0
+    }
+  ],
+  "folderStructure": [
+    ".gradle",
+    ".gradle/8.10.2",
+    ".gradle/8.10.2/checksums",
+    ".gradle/8.10.2/dependencies-accessors",
+    ".gradle/8.10.2/executionHistory",
+    ".gradle/8.10.2/fileHashes",
+    ".gradle/8.14.3",
+    ".gradle/8.14.3/checksums",
+    ".gradle/8.14.3/executionHistory",
+    ".gradle/8.14.3/fileHashes",
+    ".gradle/buildOutputCleanup",
+    ".gradle/vcs-1",
+    ".idea",
+    ".idea/caches",
+    "app",
+    "app/src/androidTest/java/com/getcapacitor/myapp",
+    "app/src/main",
+    "app/src/main/assets",
+    "app/src/main/java/com/meatvo/app",
+    "app/src/main/res/drawable",
+    "app/src/main/res/drawable-v24",
+    "app/src/main/res/layout",
+    "app/src/main/res/mipmap-anydpi-v26",
+    "app/src/main/res/values",
+    "app/src/main/res/xml",
+    "app/src/test/java/com/getcapacitor/myapp",
+    "capacitor-cordova-android-plugins",
+    "capacitor-cordova-android-plugins/src/main",
+    "gradle/wrapper",
+    "root"
+  ],
+  "functionStatistics": [
+    {
+      "name": "useAppContext",
+      "file": "app/src/androidTest/java/com/getcapacitor/myapp/ExampleInstrumentedTest.java",
+      "folder": "app/src/androidTest/java/com/getcapacitor/myapp",
+      "line": 20,
+      "internalCalls": 1,
+      "externalCalls": 0,
+      "totalCalls": 1,
+      "isExported": false,
+      "isClassMethod": false,
+      "isTopLevel": false,
+      "type": "method",
+      "callers": [],
+      "code": "    public void useAppContext() throws Exception {\n        // Context of the app under test.\n        Context appContext = InstrumentationRegistry.getInstrumentation().getTargetContext();\n\n        assertEquals(\"com.getcapacitor.app\", appContext.getPackageName());\n    }\n}\n"
+    },
+    {
+      "name": "addition_isCorrect",
+      "file": "app/src/test/java/com/getcapacitor/myapp/ExampleUnitTest.java",
+      "folder": "app/src/test/java/com/getcapacitor/myapp",
+      "line": 15,
+      "internalCalls": 1,
+      "externalCalls": 0,
+      "totalCalls": 1,
+      "isExported": false,
+      "isClassMethod": false,
+      "isTopLevel": false,
+      "type": "method",
+      "callers": [],
+      "code": "    public void addition_isCorrect() throws Exception {\n        assertEquals(4, 2 + 2);\n    }\n}\n"
+    },
+    {
+      "name": "servicesJSON",
+      "file": "app/build.gradle",
+      "folder": "app",
+      "line": 57,
+      "internalCalls": 0,
+      "externalCalls": 0,
+      "totalCalls": 0,
+      "isExported": false,
+      "isClassMethod": false,
+      "isTopLevel": true,
+      "type": "function",
+      "callers": [],
+      "code": "    def servicesJSON = file('google-services.json')\n    if (servicesJSON.text) {\n        apply plugin: 'com.google.gms.google-services'\n    }\n} catch(Exception e) {\n    logger.info(\"google-services.json not found, google-services plugin not applied. Push Notifications won't work\")\n}\n"
+    },
+    {
+      "name": "func",
+      "file": "capacitor-cordova-android-plugins/build.gradle",
+      "folder": "capacitor-cordova-android-plugins",
+      "line": 57,
+      "internalCalls": 1,
+      "externalCalls": 0,
+      "totalCalls": 1,
+      "isExported": false,
+      "isClassMethod": false,
+      "isTopLevel": true,
+      "type": "function",
+      "callers": [],
+      "code": "for (def func : cdvPluginPostBuildExtras) {\n    func()\n}"
+    },
+    {
+      "name": "clean",
+      "file": "build.gradle",
+      "folder": "root",
+      "line": 27,
+      "internalCalls": 1,
+      "externalCalls": 0,
+      "totalCalls": 1,
+      "isExported": false,
+      "isClassMethod": false,
+      "isTopLevel": true,
+      "type": "function",
+      "callers": [],
+      "code": "task clean(type: Delete) {\n    delete rootProject.buildDir\n}\n"
+    }
+  ]
+}

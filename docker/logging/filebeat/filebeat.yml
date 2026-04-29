@@ -1,0 +1,48 @@
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/meatvo/*.log
+    - /var/log/meatvo/*/*.log
+  fields:
+    environment: production
+  fields_under_root: true
+  multiline.pattern: '^\d{4}-\d{2}-\d{2}'
+  multiline.negate: true
+  multiline.match: after
+
+- type: container
+  enabled: true
+  paths:
+    - '/var/lib/docker/containers/*/*.log'
+  processors:
+    - add_docker_metadata:
+        host: "unix:///var/run/docker.sock"
+
+# Add metadata to all events
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_kubernetes_metadata: ~
+
+# Output to Logstash
+output.logstash:
+  hosts: ["logstash:5044"]
+
+# Output to Elasticsearch (backup)
+# output.elasticsearch:
+#   hosts: ["elasticsearch:9200"]
+#   index: "meatvo-logs-%{+yyyy.MM.dd}"
+
+# Logging configuration
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat
+  keepfiles: 7
+  permissions: 0644
+
+# Monitoring
+monitoring.enabled: false

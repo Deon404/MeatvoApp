@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "786404"
+      POSTGRES_DB: meatvo
+    ports:
+      - "5432:5432"
+    volumes:
+      - meatvo_pgdata:/var/lib/postgresql/data
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meatvo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - meatvo_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    environment:
+      PORT: "5000"
+      NODE_ENV: "development"
+      LOG_LEVEL: "debug"
+      TRUST_PROXY: "true"
+
+      DATABASE_URL: postgres://postgres:786404@postgres:5432/meatvo
+      REDIS_URL: redis://redis:6379
+      DEFAULT_COUNTRY_CODE: "+91"
+
+      # Auth / OTP (dev-safe defaults; override in real environments)
+      JWT_ACCESS_SECRET: "dev_access_secret_change_me"
+      JWT_REFRESH_SECRET: "dev_refresh_secret_change_me"
+      OTP_HASH_SECRET: "dev_otp_hash_secret_change_me"
+      SMS_PROVIDER: "console"
+
+      # Dev-only auth bypass for Admin/Delivery HTML panels
+      DEV_AUTH_BYPASS_ENABLED: "true"
+      DEV_AUTH_BYPASS_SECRET: "dev_login_secret"
+
+      # Allow opening the static HTML apps directly (file://) during local dev.
+      CORS_ALLOW_NULL_ORIGIN: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:5000"
+
+volumes:
+  meatvo_pgdata:
+  meatvo_redis:

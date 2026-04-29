@@ -1,0 +1,333 @@
+version: '3.8'
+
+services:
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: meatvo-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/logs:/var/log/nginx
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+
+  # Backend API
+  api:
+    image: ghcr.io/meatvo/meatvo/backend:latest
+    container_name: meatvo-api
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      LOG_LEVEL: info
+      TRUST_PROXY: true
+      
+      # Database (from secrets)
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      
+      # Authentication (from secrets)
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      OTP_HASH_SECRET: ${OTP_HASH_SECRET}
+      
+      # External Services (from secrets)
+      MSG91_API_KEY: ${MSG91_API_KEY}
+      PHONEPE_MERCHANT_ID: ${PHONEPE_MERCHANT_ID}
+      PHONEPE_SALT_KEY: ${PHONEPE_SALT_KEY}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      
+      # Firebase (from secrets)
+      FIREBASE_API_KEY: ${FIREBASE_API_KEY}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID}
+      FIREBASE_MESSAGING_SENDER_ID: ${FIREBASE_MESSAGING_SENDER_ID}
+      FIREBASE_APP_ID: ${FIREBASE_APP_ID}
+      FCM_SERVER_KEY: ${FCM_SERVER_KEY}
+      
+      # Monitoring
+      SENTRY_DSN: ${SENTRY_DSN}
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      
+      # CORS
+      CORS_ORIGINS: https://meatvo.com,https://api.meatvo.com,https://admin.meatvo.com
+      CORS_ALLOW_NULL_ORIGIN: false
+      
+      # Security
+      MAX_LOGIN_ATTEMPTS: 5
+      LOCKOUT_DURATION: 900000
+      RATE_LIMIT_WINDOW_MS: 900000
+      RATE_LIMIT_MAX_REQUESTS: 100
+      AUTH_RATE_LIMIT_MAX_REQUESTS: 5
+      
+      # Application
+      DEFAULT_COUNTRY_CODE: +91
+      MAX_FILE_SIZE: 5242880
+      ALLOWED_FILE_TYPES: image/jpeg,image/png,image/webp
+      
+      # Notification
+      NOTIFICATION_COOLDOWN_MS: 30000
+      MAX_NOTIFICATIONS_PER_MINUTE: 20
+    volumes:
+      - ./backend/logs:/var/log/meatvo
+      - ./backend/uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend
+  frontend:
+    image: ghcr.io/meatvo/meatvo/frontend:latest
+    container_name: meatvo-frontend
+    volumes:
+      - ./frontend/logs:/var/log/nginx
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: meatvo-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-meatvo}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./scripts/backup:/backup
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-meatvo}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: meatvo-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Elasticsearch
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: meatvo-elasticsearch
+    environment:
+      - node.name=meatvo-elasticsearch
+      - cluster.name=meatvo-logs
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Logstash
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: meatvo-logstash
+    volumes:
+      - ./docker/logging/logstash/config:/usr/share/logstash/config:ro
+      - ./docker/logging/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./backend/logs:/var/log/meatvo:ro
+    environment:
+      LS_JAVA_OPTS: "-Xmx512m -Xms512m"
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # Kibana
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: meatvo-kibana
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: '["http://elasticsearch:9200"]'
+      SERVER_NAME: kibana.meatvo.com
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: meatvo-prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: meatvo-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+  # Node Exporter
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: meatvo-node-exporter
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+
+  # Certbot for SSL certificates
+  certbot:
+    image: certbot/certbot:latest
+    container_name: meatvo-certbot
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    command: >
+      sh -c "while :; do
+        certbot renew --webroot --webroot-path=/var/www/certbot --quiet;
+        sleep 12h;
+      done"
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+
+  # Backup Service
+  backup:
+    image: postgres:16-alpine
+    container_name: meatvo-backup
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./scripts/backup:/backup:ro
+      - backup_data:/backups
+    command: >
+      sh -c "while :; do
+        /backup/postgres-backup.sh production;
+        sleep 86400;
+      done"
+    restart: unless-stopped
+    networks:
+      - meatvo-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  backup_data:
+    driver: local
+  certbot_certs:
+    driver: local
+  certbot_www:
+    driver: local
+
+networks:
+  meatvo-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

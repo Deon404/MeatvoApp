@@ -1,0 +1,257 @@
+groups:
+  - name: meatvo.rules
+    rules:
+      # API Health Alerts
+      - alert: APIDown
+        expr: up{job="meatvo-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Meatvo API is down"
+          description: "Meatvo API has been down for more than 1 minute."
+
+      - alert: APIHighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API error rate"
+          description: "API error rate is {{ $value | humanizePercentage }} for the last 5 minutes."
+
+      - alert: APIHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "95th percentile latency is {{ $value }}s for the last 5 minutes."
+
+      # Database Alerts
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL has been down for more than 1 minute."
+
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High PostgreSQL connections"
+          description: "PostgreSQL connection usage is {{ $value | humanizePercentage }}."
+
+      - alert: PostgreSQLSlowQueries
+        expr: rate(pg_stat_statements_mean_time_seconds[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow PostgreSQL queries"
+          description: "Average query time is {{ $value }}s for the last 5 minutes."
+
+      # Redis Alerts
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "Redis has been down for more than 1 minute."
+
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is {{ $value | humanizePercentage }}."
+
+      # System Alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }}:{{ $labels.mountpoint }}."
+
+      # Application Business Metrics
+      - alert: LowOrderVolume
+        expr: rate(meatvo_orders_created_total[1h]) < 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low order volume"
+          description: "Order rate is {{ $value }} orders/hour, which is below normal levels."
+
+      - alert: HighOrderFailureRate
+        expr: rate(meatvo_orders_failed_total[5m]) / rate(meatvo_orders_created_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High order failure rate"
+          description: "Order failure rate is {{ $value | humanizePercentage }}."
+
+      - alert: PaymentProcessingIssues
+        expr: rate(meatvo_payments_failed_total[5m]) > 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment processing issues"
+          description: "Payment failure rate is {{ $value }} failures/minute."
+
+      - alert: DeliveryPartnerOffline
+        expr: meatvo_active_delivery_partners < 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low delivery partner availability"
+          description: "Only {{ $value }} delivery partners are online."
+
+      # SSL Certificate Alerts
+      - alert: SSLCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry - time() < 86400 * 7
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate for {{ $labels.instance }} expires in {{ $value | humanizeDuration }}."
+
+      - alert: SSLCertificateExpired
+        expr: probe_ssl_earliest_cert_expiry - time() < 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SSL certificate expired"
+          description: "SSL certificate for {{ $labels.instance }} has expired."
+
+      # Elasticsearch Alerts
+      - alert: ElasticsearchDown
+        expr: up{job="elasticsearch"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elasticsearch is down"
+          description: "Elasticsearch has been down for more than 1 minute."
+
+      - alert: ElasticsearchHighDiskUsage
+        expr: elasticsearch_filesystem_data_available_bytes / elasticsearch_filesystem_data_size_bytes < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Elasticsearch low disk space"
+          description: "Elasticsearch disk usage is {{ $value | humanizePercentage }}."
+
+      - alert: ElasticsearchHighCPUUsage
+        expr: elasticsearch_process_cpu_percent > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Elasticsearch CPU usage"
+          description: "Elasticsearch CPU usage is {{ $value }}%."
+
+      # Nginx Alerts
+      - alert: NginxHighErrorRate
+        expr: rate(nginx_http_requests_total{status=~"5.."}[5m]) / rate(nginx_http_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Nginx error rate"
+          description: "Nginx error rate is {{ $value | humanizePercentage }}."
+
+      - alert: NginxHighResponseTime
+        expr: histogram_quantile(0.95, rate(nginx_http_request_duration_seconds_bucket[5m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Nginx response time"
+          description: "95th percentile response time is {{ $value }}s."
+
+  - name: meatvo.rules.infrastructure
+    rules:
+      # Container Health
+      - alert: ContainerDown
+        expr: container_last_seen < time() - 300
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container is down"
+          description: "Container {{ $labels.name }} has been down for more than 5 minutes."
+
+      - alert: ContainerHighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container high CPU usage"
+          description: "Container {{ $labels.name }} CPU usage is {{ $value | humanizePercentage }}."
+
+      - alert: ContainerHighMemoryUsage
+        expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container high memory usage"
+          description: "Container {{ $labels.name }} memory usage is {{ $value | humanizePercentage }}."
+
+      # Backup Alerts
+      - alert: BackupFailed
+        expr: meatvo_backup_success == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database backup failed"
+          description: "Last database backup failed."
+
+      - alert: BackupNotRecent
+        expr: time() - meatvo_backup_last_success_timestamp > 86400 * 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backup not recent"
+          description: "Last successful backup was {{ $value | humanizeDuration }} ago."

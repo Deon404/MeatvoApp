@@ -1,0 +1,68 @@
+const express = require('express');
+const router = express.Router();
+
+const { protect } = require('../../middlewares/auth.middleware');
+const { rbac } = require('../../middlewares/rbac.middleware');
+const { validate } = require('../../middlewares/validate.middleware');
+const { ROLES } = require('../../utils/roles');
+
+const {
+  getMe,
+  listAvailableOrders,
+  listOrdersForDeliveryApp,
+  acceptOrder,
+  rejectOrder,
+  updateDeliveryOrderStatus,
+  updateLocation,
+  getEarnings,
+  toggleOnline,
+  updateProfile,
+} = require('./delivery.controller');
+
+const {
+  getAvailableSlots,
+  bookSlot,
+  releaseSlot,
+  getSlotById,
+} = require('./slots.controller');
+
+const {
+  getMeSchema,
+  listAvailableOrdersSchema,
+  acceptOrderSchema,
+  rejectOrderSchema,
+  updateDeliveryOrderStatusSchema,
+  updateLocationSchema,
+  getEarningsSchema,
+  toggleOnlineSchema,
+  updateProfileSchema,
+} = require('./delivery.validation');
+
+// Public routes - no auth required
+router.get('/slots', getAvailableSlots);
+router.get('/slots/:id', getSlotById);
+
+// Protected routes for delivery partners
+router.use(protect, rbac(ROLES.DELIVERY));
+
+router.get('/me', validate(getMeSchema), getMe);
+router.get('/orders', validate(listAvailableOrdersSchema), listOrdersForDeliveryApp);
+router.get('/orders/available', validate(listAvailableOrdersSchema), listAvailableOrders);
+router.post('/orders/:id/claim', validate(acceptOrderSchema), acceptOrder);
+router.put('/orders/:id/accept', validate(acceptOrderSchema), acceptOrder); // legacy
+router.post('/orders/:id/accept', validate(acceptOrderSchema), acceptOrder);
+router.post('/orders/:id/reject', validate(rejectOrderSchema), rejectOrder);
+router.patch('/orders/:id/status', validate(updateDeliveryOrderStatusSchema), updateDeliveryOrderStatus);
+router.put('/orders/:id/status', validate(updateDeliveryOrderStatusSchema), updateDeliveryOrderStatus); // legacy
+router.post('/online', validate(toggleOnlineSchema), toggleOnline);
+router.put('/toggle-online', validate(toggleOnlineSchema), toggleOnline); // legacy
+router.put('/location', validate(updateLocationSchema), updateLocation);
+router.post('/location/update', validate(updateLocationSchema), updateLocation);
+router.get('/earnings', validate(getEarningsSchema), getEarnings);
+router.patch('/profile', validate(updateProfileSchema), updateProfile);
+
+// Slot booking routes (protected)
+router.post('/slots/:id/book', protect, bookSlot);
+router.post('/slots/:id/release', protect, releaseSlot);
+
+module.exports = router;

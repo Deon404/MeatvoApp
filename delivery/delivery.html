@@ -1,0 +1,4904 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Meatvo - Delivery Partner</title>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Theme System -->
+  <script src="../themes.js"></script>
+  
+  <!-- Notification Sounds System -->
+  <script src="../src/js/services/notification-sounds.js"></script>
+  
+  <!-- Translation System -->
+  <script>
+    // Complete Translation Data Structure for Delivery Partner
+    const TRANSLATIONS = {
+      en: {
+        // Navigation
+        nav_dashboard: "Dashboard",
+        nav_orders: "Orders",
+        nav_earnings: "Earnings",
+        nav_profile: "Profile",
+        
+        // Dashboard
+        dash_today_performance: "Today's Performance",
+        dash_orders_delivered: "Orders Delivered",
+        dash_earnings: "Earnings",
+        dash_avg_time: "Avg. Delivery Time",
+        dash_active_order: "Active Order",
+        dash_available_orders: "Available Orders",
+        dash_go_online: "Go Online",
+        dash_go_offline: "Go Offline",
+        dash_online: "Online",
+        dash_offline: "Offline",
+        
+        // Orders
+        orders_title: "Orders",
+        orders_all: "All Orders",
+        orders_available: "Available Orders",
+        orders_active: "Active Orders",
+        orders_completed: "Completed Orders",
+        orders_accept: "Accept",
+        orders_reject: "Reject",
+        orders_navigate: "Navigate",
+        orders_pickup: "Pickup",
+        orders_deliver: "Deliver",
+        orders_view_details: "View Details",
+        orders_filter: "Filter",
+        orders_sort: "Sort",
+        
+        // Order Status
+        order_pending: "Pending",
+        order_accepted: "Accepted",
+        order_picked_up: "Picked Up",
+        order_delivered: "Delivered",
+        order_cancelled: "Cancelled",
+        
+        // Earnings
+        earnings_title: "My Earnings",
+        earnings_today: "Today",
+        earnings_week: "This Week",
+        earnings_month: "This Month",
+        earnings_total: "Total Earnings",
+        earnings_orders: "Orders",
+        earnings_distance: "Distance",
+        earnings_avg_per_order: "Avg per Order",
+        
+        // Navigation Screens
+        nav_navigate_store: "Navigate to Store",
+        nav_navigate_customer: "Navigate to Customer",
+        nav_arrived_store: "I've Arrived at Store",
+        nav_arrived_customer: "Mark as Delivered",
+        nav_current_location: "Current Location",
+        nav_destination: "Destination",
+        nav_eta: "ETA",
+        nav_distance: "Distance",
+        nav_traffic: "Traffic",
+        
+        // Profile
+        profile_name: "Name",
+        profile_phone: "Phone",
+        profile_email: "Email",
+        profile_vehicle: "Vehicle",
+        profile_edit: "Edit Profile",
+        profile_logout: "Logout",
+        profile_settings: "Settings",
+        profile_help: "Help & Support",
+        
+        // Common
+        btn_ok: "OK",
+        btn_cancel: "Cancel",
+        btn_save: "Save",
+        btn_close: "Close",
+        btn_back: "Back",
+        btn_next: "Next",
+        btn_done: "Done",
+        btn_loading: "Loading...",
+        btn_retry: "Retry",
+        btn_refresh: "Refresh",
+        
+        // Messages
+        msg_order_accepted: "Order accepted successfully!",
+        msg_order_delivered: "Order delivered successfully!",
+        msg_location_required: "Location permission is required for navigation",
+        msg_no_internet: "No internet connection. Please check your network.",
+        msg_offline_mode: "You are currently offline. Go online to receive orders.",
+        
+        // Time
+        time_mins: "mins",
+        time_hours: "hours",
+        time_ago: "ago",
+        time_just_now: "Just now",
+        time_today: "Today",
+        time_yesterday: "Yesterday",
+        time_estimated: "Estimated",
+        
+        // Error Messages
+        err_network: "Network error. Please check your connection.",
+        err_server: "Server error. Please try again later.",
+        err_location: "Unable to get your location.",
+        err_gps_disabled: "GPS is disabled. Please enable GPS.",
+        
+        // Success Messages
+        success_saved: "Saved successfully",
+        success_updated: "Updated successfully",
+        success_online: "You are now online",
+        success_offline: "You are now offline"
+      },
+      
+      hi: {
+        // Navigation
+        nav_dashboard: "डैशबोर्ड",
+        nav_orders: "आर्डर्स",
+        nav_earnings: "कमाई",
+        nav_profile: "प्रोफाइल",
+        
+        // Dashboard
+        dash_today_performance: "आज का प्रदर्शन",
+        dash_orders_delivered: "डिलीवर किए गए आर्डर",
+        dash_earnings: "कमाई",
+        dash_avg_time: "औसत डिलीवरी समय",
+        dash_active_order: "सक्रिय आर्डर",
+        dash_available_orders: "उपलब्ध आर्डर",
+        dash_go_online: "ऑनलाइन हों",
+        dash_go_offline: "ऑफलाइन हों",
+        dash_online: "ऑनलाइन",
+        dash_offline: "ऑफलाइन",
+        
+        // Orders
+        orders_title: "आर्डर्स",
+        orders_all: "सभी आर्डर",
+        orders_available: "उपलब्ध आर्डर",
+        orders_active: "सक्रिय आर्डर",
+        orders_completed: "पूर्ण हुए आर्डर",
+        orders_accept: "स्वीकार करें",
+        orders_reject: "अस्वीकार करें",
+        orders_navigate: "नैविगेट करें",
+        orders_pickup: "पिकअप करें",
+        orders_deliver: "डिलीवर करें",
+        orders_view_details: "विवरण देखें",
+        orders_filter: "फिल्टर",
+        orders_sort: "सॉर्ट करें",
+        
+        // Order Status
+        order_pending: "लंबित",
+        order_accepted: "स्वीकृत",
+        order_picked_up: "पिकअप हो गया",
+        order_delivered: "डिलीवर हो गया",
+        order_cancelled: "रद्द हो गया",
+        
+        // Earnings
+        earnings_title: "मेरी कमाई",
+        earnings_today: "आज",
+        earnings_week: "इस सप्ताह",
+        earnings_month: "इस महीने",
+        earnings_total: "कुल कमाई",
+        earnings_orders: "आर्डर",
+        earnings_distance: "दूरी",
+        earnings_avg_per_order: "औसत प्रति आर्डर",
+        
+        // Navigation Screens
+        nav_navigate_store: "स्टोर के लिए नैविगेट करें",
+        nav_navigate_customer: "ग्राहक के लिए नैविगेट करें",
+        nav_arrived_store: "मैं स्टोर पर पहुंच गया",
+        nav_arrived_customer: "डिलीवर हो गया के रूप में मार्क करें",
+        nav_current_location: "वर्तमान स्थान",
+        nav_destination: "गंतव्य",
+        nav_eta: "अनुमानित समय",
+        nav_distance: "दूरी",
+        nav_traffic: "ट्रैफिक",
+        
+        // Profile
+        profile_name: "नाम",
+        profile_phone: "फोन",
+        profile_email: "ईमेल",
+        profile_vehicle: "वाहन",
+        profile_edit: "प्रोफाइल एडिट करें",
+        profile_logout: "लॉगआउट",
+        profile_settings: "सेटिंग्स",
+        profile_help: "सहायता और समर्थन",
+        
+        // Common
+        btn_ok: "ठीक है",
+        btn_cancel: "रद्द करें",
+        btn_save: "सेव करें",
+        btn_close: "बंद करें",
+        btn_back: "पीछे",
+        btn_next: "अगला",
+        btn_done: "हो गया",
+        btn_loading: "लोड हो रहा है...",
+        btn_retry: "फिर से कोशिश करें",
+        btn_refresh: "रिफ्रेश करें",
+        
+        // Messages
+        msg_order_accepted: "आर्डर सफलतापूर्वक स्वीकार किया गया!",
+        msg_order_delivered: "आर्डर सफलतापूर्वक डिलीवर हो गया!",
+        msg_location_required: "नैविगेशन के लिए लोकेशन की अनुमति आवश्यक है",
+        msg_no_internet: "इंटरनेट कनेक्शन नहीं। कृपया अपना नेटवर्क जांचें।",
+        msg_offline_mode: "आप वर्तमान में ऑफलाइन हैं। आर्डर प्राप्त करने के लिए ऑनलाइन हों।",
+        
+        // Time
+        time_mins: "मिनट",
+        time_hours: "घंटे",
+        time_ago: "पहले",
+        time_just_now: "अभी-अभी",
+        time_today: "आज",
+        time_yesterday: "कल",
+        time_estimated: "अनुमानित",
+        
+        // Error Messages
+        err_network: "नेटवर्क त्रुटि। कृपया अपना कनेक्शन जांचें।",
+        err_server: "सर्वर त्रुटि। कृपया बाद में फिर से कोशिश करें।",
+        err_location: "आपका स्थान प्राप्त करने में असमर्थ।",
+        err_gps_disabled: "GPS अक्षम है। कृपया GPS सक्षम करें।",
+        
+        // Success Messages
+        success_saved: "सफलतापूर्वक सेव हो गया",
+        success_updated: "सफलतापूर्वक अपडेट हो गया",
+        success_online: "अब आप ऑनलाइन हैं",
+        success_offline: "अब आप ऑफलाइन हैं"
+      }
+    };
+
+    // Translation Engine (same as customer app)
+    const I18n = {
+      currentLang: localStorage.getItem('app_language') || 'en',
+      
+      init() {
+        this.detectLanguage();
+        this.applyTranslations();
+        this.updateLanguageToggle();
+        this.setupEventListeners();
+      },
+      
+      detectLanguage() {
+        const stored = localStorage.getItem('app_language');
+        if (stored && TRANSLATIONS[stored]) {
+          this.currentLang = stored;
+          return;
+        }
+        
+        const browserLang = navigator.language || navigator.userLanguage;
+        if (browserLang.startsWith('hi')) {
+          this.currentLang = 'hi';
+        } else {
+          this.currentLang = 'en';
+        }
+        
+        localStorage.setItem('app_language', this.currentLang);
+      },
+      
+      t(key, replacements = {}) {
+        const translation = TRANSLATIONS[this.currentLang][key] || TRANSLATIONS['en'][key] || key;
+        return translation.replace(/\{\{(\w+)\}\}/g, (match, key) => replacements[key] || match);
+      },
+      
+      setLanguage(lang) {
+        if (TRANSLATIONS[lang]) {
+          this.currentLang = lang;
+          localStorage.setItem('app_language', lang);
+          this.applyTranslations();
+          this.updateLanguageToggle();
+          window.dispatchEvent(new CustomEvent('languageChanged', { detail: lang }));
+        }
+      },
+      
+      applyTranslations() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.getAttribute('data-i18n');
+          const translation = this.t(key);
+          
+          if (el.hasAttribute('placeholder')) {
+            el.setAttribute('placeholder', translation);
+          } else if (el.tagName === 'INPUT' && el.type === 'submit') {
+            el.value = translation;
+          } else {
+            el.textContent = translation;
+          }
+        });
+        
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+          const key = el.getAttribute('data-i18n-placeholder');
+          const translation = this.t(key);
+          el.setAttribute('placeholder', translation);
+        });
+        
+        document.querySelectorAll('[data-i18n-attr]').forEach(el => {
+          const [attr, key] = el.getAttribute('data-i18n-attr').split(':');
+          el.setAttribute(attr, this.t(key));
+        });
+        
+        document.documentElement.lang = this.currentLang;
+      },
+      
+      updateLanguageToggle() {
+        const toggle = document.getElementById('languageToggle');
+        if (toggle) {
+          toggle.textContent = this.currentLang === 'en' ? 'हिंदी' : 'English';
+          toggle.setAttribute('data-lang', this.currentLang);
+        }
+      },
+      
+      setupEventListeners() {
+        window.addEventListener('languageChanged', (e) => {
+          this.updateDynamicContent();
+        });
+      },
+      
+      updateDynamicContent() {
+        console.log('Language changed to:', this.currentLang);
+      }
+    };
+
+    function toggleLanguage() {
+      const currentLang = I18n.currentLang;
+      const newLang = currentLang === 'en' ? 'hi' : 'en';
+      I18n.setLanguage(newLang);
+      showToast(`Language changed to ${newLang === 'hi' ? 'हिंदी' : 'English'}`, 'success');
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      I18n.init();
+      showLanguageSelector();
+      
+      // Initialize theme system
+      if (typeof ThemeEngine !== 'undefined') {
+        ThemeEngine.init();
+      }
+    });
+
+  </script>
+  <style>
+    /* Theme System Variables (Overridden by ThemeEngine) */
+    :root {
+      /* Colors - Will be dynamically set by ThemeEngine */
+      --color-primary: #D32F2F;
+      --color-primary-light: #FF6659;
+      --color-primary-dark: #9A0007;
+      --color-accent: #FFD700;
+      --color-background: #FAFAFA;
+      --color-surface: #FFFFFF;
+      --color-surface-light: #F8F9FA;
+      --color-text: #2D3436;
+      --color-text-secondary: #636E72;
+      --color-text-muted: #B2BEC3;
+      --color-border: #DFE6E9;
+      --color-success: #00B894;
+      --color-warning: #FDCB6E;
+      --color-error: #D63031;
+      --color-gradient-start: #D32F2F;
+      --color-gradient-end: #9A0007;
+      --color-shadow: rgba(0,0,0,0.05);
+      --color-overlay: rgba(0,0,0,0.4);
+      
+      /* Typography */
+      --font-family: 'Inter', 'SF Pro Display', sans-serif;
+      --heading-weight: 700;
+      --body-weight: 400;
+      --button-weight: 600;
+      --line-height: 1.6;
+      
+      /* Shadows */
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+      --shadow-lg: 0 12px 24px rgba(0,0,0,0.12);
+      --shadow-glow: 0 0 20px rgba(108,92,231,0.2);
+      --shadow-card: 0 1px 8px rgba(0,0,0,0.06);
+      --shadow-button: 0 2px 12px rgba(108,92,231,0.2);
+      
+      /* Border Radius */
+      --radius-sm: 6px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+      --radius-xl: 24px;
+      --radius-full: 9999px;
+      
+      /* Spacing */
+      --space-xs: 4px;
+      --space-sm: 8px;
+      --space-md: 16px;
+      --space-lg: 24px;
+      --space-xl: 32px;
+      --space-xxl: 48px;
+      
+      /* Animations */
+      --animation-duration: 0.25s;
+      --animation-easing: cubic-bezier(0.4, 0, 0.2, 1);
+      --animation-hover-scale: 1.01;
+      --animation-button-scale: 1.02;
+      
+      /* Legacy Variables (for compatibility) */
+      --primary-color: var(--color-primary);
+      --primary-dark: var(--color-primary-dark);
+      --secondary-color: var(--color-accent);
+      --bg-color: var(--color-background);
+      --surface-color: var(--color-surface);
+      --text-primary: var(--color-text);
+      --text-secondary: var(--color-text-secondary);
+      --border-color: var(--color-border);
+      --success-color: var(--color-success);
+      --danger-color: var(--color-error);
+      --warning-color: var(--color-warning);
+      --info-color: var(--color-primary);
+      --shadow-sm: var(--shadow-sm);
+      --shadow-md: var(--shadow-md);
+      --shadow-lg: var(--shadow-lg);
+      --radius-md: var(--radius-md);
+      --radius-lg: var(--radius-lg);
+      --safe-area-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* Dark Mode Support */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-color: #111827;
+        --surface-color: #1F2937;
+        --text-primary: #F9FAFB;
+        --text-secondary: #9CA3AF;
+        --border-color: #374151;
+      }
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-color);
+      color: var(--text-primary);
+      padding-bottom: calc(80px + var(--safe-area-bottom));
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Login Screen */
+    .login-container {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 24px;
+      background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+      z-index: 2000;
+    }
+
+    .login-card {
+      background: var(--surface-color);
+      border-radius: 24px;
+      padding: 40px 32px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      text-align: center;
+    }
+
+    .login-icon {
+      font-size: 48px;
+      margin-bottom: 24px;
+      display: inline-block;
+      filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+    }
+
+    .login-card h1 {
+      color: var(--text-primary);
+      margin-bottom: 8px;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .login-card p {
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+      font-size: 15px;
+    }
+
+    .input-group {
+      margin-bottom: 24px;
+      text-align: left;
+    }
+
+    .input-group label {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+      font-weight: 500;
+      font-size: 14px;
+    }
+
+    .input-wrapper {
+      position: relative;
+    }
+
+    .input-wrapper input {
+      width: 100%;
+      padding: 16px;
+      padding-left: 16px;
+      border: 2px solid var(--border-color);
+      border-radius: var(--radius-md);
+      font-size: 16px;
+      background: var(--bg-color);
+      color: var(--text-primary);
+      transition: all 0.2s;
+    }
+
+    .input-wrapper input:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      background: var(--surface-color);
+      box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid var(--border-color);
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--bg-color);
+      color: var(--text-primary);
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 16px;
+      background: var(--primary-color);
+      color: #ffffff;
+      border: none;
+      border-radius: var(--radius-md);
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.2s;
+      box-shadow: 0 4px 6px rgba(79, 70, 229, 0.2);
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      background: var(--text-secondary);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-secondary);
+      box-shadow: none;
+      border: 1px solid var(--border-color);
+    }
+
+    /* App Layout */
+    .app-container {
+      display: none;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .app-container.active {
+      display: block;
+      opacity: 1;
+    }
+
+    /* Header */
+    .header {
+      background: var(--surface-color);
+      padding: 16px 20px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-title h1 {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    /* Online Toggle Switch */
+    .online-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 6px 12px;
+      background: var(--bg-color);
+      border-radius: 20px;
+      transition: all 0.3s;
+    }
+
+    .online-toggle.active {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    .toggle-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      transition: all 0.3s;
+    }
+
+    .online-toggle.active .toggle-dot {
+      background: var(--success-color);
+      box-shadow: 0 0 8px var(--success-color);
+    }
+
+    .toggle-text {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .online-toggle.active .toggle-text {
+      color: var(--success-color);
+    }
+
+    /* Sub-Navigation for Orders */
+    .orders-nav {
+      display: flex;
+      padding: 16px 20px 0;
+      gap: 20px;
+      background: var(--surface-color);
+      border-bottom: 1px solid var(--border-color);
+      position: sticky;
+      top: 70px;
+      z-index: 99;
+    }
+
+    .order-tab {
+      padding-bottom: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      position: relative;
+    }
+
+    .order-tab.active {
+      color: var(--primary-color);
+    }
+
+    .order-tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background: var(--primary-color);
+      border-radius: 2px;
+    }
+
+    .badge-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--danger-color);
+      color: white;
+      font-size: 10px;
+      height: 16px;
+      min-width: 16px;
+      padding: 0 4px;
+      border-radius: 10px;
+      margin-left: 4px;
+      opacity: 0;
+      transform: scale(0.8);
+      transition: all 0.2s;
+    }
+
+    .badge-count.show {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* Content Areas */
+    .content-section {
+      padding: 16px;
+      display: none;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .content-section.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* Order Cards */
+    .order-card {
+      background: var(--surface-color);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      margin-bottom: 16px;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--border-color);
+      transition: transform 0.2s, box-shadow 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .order-card:active {
+      transform: scale(0.99);
+    }
+
+    .order-status-badge {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge-NEW {
+      background: #DBEAFE;
+      color: #1E40AF;
+    }
+
+    .status-badge-ASSIGNED {
+      background: #FEF3C7;
+      color: #92400E;
+    }
+
+    .status-badge-PACKED {
+      background: #E0E7FF;
+      color: #3730A3;
+    }
+
+    .status-badge-OUT_FOR_DELIVERY {
+      background: #D1FAE5;
+      color: #065F46;
+    }
+
+    .status-badge-DELIVERED {
+      background: #F3F4F6;
+      color: #374151;
+    }
+
+    .order-header-main {
+      display: flex;
+      align-items: flex-start;
+      margin-bottom: 16px;
+      gap: 12px;
+    }
+
+    .order-icon-bg {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(79, 70, 229, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      color: var(--primary-color);
+    }
+
+    .order-id-group h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .order-id-group span {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .order-details {
+      margin: 16px 0;
+      padding: 16px 0;
+      border-top: 1px dashed var(--border-color);
+      border-bottom: 1px dashed var(--border-color);
+    }
+
+    .detail-row {
+      display: flex;
+      margin-bottom: 8px;
+      font-size: 14px;
+      gap: 12px;
+    }
+
+    .detail-icon {
+      color: var(--text-secondary);
+      width: 20px;
+      text-align: center;
+    }
+
+    .detail-text {
+      color: var(--text-primary);
+      font-weight: 500;
+      flex: 1;
+    }
+
+    .order-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 16px;
+    }
+
+    .order-price {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--primary-color);
+    }
+
+    .order-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .btn-sm {
+      padding: 10px;
+      font-size: 14px;
+    }
+
+    .btn-success {
+      background: var(--success-color);
+    }
+
+    .btn-danger {
+      background: var(--danger-color);
+      color: white;
+    }
+
+    .full-width-btn {
+      grid-column: span 2;
+    }
+
+    /* Profile & Earnings */
+    .profile-header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .avatar-large {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: var(--bg-color);
+      margin: 0 auto 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      border: 4px solid var(--surface-color);
+      box-shadow: var(--shadow-md);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--surface-color);
+      padding: 16px;
+      border-radius: var(--radius-md);
+      text-align: center;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .stat-value {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--primary-color);
+      margin-bottom: 4px;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Bottom Nav */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: var(--surface-color);
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.05);
+      display: flex;
+      justify-content: space-around;
+      padding: 12px 0 calc(12px + var(--safe-area-bottom));
+      z-index: 1000;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .nav-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      transition: all 0.2s;
+      flex: 1;
+      cursor: pointer;
+      gap: 4px;
+    }
+
+    .nav-item.active {
+      color: var(--primary-color);
+    }
+
+    .nav-icon {
+      font-size: 24px;
+    }
+
+    .nav-label {
+      font-size: 11px;
+      font-weight: 500;
+    }
+
+    /* Skeleton Loading */
+    .skeleton {
+      background: linear-gradient(90deg, var(--bg-color) 25%, var(--border-color) 50%, var(--bg-color) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 4px;
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: 200% 0;
+      }
+
+      100% {
+        background-position: -200% 0;
+      }
+    }
+
+    .skeleton-card {
+      height: 200px;
+      border-radius: var(--radius-lg);
+      margin-bottom: 16px;
+    }
+
+    /* Utilities */
+    .hidden {
+      display: none !important;
+    }
+
+    .text-center {
+      text-align: center;
+    }
+
+    .empty-state {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-secondary);
+    }
+
+    .empty-state-icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      opacity: 0.5;
+      filter: grayscale(100%);
+    }
+
+    /* Toast */
+    .toast-container {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10000;
+      width: 90%;
+      max-width: 350px;
+    }
+
+    .toast {
+      background: rgba(31, 41, 55, 0.95);
+      backdrop-filter: blur(10px);
+      color: white;
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      animation: slideDown 0.3s ease-out;
+    }
+
+    @keyframes slideDown {
+      from {
+        transform: translateY(-20px);
+        opacity: 0;
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(2px);
+      z-index: 9999;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+    }
+
+    .modal-card {
+      background: var(--surface-color);
+      border-radius: 20px;
+      padding: 24px;
+      width: 100%;
+      max-width: 340px;
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes popIn {
+      from {
+        transform: scale(0.9);
+        opacity: 0;
+      }
+
+      to {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* Bank Details Section in Profile */
+    .bank-details {
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    /* Delivery Alert Overlay Styles */
+    .delivery-alert-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.9);
+      backdrop-filter: blur(10px);
+      z-index: 100000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .delivery-alert-content {
+      background: linear-gradient(145deg, #2D2D2D 0%, #1A1A1A 100%);
+      border-radius: 24px;
+      padding: 32px;
+      width: 100%;
+      max-width: 400px;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .alert-header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .sound-wave {
+      display: flex;
+      justify-content: center;
+      gap: 4px;
+      margin-bottom: 16px;
+      height: 40px;
+      align-items: center;
+    }
+
+    .sound-wave span {
+      width: 4px;
+      background: var(--primary-color);
+      border-radius: 2px;
+      animation: soundWave 1s ease-in-out infinite;
+    }
+
+    .sound-wave span:nth-child(1) { height: 20px; animation-delay: 0s; }
+    .sound-wave span:nth-child(2) { height: 30px; animation-delay: 0.1s; }
+    .sound-wave span:nth-child(3) { height: 25px; animation-delay: 0.2s; }
+    .sound-wave span:nth-child(4) { height: 35px; animation-delay: 0.3s; }
+
+    @keyframes soundWave {
+      0%, 100% { transform: scaleY(1); opacity: 0.5; }
+      50% { transform: scaleY(1.5); opacity: 1; }
+    }
+
+    .alert-header h2 {
+      color: white;
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .order-preview-card {
+      background: rgba(255,255,255,0.05);
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .order-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .order-id {
+      font-size: 20px;
+      font-weight: 700;
+      color: white;
+    }
+
+    .order-earnings {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--secondary-color);
+    }
+
+    .detail-row {
+      display: flex;
+      justify-content: space-between;
+      margin: 8px 0;
+      font-size: 14px;
+    }
+
+    .detail-row .label {
+      color: rgba(255,255,255,0.6);
+    }
+
+    .detail-row .value {
+      color: white;
+      font-weight: 600;
+    }
+
+    .customer-note {
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(255,215,0,0.1);
+      border-radius: 8px;
+      border-left: 3px solid var(--secondary-color);
+    }
+
+    .customer-note p {
+      margin: 0;
+      color: rgba(255,255,255,0.9);
+      font-style: italic;
+      font-size: 14px;
+    }
+
+    .action-buttons {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .btn-accept, .btn-reject {
+      flex: 1;
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .btn-accept {
+      background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+      color: white;
+    }
+
+    .btn-reject {
+      background: rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.8);
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .btn-accept:active {
+      transform: scale(0.98);
+    }
+
+    .btn-icon {
+      font-size: 20px;
+      width: 40px;
+      height: 40px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-text {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .primary-text {
+      font-weight: 700;
+      font-size: 16px;
+    }
+
+    .secondary-text {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+
+    .auto-reject-timer {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: rgba(255,255,255,0.6);
+      font-size: 14px;
+    }
+
+    .timer-circle {
+      position: relative;
+      width: 60px;
+      height: 60px;
+    }
+
+    .timer-circle svg {
+      transform: rotate(-90deg);
+      width: 100%;
+      height: 100%;
+    }
+
+    .timer-bg {
+      fill: none;
+      stroke: rgba(255,255,255,0.1);
+      stroke-width: 3;
+    }
+
+    .timer-progress {
+      fill: none;
+      stroke: var(--primary-color);
+      stroke-width: 3;
+      stroke-linecap: round;
+      transition: stroke-dasharray 1s linear;
+    }
+
+    .timer-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: white;
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .sound-toggle {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 20px;
+      cursor: pointer;
+      color: rgba(255,255,255,0.8);
+      font-size: 12px;
+      transition: background 0.2s;
+    }
+
+    .sound-toggle:hover {
+      background: rgba(255,255,255,0.2);
+    }
+
+    /* Mobile responsive for delivery alert */
+    @media (max-width: 480px) {
+      .delivery-alert-content {
+        padding: 24px;
+        margin: 20px;
+      }
+      
+      .alert-header h2 {
+        font-size: 20px;
+      }
+      
+      .action-buttons {
+        flex-direction: column;
+      }
+      
+      .btn-accept, .btn-reject {
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <script>
+    // Force API base to the correct backend port
+    localStorage.setItem('MEATVO_API_BASE', 'http://localhost:8081');
+  </script>
+
+  <!-- Full-screen Order Alert Overlay (Can't be missed) -->
+  <div id="deliveryOrderAlert" class="delivery-alert-overlay" style="display:none;">
+    <div class="delivery-alert-content">
+      <div class="alert-header">
+        <div class="sound-wave">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <h2>🎯 New Order Available!</h2>
+      </div>
+      
+      <div class="order-preview-card">
+        <div class="order-meta">
+          <div class="order-id">#<span id="deliveryOrderId">1234</span></div>
+          <div class="order-earnings">₹<span id="deliveryEarnings">40</span></div>
+        </div>
+        
+        <div class="order-details">
+          <div class="detail-row">
+            <span class="label">📍 Distance</span>
+            <span class="value" id="deliveryDistance">2.3 km</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">⏱️ Est. Time</span>
+            <span class="value" id="deliveryTime">25 mins</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">📦 Items</span>
+            <span class="value" id="deliveryItems">3 items</span>
+          </div>
+          <div class="detail-row">
+            <span class="label">📍 Area</span>
+            <span class="value" id="deliveryArea">Koramangala</span>
+          </div>
+        </div>
+        
+        <div class="customer-note" id="customerNote" style="display:none;">
+          <p>"<span id="noteText">Please ring doorbell</span>"</p>
+        </div>
+      </div>
+      
+      <div class="action-buttons">
+        <button class="btn-accept" onclick="acceptOrder()">
+          <span class="btn-icon">✓</span>
+          <div class="btn-text">
+            <span class="primary-text">Accept Order</span>
+            <span class="secondary-text">Tap to claim</span>
+          </div>
+        </button>
+        
+        <button class="btn-reject" onclick="rejectOrder()">
+          <span class="btn-icon">✕</span>
+          <div class="btn-text">
+            <span class="primary-text">Not Available</span>
+            <span class="secondary-text">Pass to others</span>
+          </div>
+        </button>
+      </div>
+      
+      <div class="auto-reject-timer">
+        <div class="timer-circle">
+          <svg viewBox="0 0 36 36">
+            <path class="timer-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+            <path class="timer-progress" id="timerProgress" stroke-dasharray="100, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+          </svg>
+          <span class="timer-text" id="timerText">30</span>
+        </div>
+        <p>Auto-rejecting in <span id="timerSeconds">30</span>s</p>
+      </div>
+      
+      <div class="sound-toggle" onclick="toggleDeliverySound()">
+        <span id="soundIcon">🔊</span>
+        <span id="soundText">Sound On</span>
+      </div>
+    </div>
+  </div>
+  <!-- DELIVERY PARTNER AUTH GUARD - Only allow role === 'delivery_partner' -->
+  <script>
+    (function() {
+      const token = localStorage.getItem('authToken');
+      const userStr = localStorage.getItem('authUser');
+      const expiry = Number(localStorage.getItem('authTokenExpiry') || 0);
+      
+      // Check if token is missing or user role doesn't match
+      if (!token || !userStr) {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('authTokenExpiry');
+        window.location.href = '/real-otp-login.html';
+        return;
+      }
+      
+      // Only check expiry if it exists, be lenient
+      if (expiry && Date.now() > expiry) {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('authTokenExpiry');
+        window.location.href = '/real-otp-login.html';
+        return;
+      }
+      
+      try {
+        const user = JSON.parse(userStr);
+        if (user.role !== 'delivery_partner' && user.role !== 'delivery') {
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('authUser');
+          localStorage.removeItem('authTokenExpiry');
+          window.location.href = '/delivery/delivery-login.html';
+          return;
+        }
+      } catch (e) {
+        const msg = String(e?.message || '').toLowerCase();
+        const isAuthError = 
+          msg.includes('not authorized') ||
+          msg.includes('unauthorized') ||
+          msg.includes('invalid') ||
+          msg.includes('jwt') ||
+          msg.includes('token') ||
+          msg.includes('401') ||
+          msg.includes('403');
+        
+        if (isAuthError) {
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('authUser');
+          localStorage.removeItem('authTokenExpiry');
+          window.location.href = '/delivery/delivery-login.html';
+        } else {
+          // Server down - use cached session
+          loginSuccess(user);
+        }
+      }
+    })();
+  </script>
+
+  <!-- Login Screen -->
+  <div class="login-container" id="loginScreen">
+    <div class="login-card">
+      <div class="login-icon">&#128666;</div>
+      <h1>Delivery Partner</h1>
+      <p>Login to manage your deliveries</p>
+
+      <div id="phoneStep">
+        <div class="input-group">
+          <label>Phone Number</label>
+          <div class="input-wrapper">
+            <input type="tel" id="phoneInput" placeholder="Enter 10-digit number" maxlength="10">
+          </div>
+        </div>
+        <button class="btn" id="sendOtpBtn">Continue</button>
+      </div>
+
+      <div id="otpStep" class="hidden">
+        <div class="input-group">
+          <label>Verification Code</label>
+          <div class="input-wrapper">
+            <input type="text" id="otpInput" placeholder="Enter 4-digit OTP" maxlength="4"
+              style="text-align: center; letter-spacing: 3px;">
+          </div>
+        </div>
+        <button class="btn" id="verifyOtpBtn">Verify & Login</button>
+        <button class="btn btn-secondary" id="backToPhone" style="margin-top: 12px;">Back to Phone</button>
+      </div>
+
+      <!-- Dev-only bypass (when OTP is blocked) -->
+      <div id="devLoginStep" class="hidden" style="margin-top: 14px;">
+        <div class="input-group">
+          <label>Dev Secret</label>
+          <div class="input-wrapper">
+            <input type="password" id="devSecretInput" placeholder="DEV_AUTH_BYPASS_SECRET">
+          </div>
+        </div>
+        <button class="btn btn-secondary" id="devLoginBtn">Dev Login</button>
+      </div>
+
+      <div id="loginError" style="color: var(--danger-color); font-size: 13px; margin-top: 16px; min-height: 20px;">
+      </div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div class="app-container" id="appContainer">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-title">
+        <h1>Meatvo</h1>
+        <span
+          style="font-size: 12px; background: var(--border-color); padding: 2px 6px; border-radius: 4px;">Partner</span>
+      </div>
+      <div class="header-actions">
+        <div class="online-toggle" id="onlineToggle">
+          <div class="toggle-dot"></div>
+          <span class="toggle-text" id="onlineText">Offline</span>
+        </div>
+        <button id="logoutBtn" style="background: none; border: none; font-size: 20px; cursor: pointer;">&#128721;</button>
+      </div>
+    </header>
+
+    <!-- Approval Warning -->
+    <div id="approvalBanner" class="hidden"
+      style="background: #FFFBEB; color: #92400E; padding: 12px 20px; font-size: 13px; border-bottom: 1px solid #FCD34D;">
+      âš ï¸ Your account is pending approval. You cannot receive orders yet.
+    </div>
+
+    <!-- Orders Section -->
+    <div id="ordersSection" class="content-section active" style="padding: 0;">
+      <!-- Sub Nav -->
+      <div class="orders-nav">
+        <div class="order-tab active" data-tab="active">
+          Active Deliveries
+        </div>
+        <div class="order-tab" data-tab="available">
+          New Requests
+          <span class="badge-count" id="newRequestsCount">0</span>
+        </div>
+      </div>
+      
+      <!-- Delivery Zone Indicator -->
+      <div class="zone-indicator" style="background: var(--surface-color); padding: 8px 12px; border-radius: 8px; margin: 8px 0; border: 1px solid var(--border-color); font-size: 12px; font-weight: 600; color: var(--text-primary);">
+        🎯 Delivery Zone: ${DELIVERY_RADIUS_KM}km radius from ${STORE_LOCATION.name}
+      </div>
+      
+      <!-- Range Filter Buttons -->
+      <div style="display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap;">
+        <button class="btn btn-secondary" onclick="filterByRange('all')" style="padding: 6px 12px; font-size: 12px;">
+          All (0-${DELIVERY_RADIUS_KM}km)
+        </button>
+        <button class="btn btn-secondary" onclick="filterByRange('near')" style="padding: 6px 12px; font-size: 12px;">
+          Near Store (0-2km)
+        </button>
+        <button class="btn btn-secondary" onclick="filterByRange('far')" style="padding: 6px 12px; font-size: 12px;">
+          Far Zone (3-${DELIVERY_RADIUS_KM}km)
+        </button>
+      </div>
+
+      <div style="padding: 16px;">
+        <!-- Active Orders List -->
+        <div id="activeOrdersList">
+          <!-- Skeleton Loader -->
+          <div class="skeleton skeleton-card"></div>
+          <div class="skeleton skeleton-card"></div>
+        </div>
+
+        <!-- Available Orders List -->
+        <div id="availableOrdersList" class="hidden">
+          <div class="empty-state">
+            <div class="empty-state-icon">&#128161;</div>
+            <h3>No new requests</h3>
+            <p>Stay online to receive delivery requests.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Earnings Section -->
+    <div id="earningsSection" class="content-section">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="todayEarnings">&#8377;0</div>
+          <div class="stat-label">Today's Earnings</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="todayOrders">0</div>
+          <div class="stat-label">Orders Delivered</div>
+        </div>
+      </div>
+
+      <h3 style="margin-bottom: 16px; font-size: 16px;">Recent History</h3>
+      <div id="earningsList">
+        <!-- History Items -->
+      </div>
+    </div>
+
+    <!-- Profile Section -->
+    <div id="profileSection" class="content-section">
+      <div class="profile-header">
+        <div class="avatar-large">&#128100;</div>
+        <h2 id="displayProfileName">Partner</h2>
+        <p id="displayProfilePhone" style="color: var(--text-secondary);">...</p>
+      </div>
+
+      <!-- Partner Rating Section -->
+      <div class="partner-ratings-section">
+        <h3>📊 Your Performance</h3>
+        
+        <div class="performance-card">
+          <div class="big-rating">
+            <span class="rating-value" id="partnerRatingValue">4.5</span>
+            <div class="stars" id="partnerRatingStars">⭐⭐⭐⭐⭐</div>
+            <span class="label">Delivery Rating</span>
+          </div>
+          
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-value" id="ratedDeliveries">127</span>
+              <span class="stat-label">Rated Deliveries</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value" id="fiveStarCount">89</span>
+              <span class="stat-label">5-Star Ratings</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-value" id="onTimeRate">94%</span>
+              <span class="stat-label">On-Time Rate</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="recent-feedback">
+          <h4>Recent Feedback</h4>
+          <div id="recentFeedbackList">
+            <!-- Feedback items will be injected here -->
+          </div>
+        </div>
+        
+        <div class="rating-tips">
+          <h4>💡 Tips for Better Ratings</h4>
+          <ul>
+            <li>✅ Deliver within estimated time</li>
+            <li>✅ Keep food packages secure and upright</li>
+            <li>✅ Be polite and professional</li>
+            <li>✅ Call customer if address is unclear</li>
+            <li>✅ Double-check order items before leaving store</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="stat-card" style="text-align: left; margin-bottom: 16px;">
+        <h3 style="margin-bottom: 16px; font-size: 16px;">Personal Details</h3>
+        <div class="input-group">
+          <label>Full Name</label>
+          <div class="input-wrapper">
+            <input type="text" id="profileName" placeholder="Your Name">
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Vehicle Type</label>
+          <div class="input-wrapper">
+            <input type="text" id="profileVehicle" placeholder="Bike, Scooter, etc.">
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Vehicle Number</label>
+          <div class="input-wrapper">
+            <input type="text" id="profileVehicleNumber" placeholder="e.g. MH 02 AB 1234"
+              style="text-transform: uppercase;">
+          </div>
+        </div>
+        <div class="input-group">
+          <label>Driving Licence</label>
+          <div class="input-wrapper">
+            <input type="text" id="profileLicence" placeholder="Licence Number" style="text-transform: uppercase;">
+          </div>
+        </div>
+        <button class="btn" id="saveProfileBtn">Save Changes</button>
+      </div>
+
+      <div class="stat-card" style="text-align: left;">
+        <h3 style="margin-bottom: 16px; font-size: 16px;">Payout Details (Bank)</h3>
+        <div class="input-group">
+          <label>UPI ID / Bank Acct</label>
+          <div class="input-wrapper">
+            <input type="text" id="profileBank" placeholder="e.g. user@upi">
+          </div>
+        </div>
+        <p style="font-size: 12px; color: var(--text-secondary);">Payouts are processed weekly.</p>
+      </div>
+
+      <div style="height: 40px;"></div>
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav">
+      <div class="nav-item active" data-section="orders">
+        <span class="nav-icon">&#128230;</span>
+        <span class="nav-label">Orders</span>
+      </div>
+      <div class="nav-item" data-section="earnings">
+        <span class="nav-icon">&#128176;</span>
+        <span class="nav-label">Earnings</span>
+      </div>
+      <div class="nav-item" data-section="profile">
+        <span class="nav-icon">&#128100;</span>
+        <span class="nav-label">Profile</span>
+      </div>
+    </nav>
+  </div>
+
+  <!-- Toast & Modal -->
+  <div class="toast-container" id="toastContainer"></div>
+  <div class="modal-overlay" id="confirmModal">
+    <div class="modal-card">
+      <h3 id="modalTitle" style="margin-bottom: 8px;">Confirm</h3>
+      <p id="modalMessage" style="color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5;"></p>
+      <div style="display: flex; gap: 12px;">
+        <button class="btn btn-secondary" id="modalCancel">Cancel</button>
+        <button class="btn" id="modalConfirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * Meatvo Delivery Partner App
+     * Backend-only (Firebase removed)
+     * Features: Orders, Profile, Online toggle, Google Maps integration
+     */
+
+    // CONFIGURATION
+    const CONFIG = {
+      GOOGLE_MAPS_API_KEY: 'YOUR_GOOGLE_MAPS_API_KEY', // Replace with actual API key
+      STORE_LOCATION: {
+        lat: 12.9716,  // Replace with actual store latitude
+        lng: 77.5946,  // Replace with actual store longitude
+        name: "Meatvo Main Store",
+        address: "Store Address"
+      },
+      DELIVERY_RADIUS_KM: 5.0,
+      LOCATION_UPDATE_INTERVAL: 5000, // 5 seconds
+      MIN_MOVEMENT_METERS: 10 // Minimum movement before emitting
+    };
+
+    // Google Maps API Setup
+    const GOOGLE_MAPS_SCRIPT = `https://maps.googleapis.com/maps/api/js?key=${CONFIG.GOOGLE_MAPS_API_KEY}&libraries=places,geometry,directions`;
+
+    // Dynamic Google Maps loading
+    function loadGoogleMaps() {
+      return new Promise((resolve, reject) => {
+        if (window.google && window.google.maps) {
+          resolve(window.google.maps);
+          return;
+        }
+        if (CONFIG.GOOGLE_MAPS_API_KEY === 'YOUR_GOOGLE_MAPS_API_KEY') {
+          reject(new Error('Google Maps API key not configured'));
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = GOOGLE_MAPS_SCRIPT;
+        script.async = true;
+        script.defer = true;
+        script.onload = () => resolve(window.google.maps);
+        script.onerror = () => reject(new Error('Failed to load Google Maps'));
+        document.head.appendChild(script);
+      });
+    }
+
+    // Location sharing state
+    let locationWatchId = null;
+    let lastLocation = null;
+    let currentOrderId = null;
+    let partnerMap = null;
+    let partnerMarker = null;
+    let routeLine = null;
+
+    // STORE CONFIGURATION - Single store with 5km delivery radius
+    const STORE_LOCATION = CONFIG.STORE_LOCATION;
+    const DELIVERY_RADIUS_KM = CONFIG.DELIVERY_RADIUS_KM;
+
+    // Haversine formula to calculate distance between two coordinates
+    function calculateDistance(lat1, lng1, lat2, lng2) {
+      const R = 6371; // Earth's radius in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLng = (lng2 - lng1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLng/2) * Math.sin(dLng/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c; // Distance in km
+    }
+
+    // Check if order is within delivery zone
+    function isWithinDeliveryZone(orderLat, orderLng) {
+      const distance = calculateDistance(
+        STORE_LOCATION.lat, 
+        STORE_LOCATION.lng, 
+        orderLat, 
+        orderLng
+      );
+      return distance <= DELIVERY_RADIUS_KM; // Strict 5km radius
+    }
+
+    // Get distance color coding for UI
+    function getDistanceColor(distance) {
+      if (distance <= 2) return '#2E7D32'; // Green - Near Store
+      if (distance <= 4) return '#FF9800'; // Orange - Medium
+      if (distance <= 5) return '#F44336'; // Red - Far Zone
+      return '#9E9E9E'; // Grey - Out of Zone
+    }
+
+    // Get distance zone label
+    function getDistanceZone(distance) {
+      if (distance <= 2) return 'Near Store';
+      if (distance <= 4) return 'Medium Distance';
+      if (distance <= 5) return 'Far Zone';
+      return 'Out of Zone';
+    }
+
+    // Format distance display
+    function formatDistance(distance) {
+      if (distance < 1) {
+        return Math.round(distance * 1000) + ' m';
+      }
+      return distance.toFixed(1) + ' km';
+    }
+
+    // Filter orders by radius
+    function filterOrdersByRadius(orders, maxRadius = DELIVERY_RADIUS_KM) {
+      return orders.filter(order => {
+        if (!order.deliveryLat || !order.deliveryLng) return false;
+        const distance = calculateDistance(
+          STORE_LOCATION.lat,
+          STORE_LOCATION.lng,
+          order.deliveryLat,
+          order.deliveryLng
+        );
+        order.distanceFromStore = distance; // Store for display
+        return distance <= maxRadius;
+      });
+    }
+
+    // Sort orders by distance from store
+    function sortOrdersByDistance(orders) {
+      return orders.sort((a, b) => (a.distanceFromStore || 0) - (b.distanceFromStore || 0));
+    }
+
+    // GOOGLE MAPS: Navigation functions
+    function startNavigation(customerLat, customerLng) {
+      const store = STORE_LOCATION;
+      
+      // For Capacitor (mobile app)
+      if (window.Capacitor) {
+        // Use native navigation
+        const url = `geo:${customerLat},${customerLng}?q=${customerLat},${customerLng}(Delivery)`;
+        window.open(url, '_system');
+      } else {
+        // Web fallback - Google Maps directions
+        const url = `https://www.google.com/maps/dir/?api=1&origin=${store.lat},${store.lng}&destination=${customerLat},${customerLng}&travelmode=driving`;
+        window.open(url, '_blank');
+      }
+    }
+
+    // LOCATION SHARING: Real-time location streaming
+    function startLocationSharing(orderId) {
+      currentOrderId = orderId;
+      
+      // Check geolocation permission
+      if (!navigator.geolocation) {
+        showToast('GPS not supported on this device', 'error');
+        return;
+      }
+      
+      // Request permission if needed
+      navigator.permissions.query({ name: 'geolocation' }).then(result => {
+        if (result.state === 'denied') {
+          showToast('⚠️ Please enable location permissions for live tracking', 'warning');
+          showManualLocationButtons();
+          return;
+        }
+        
+        // Start watching position
+        locationWatchId = navigator.geolocation.watchPosition(
+          (position) => {
+            const location = {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+              accuracy: position.coords.accuracy,
+              timestamp: new Date().toISOString(),
+              orderId: orderId
+            };
+            
+            // Only emit if moved >10 meters (optimization)
+            if (!lastLocation || calculateDistance(lastLocation.lat, lastLocation.lng, location.lat, location.lng) > 0.01) {
+              lastLocation = location;
+              
+              // Emit via Socket.io
+              if (window.realtimeSocket) {
+                window.realtimeSocket.emit('delivery:location_update', location);
+              }
+              
+              // Update local UI
+              updatePartnerMapMarker(location);
+            }
+          },
+          (error) => {
+            console.error('Location error:', error);
+            handleLocationError(error);
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 5000
+          }
+        );
+        
+        showToast('📍 Live tracking started - Customer can see your location', 'success');
+      });
+    }
+
+    function stopLocationSharing() {
+      if (locationWatchId) {
+        navigator.geolocation.clearWatch(locationWatchId);
+        locationWatchId = null;
+        
+        if (window.realtimeSocket && currentOrderId) {
+          window.realtimeSocket.emit('delivery:location_stopped', { orderId: currentOrderId });
+        }
+        
+        currentOrderId = null;
+        lastLocation = null;
+        
+        showToast('📍 Live tracking stopped', 'info');
+      }
+    }
+
+    function handleLocationError(error) {
+      switch(error.code) {
+        case error.PERMISSION_DENIED:
+          showToast('⚠️ Please enable location permissions for live tracking', 'warning');
+          showManualLocationButtons();
+          break;
+        case error.POSITION_UNAVAILABLE:
+          showToast('⚠️ Location unavailable. Check GPS signal.', 'warning');
+          break;
+        case error.TIMEOUT:
+          showToast('⚠️ Location request timed out', 'warning');
+          break;
+      }
+    }
+
+    function showManualLocationButtons() {
+      // Show manual status update buttons when GPS is unavailable
+      const manualButtons = `
+        <div style="background: #fff3cd; padding: 12px; border-radius: 8px; margin: 16px 0;">
+          <p style="margin: 0 0 12px 0; font-size: 13px; color: #856404;">
+            ⚠️ GPS unavailable. Use manual status updates:
+          </p>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-secondary" onclick="manualStatusUpdate('reached_store')" style="font-size: 12px;">
+              🏪 Reached Store
+            </button>
+            <button class="btn btn-secondary" onclick="manualStatusUpdate('picked_up')" style="font-size: 12px;">
+              📦 Picked Up
+            </button>
+            <button class="btn btn-secondary" onclick="manualStatusUpdate('near_customer')" style="font-size: 12px;">
+              📍 Near Customer
+            </button>
+            <button class="btn btn-secondary" onclick="manualStatusUpdate('arrived')" style="font-size: 12px;">
+              ✅ Arrived
+            </button>
+          </div>
+        </div>
+      `;
+      
+      // Insert manual buttons in active order detail view
+      const orderDetail = document.querySelector('.order-detail-view');
+      if (orderDetail) {
+        orderDetail.insertAdjacentHTML('afterbegin', manualButtons);
+      }
+    }
+
+    function manualStatusUpdate(status) {
+      if (window.realtimeSocket && currentOrderId) {
+        window.realtimeSocket.emit('delivery:manual_status_update', {
+          orderId: currentOrderId,
+          status: status,
+          timestamp: new Date().toISOString()
+        });
+        
+        showToast(`📍 Status updated: ${status.replace('_', ' ')}`, 'success');
+      }
+    }
+
+    // MAP UI: Initialize partner map
+    function initPartnerMap(order) {
+      const mapContainer = document.getElementById('partner-map-container');
+      if (!mapContainer) return;
+      
+      loadGoogleMaps().then((maps) => {
+        // Initialize map
+        partnerMap = new maps.Map(mapContainer, {
+          zoom: 14,
+          center: { lat: order.deliveryLat || STORE_LOCATION.lat, lng: order.deliveryLng || STORE_LOCATION.lng },
+          mapTypeControl: false,
+          fullscreenControl: false,
+          streetViewControl: false,
+          zoomControl: true,
+          gestureHandling: 'cooperative'
+        });
+        
+        // Add store marker
+        new maps.Marker({
+          position: STORE_LOCATION,
+          map: partnerMap,
+          title: 'Store',
+          icon: {
+            url: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+            scaledSize: new maps.Size(32, 32)
+          }
+        });
+        
+        // Add customer marker
+        if (order.deliveryLat && order.deliveryLng) {
+          new maps.Marker({
+            position: { lat: order.deliveryLat, lng: order.deliveryLng },
+            map: partnerMap,
+            title: 'Customer',
+            icon: {
+              url: 'https://maps.google.com/mapfiles/ms/icons/blue-dot.png',
+              scaledSize: new maps.Size(32, 32)
+            }
+          });
+          
+          // Draw route line
+          drawRouteLine(STORE_LOCATION, { lat: order.deliveryLat, lng: order.deliveryLng });
+        }
+        
+        // Add partner marker (current location)
+        if (lastLocation) {
+          updatePartnerMapMarker(lastLocation);
+        }
+        
+      }).catch(error => {
+        console.error('Failed to load Google Maps:', error);
+        handleMapsFailure();
+      });
+    }
+
+    function updatePartnerMapMarker(location) {
+      if (!partnerMap || !window.google) return;
+      
+      if (!partnerMarker) {
+        partnerMarker = new window.google.maps.Marker({
+          position: { lat: location.lat, lng: location.lng },
+          map: partnerMap,
+          title: 'You',
+          icon: {
+            url: 'https://maps.google.com/mapfiles/ms/icons/green-dot.png',
+            scaledSize: new window.google.maps.Size(40, 40)
+          }
+        });
+      } else {
+        partnerMarker.setPosition({ lat: location.lat, lng: location.lng });
+      }
+    }
+
+    function drawRouteLine(start, end) {
+      if (!partnerMap || !window.google) return;
+      
+      // Clear existing route
+      if (routeLine) {
+        routeLine.setMap(null);
+      }
+      
+      routeLine = new window.google.maps.Polyline({
+        path: [start, end],
+        geodesic: true,
+        strokeColor: '#4F46E5',
+        strokeOpacity: 1.0,
+        strokeWeight: 3,
+        map: partnerMap
+      });
+    }
+
+    function handleMapsFailure() {
+      // Hide map container
+      const mapContainer = document.getElementById('partner-map-container');
+      if (mapContainer) {
+        mapContainer.style.display = 'none';
+      }
+      
+      // Show text-based navigation
+      const textNav = document.getElementById('text-navigation');
+      if (textNav) {
+        textNav.style.display = 'block';
+      }
+      
+      showToast('Maps unavailable. Using text-based navigation.', 'warning');
+    }
+
+    function toggleLocationSharing(orderId) {
+      const btn = document.getElementById(`location-btn-${orderId}`);
+      
+      if (locationWatchId && currentOrderId === orderId) {
+        // Stop sharing
+        stopLocationSharing();
+        if (btn) {
+          btn.textContent = '📍 Share Location';
+          btn.classList.remove('btn-success');
+          btn.classList.add('btn-secondary');
+        }
+      } else {
+        // Start sharing
+        startLocationSharing(orderId);
+        if (btn) {
+          btn.textContent = '⏹️ Stop Sharing';
+          btn.classList.remove('btn-secondary');
+          btn.classList.add('btn-success');
+        }
+        
+        // Initialize map for this order
+        const order = state.activeOrders.find(o => o.id === orderId);
+        if (order) {
+          setTimeout(() => initPartnerMap(order), 1000); // Delay to ensure map container is ready
+        }
+      }
+    }
+
+    function openWebDirections(customerLat, customerLng) {
+      if (!customerLat || !customerLng) {
+        showToast('Customer location not available', 'error');
+        return;
+      }
+      
+      const store = STORE_LOCATION;
+      const url = `https://www.google.com/maps/dir/?api=1&origin=${store.lat},${store.lng}&destination=${customerLat},${customerLng}&travelmode=driving`;
+      window.open(url, '_blank');
+    }
+
+    // Filter orders by range
+    let currentRangeFilter = 'all';
+    function filterByRange(range) {
+      currentRangeFilter = range;
+      renderOrders();
+      
+      // Update button styles to show active filter
+      document.querySelectorAll('.orders-nav button').forEach(btn => {
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-secondary');
+      });
+      event.target.classList.remove('btn-secondary');
+      event.target.classList.add('btn-primary');
+    }
+
+    // Security Utilities
+    class SecurityUtils {
+      // Input sanitization
+      static sanitizeInput(input) {
+        if (typeof input !== 'string') return input;
+        return input
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#x27;')
+          .replace(/\//g, '&#x2F;');
+      }
+
+      // Phone number validation
+      static validatePhone(phone) {
+        const cleaned = phone.replace(/\D/g, '');
+        return cleaned.length === 10 && /^\d+$/.test(cleaned);
+      }
+
+      // OTP validation
+      static validateOTP(otp) {
+        return /^\d{4,6}$/.test(otp);
+      }
+
+      // Email validation
+      static validateEmail(email) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return emailRegex.test(email);
+      }
+
+      // Generate CSRF token
+      static generateCSRFToken() {
+        const array = new Uint8Array(32);
+        crypto.getRandomValues(array);
+        return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+      }
+
+      // Get or set CSRF token
+      static getCSRFToken() {
+        let token = sessionStorage.getItem('csrf_token');
+        if (!token) {
+          token = this.generateCSRFToken();
+          sessionStorage.setItem('csrf_token', token);
+        }
+        return token;
+      }
+
+      // Add CSRF token to requests
+      static addCSRFToHeaders(headers) {
+        headers['X-CSRF-Token'] = this.getCSRFToken();
+        return headers;
+      }
+
+      // Rate limiting for login attempts
+      static checkLoginRate(phone) {
+        const key = `login_attempts_${phone}`;
+        const attempts = JSON.parse(localStorage.getItem(key) || '[]');
+        const now = Date.now();
+        
+        // Remove attempts older than 15 minutes
+        const recent = attempts.filter(time => now - time < 15 * 60 * 1000);
+        
+        if (recent.length >= 5) {
+          return false; // Too many attempts
+        }
+        
+        recent.push(now);
+        localStorage.setItem(key, JSON.stringify(recent));
+        return true;
+      }
+
+      // Clear login attempts
+      static clearLoginAttempts(phone) {
+        const key = `login_attempts_${phone}`;
+        localStorage.removeItem(key);
+      }
+    }
+
+    // Backend API
+    const API_BASE_CANDIDATES = (() => {
+      const manual = (localStorage.getItem('MEATVO_API_BASE') || '').trim();
+      const list = [
+        manual,
+        'http://127.0.0.1:8081',
+        'http://localhost:8081',
+        'http://127.0.0.1:8080',
+        'http://localhost:8080'
+      ]
+        .filter(Boolean)
+        .map(v => String(v).replace(/\/$/, ''));
+      return [...new Set(list)];
+    })();
+
+    let API_BASE = API_BASE_CANDIDATES[0];
+
+    function getDeliveryToken() {
+      return localStorage.getItem('authToken');
+    }
+
+    async function apiJson(path, { method = 'GET', body = null, auth = true } = {}) {
+      const headers = { 'Accept': 'application/json' };
+      if (body) headers['Content-Type'] = 'application/json';
+      if (auth) {
+        const token = getDeliveryToken();
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+      }
+      
+      // Add CSRF protection
+      SecurityUtils.addCSRFToHeaders(headers);
+
+      let lastErr = null;
+      let lastStatus = null;
+      for (const base of API_BASE_CANDIDATES) {
+        try {
+          const res = await fetch(`${base}${path}`, {
+            method,
+            headers,
+            body: body ? JSON.stringify(body) : null
+          });
+
+          let json = null;
+          try { json = await res.json(); } catch (e) { }
+
+          if (!res.ok || (json && json.ok === false)) {
+            lastStatus = res.status;
+            const msg = json?.error?.message || `Request failed (${res.status})`;
+            throw new Error(msg);
+          }
+
+          API_BASE = base;
+          localStorage.setItem('MEATVO_API_BASE', base);
+          return json?.data ?? json;
+        } catch (e) {
+          lastErr = e;
+          const msg = String(e && e.message ? e.message : e);
+          const isNetwork = (e && (e.name === 'TypeError')) || msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('ERR_CONNECTION_REFUSED');
+          const isAuth = auth && (msg.toLowerCase().includes('not authorized') || lastStatus === 401 || lastStatus === 403);
+          if (!isNetwork && !isAuth) throw e;
+        }
+      }
+      const tried = API_BASE_CANDIDATES.join(', ');
+      const msg = lastErr && lastErr.message ? String(lastErr.message) : String(lastErr || 'Failed to fetch');
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('ERR_CONNECTION_REFUSED')) {
+        throw new Error(`Backend not reachable (tried: ${tried}). Start server and check PORT.`);
+      }
+      throw lastErr || new Error('Failed to fetch');
+    }
+
+    // --- State Management ---
+    const state = {
+      currentUser: null,
+      profile: null,
+      activeTab: 'active', // 'active' or 'available'
+      activeOrders: [],
+      availableOrders: [],
+      deliveredOrders: [],
+      rejectedOrderIds: JSON.parse(sessionStorage.getItem('meatvo_rejected_orders') || '[]'),
+      locationWatchId: null,
+      isOnline: false
+    };
+
+    // --- DOM Elements ---
+    const UI = {
+      loginScreen: document.getElementById('loginScreen'),
+      appContainer: document.getElementById('appContainer'),
+      phoneInput: document.getElementById('phoneInput'),
+      otpInput: document.getElementById('otpInput'),
+      phoneStep: document.getElementById('phoneStep'),
+      otpStep: document.getElementById('otpStep'),
+      loginError: document.getElementById('loginError'),
+      activeOrdersList: document.getElementById('activeOrdersList'),
+      availableOrdersList: document.getElementById('availableOrdersList'),
+      onlineToggle: document.getElementById('onlineToggle'),
+      onlineText: document.getElementById('onlineText'),
+      newRequestsCount: document.getElementById('newRequestsCount'),
+      sections: document.querySelectorAll('.content-section'),
+      navItems: document.querySelectorAll('.nav-item'),
+      orderTabs: document.querySelectorAll('.order-tab'),
+      approvalBanner: document.getElementById('approvalBanner')
+    };
+
+    // --- Auth Flow ---
+    async function init() {
+      // AUTH GUARD - Check unified auth token
+      const token = localStorage.getItem('authToken');
+      const user = JSON.parse(localStorage.getItem('authUser') || '{}');
+      const expiry = Number(localStorage.getItem('authTokenExpiry') || 0);
+      
+      if (!token || (user.role !== 'delivery_partner' && user.role !== 'delivery')) {
+        window.location.href = '/delivery/delivery-login.html';
+        return;
+      }
+      
+      // Only check expiry if it exists, be lenient
+      if (expiry && Date.now() > expiry) {
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('authTokenExpiry');
+        window.location.href = '/real-otp-login.html';
+        return;
+      }
+
+      // Hide login screen and show app directly
+      UI.loginScreen.classList.add('hidden');
+      UI.appContainer.classList.remove('hidden');
+      
+      try {
+        // Validate token by calling backend
+        await apiJson('/api/delivery/me');
+        loginSuccess(user);
+      } catch (e) {
+        // Only logout if server explicitly says unauthorized (401/403)
+        // If server is down/unreachable, keep user logged in
+        const msg = String(e?.message || '');
+        const isAuthError = msg.toLowerCase().includes('not authorized') 
+          || msg.includes('401') 
+          || msg.includes('403')
+          || msg.includes('unauthorized');
+        
+        if (isAuthError) {
+          // Token invalid, clear and redirect to login
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('authUser');
+          localStorage.removeItem('authTokenExpiry');
+          window.location.href = '/real-otp-login.html';
+        } else {
+          // Server might be down - use cached user data
+          loginSuccess(user);
+        }
+      }
+    }
+
+    document.getElementById('sendOtpBtn').addEventListener('click', async () => {
+      const phone = UI.phoneInput.value.trim();
+      if (phone.length !== 10 || !/^\d+$/.test(phone)) {
+        showError('Please enter a valid 10-digit number');
+        return;
+      }
+      const btn = document.getElementById('sendOtpBtn');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      document.getElementById('devLoginStep').classList.add('hidden');
+      try {
+        await apiJson('/api/auth/send-otp', { method: 'POST', body: { phone }, auth: false });
+        UI.phoneStep.classList.add('hidden');
+        UI.otpStep.classList.remove('hidden');
+        UI.otpInput.focus();
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        showError('Failed to send OTP: ' + msg);
+        // If OTP is blocked (DLT/IP whitelist), allow dev login
+        if (msg.toLowerCase().includes('whitelist') || msg.toLowerCase().includes('ip')) {
+          document.getElementById('devLoginStep').classList.remove('hidden');
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Continue';
+      }
+    });
+
+    document.getElementById('backToPhone').addEventListener('click', () => {
+      UI.otpStep.classList.add('hidden');
+      UI.phoneStep.classList.remove('hidden');
+      document.getElementById('devLoginStep').classList.add('hidden');
+    });
+
+    document.getElementById('verifyOtpBtn').addEventListener('click', async () => {
+      const otp = UI.otpInput.value.trim();
+      const phone = UI.phoneInput.value.trim();
+
+      if (otp.length !== 4 || !/^\d+$/.test(otp)) {
+        showError('Invalid OTP');
+        return;
+      }
+
+      const btn = document.getElementById('verifyOtpBtn');
+      btn.disabled = true;
+      btn.textContent = 'Verifying...';
+
+      try {
+        const out = await apiJson('/api/auth/verify-otp', { method: 'POST', body: { phone, otp }, auth: false });
+        if (!out || !out.user || !out.token) throw new Error('Invalid server response');
+        if (out.user.role !== 'delivery_partner' && out.user.role !== 'delivery') {
+          throw new Error('Access denied (not delivery)');
+        }
+        // Normalize role
+        if (out.user.role === 'delivery') out.user.role = 'delivery_partner';
+
+        localStorage.setItem('authToken', out.token);
+        const user = { uid: out.user.id, phone: out.user.phone, role: out.user.role };
+        localStorage.setItem('authUser', JSON.stringify(user));
+        loginSuccess(user);
+      } catch (e) {
+        showError('Login Failed: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Verify & Login';
+      }
+    });
+
+    document.getElementById('devLoginBtn').addEventListener('click', async () => {
+      const phone = UI.phoneInput.value.trim();
+      const secret = document.getElementById('devSecretInput').value;
+      if (phone.length !== 10 || !/^\d+$/.test(phone)) {
+        showError('Please enter a valid 10-digit number');
+        return;
+      }
+      if (!secret || secret.length < 3) {
+        showError('Enter dev secret');
+        return;
+      }
+
+      const btn = document.getElementById('devLoginBtn');
+      btn.disabled = true;
+      btn.textContent = 'Logging in...';
+      try {
+        const out = await apiJson('/api/auth/dev-login', { method: 'POST', body: { phone, secret, role: 'DELIVERY' }, auth: false });
+        if (!out || !out.user || !out.token) throw new Error('Invalid server response');
+        if (out.user.role !== 'delivery_partner' && out.user.role !== 'delivery') {
+          throw new Error('Access denied (not delivery)');
+        }
+        // Normalize role
+        if (out.user.role === 'delivery') out.user.role = 'delivery_partner';
+
+        localStorage.setItem('authToken', out.token);
+        const user = { uid: out.user.id, phone: out.user.phone, role: out.user.role };
+        localStorage.setItem('authUser', JSON.stringify(user));
+        loginSuccess(user);
+      } catch (e) {
+        showError('Dev login failed: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Dev Login';
+      }
+    });
+
+    function loginSuccess(user) {
+      state.currentUser = user;
+      UI.loginScreen.style.display = 'none';
+      UI.appContainer.classList.add('active');
+
+      // Initial Data Load
+      loadProfile();
+      loadOrders();
+      setupThemeListener();
+      connectDeliverySocket();
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+      showModal('Logout', 'Are you sure you want to logout?', async () => {
+        try {
+          await apiJson('/api/delivery/online', { method: 'POST', body: { online: false }, auth: true });
+        } catch (e) { }
+        stopLocationTracking();
+        localStorage.removeItem('authUser');
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('authTokenExpiry');
+        localStorage.removeItem('meatvo_delivery_user');
+        localStorage.removeItem('meatvo_delivery_token');
+        location.reload();
+      });
+    });
+
+    function connectDeliverySocket() {
+      try {
+        const socketScript = document.createElement('script');
+        socketScript.src = `${API_BASE}/socket.io/socket.io.js`;
+        socketScript.onload = () => {
+          const deliverySocket = window.io(API_BASE, {
+            auth: { token: getDeliveryToken() },
+            transports: ['websocket', 'polling'] // Allow fallback to polling
+          });
+          
+          deliverySocket.on('connect', () => {
+            if (state.currentUser) {
+              deliverySocket.emit('join_delivery_room', state.currentUser.uid);
+            }
+            console.log('Delivery socket connected');
+          });
+          
+          // New order assigned
+          deliverySocket.on('order:assigned', (data) => {
+            showToast('📦 New order assigned to you!', 'success');
+            loadOrders();
+          });
+          
+          deliverySocket.on('disconnect', () => {
+            console.log('Delivery socket disconnected');
+          });
+        };
+        document.head.appendChild(socketScript);
+      } catch (e) {
+        console.warn('Delivery socket connection failed:', e);
+      }
+    }
+
+    // --- Data Logic ---
+    async function loadProfile() {
+      try {
+        const me = await apiJson('/api/delivery/me', { auth: true });
+        state.profile = me.profile;
+        updateUIWithProfile(me.profile);
+      } catch (e) {
+        showToast('Profile load failed: ' + (e.message || e), 'error');
+      }
+    }
+
+    function updateUIWithProfile(profile) {
+      // Profile Tab
+      document.getElementById('displayProfileName').textContent = profile.name || 'Delivery Partner';
+      document.getElementById('displayProfilePhone').textContent = profile.phone || state.currentUser.phone;
+
+      // Inputs
+      if (document.activeElement !== document.getElementById('profileName')) {
+        document.getElementById('profileName').value = profile.name || '';
+      }
+      if (document.activeElement !== document.getElementById('profileVehicle')) {
+        document.getElementById('profileVehicle').value = profile.vehicle || '';
+      }
+      if (document.activeElement !== document.getElementById('profileVehicleNumber')) {
+        document.getElementById('profileVehicleNumber').value = profile.vehicleNumber || '';
+      }
+      if (document.activeElement !== document.getElementById('profileLicence')) {
+        document.getElementById('profileLicence').value = profile.licenceNumber || '';
+      }
+      if (document.activeElement !== document.getElementById('profileBank')) {
+        document.getElementById('profileBank').value = profile.bankDetails || '';
+      }
+
+      // Online Status
+      state.isOnline = profile.online || false;
+      if (state.isOnline) {
+        UI.onlineToggle.classList.add('active');
+        UI.onlineText.textContent = 'Online';
+        // FIX: Only start tracking if not already watching to prevent infinite loops
+        if (!state.locationWatchId) {
+          startLocationTracking();
+        }
+      } else {
+        UI.onlineToggle.classList.remove('active');
+        UI.onlineText.textContent = 'Offline';
+        stopLocationTracking();
+      }
+
+      // Approval Status
+      if (profile.approved) {
+        UI.approvalBanner.classList.add('hidden');
+      } else {
+        UI.approvalBanner.classList.remove('hidden');
+        // Force offline if not approved
+        if (state.isOnline) toggleOnline();
+      }
+    }
+
+    async function loadOrders() {
+      try {
+        const data = await apiJson('/api/delivery/orders', { auth: true });
+        state.activeOrders = data.active || [];
+        state.availableOrders = data.available || [];
+        state.deliveredOrders = data.delivered || [];
+        
+        // Apply 5km radius filter to available orders
+        state.availableOrders = filterOrdersByRadius(state.availableOrders);
+        state.availableOrders = sortOrdersByDistance(state.availableOrders);
+        
+        renderOrders();
+        calculateEarnings();
+      } catch (e) {
+        showToast('Orders load failed: ' + (e.message || e), 'error');
+      }
+    }
+
+    function renderOrders() {
+      if (!state.profile) return;
+
+      const myOrders = (state.activeOrders || []).slice();
+      let availableOrders = (state.availableOrders || [])
+        .filter(o => !state.rejectedOrderIds.includes(o.id))
+        .filter(() => state.profile.approved);
+
+      // Apply range filter
+      if (currentRangeFilter === 'near') {
+        availableOrders = availableOrders.filter(o => o.distanceFromStore <= 2);
+      } else if (currentRangeFilter === 'far') {
+        availableOrders = availableOrders.filter(o => o.distanceFromStore > 2 && o.distanceFromStore <= DELIVERY_RADIUS_KM);
+      }
+      // 'all' shows all within 5km (already filtered)
+
+      // Update Badge
+      if (availableOrders.length > 0) {
+        UI.newRequestsCount.textContent = availableOrders.length;
+        UI.newRequestsCount.classList.add('show');
+      } else {
+        UI.newRequestsCount.classList.remove('show');
+      }
+
+      // Render Active
+      UI.activeOrdersList.innerHTML = myOrders.length ?
+        myOrders.map(o => createOrderCard(o, true)).join('') :
+        `<div class="empty-state">
+                    <div class="empty-state-icon">&#128230;</div>
+                    <p>No active deliveries.</p>
+                </div>`;
+
+      // Render Available
+      UI.availableOrdersList.innerHTML = availableOrders.length ?
+        availableOrders.map(o => createOrderCard(o, false)).join('') :
+        `<div class="empty-state">
+                    <div class="empty-state-icon">&#128161;</div>
+                    <h3>No orders within ${DELIVERY_RADIUS_KM}km of store right now</h3>
+                    <p>Stay online! 📍 Orders in your area will appear here.</p>
+                </div>`;
+    }
+
+    function createOrderCard(order, isMyOrder) {
+      const date = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const items = order.items ? order.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'Items info not available';
+      
+      // Calculate distance from store for available orders
+      let distanceInfo = '';
+      let zoneBadge = '';
+      let acceptButtonDisabled = '';
+      
+      if (!isMyOrder && order.deliveryLat && order.deliveryLng) {
+        const distance = order.distanceFromStore || calculateDistance(
+          STORE_LOCATION.lat,
+          STORE_LOCATION.lng,
+          order.deliveryLat,
+          order.deliveryLng
+        );
+        
+        const distanceColor = getDistanceColor(distance);
+        const zoneLabel = getDistanceZone(distance);
+        const formattedDistance = formatDistance(distance);
+        
+        let distanceWarning = '';
+        if (distance > 4 && distance <= DELIVERY_RADIUS_KM) {
+          distanceWarning = `
+            <div style="background: #fff3cd; padding: 6px 8px; border-radius: 6px; margin-bottom: 8px; font-size: 11px; color: #856404; border-left: 3px solid #f59e0b;">
+              ⚠️ Long distance - ensure sufficient charge/petrol
+            </div>
+          `;
+        }
+        
+        distanceInfo = `
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: 12px; color: ${distanceColor}; font-weight: 600;">
+              📍 ${formattedDistance} from store
+            </span>
+            <span style="font-size: 11px; padding: 2px 6px; background: ${distanceColor}; color: white; border-radius: 10px; font-weight: 600;">
+              ${zoneLabel}
+            </span>
+          </div>
+          ${distanceWarning}
+        `;
+        
+        // Disable accept button if outside 5km zone
+        if (distance > DELIVERY_RADIUS_KM) {
+          acceptButtonDisabled = 'disabled style="opacity: 0.5; cursor: not-allowed;"';
+        }
+      }
+
+      let actionButtons = '';
+
+      if (!isMyOrder) {
+        if (order.distanceFromStore > DELIVERY_RADIUS_KM) {
+          actionButtons = `
+                    <button class="btn btn-secondary" disabled style="opacity: 0.5; cursor: not-allowed;">
+                      ❌ Outside 5km delivery zone
+                    </button>
+                  `;
+        } else {
+          actionButtons = `
+                    <button class="btn btn-secondary" onclick="rejectOrder('${order.id}')">Dismiss</button>
+                    <button class="btn btn-success" style="background: var(--primary-color); color: white;" onclick="acceptOrder('${order.id}')" ${acceptButtonDisabled}>Accept Order</button>
+                  `;
+        }
+      } else {
+        // Workflow Logic
+        let nextStep = '';
+        let btnText = '';
+        let locationLinkInput = '';
+
+        if (order.status === 'ASSIGNED' || order.status === 'CONFIRMED') {
+          nextStep = 'PACKED';
+          btnText = 'Mark Packed';
+        } else if (order.status === 'PACKED') {
+          // Show locationLink input field when status is PACKED (before OUT_FOR_DELIVERY)
+          locationLinkInput = `
+                        <div style="margin-bottom: 12px;">
+                            <label style="display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text-primary);">
+                                &#128205; Google Maps Location Link <span style="color: var(--danger-color);">*</span>
+                            </label>
+                            <input type="url" 
+                                   id="locationLink_${order.id}" 
+                                   class="form-input" 
+                                   placeholder="https://maps.google.com/?q=23.67,86.15"
+                                   value="${order.locationLink || ''}"
+                                   style="width: 100%; padding: 10px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 14px;">
+                            <p style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
+                                Paste the Google Maps link for delivery location
+                            </p>
+                        </div>
+                    `;
+          nextStep = 'OUT_FOR_DELIVERY';
+          btnText = 'Start Delivery';
+        } else if (order.status === 'OUT_FOR_DELIVERY') {
+          nextStep = 'DELIVERED';
+          btnText = 'Complete Delivery';
+        }
+
+        if (nextStep) {
+          actionButtons = `
+                        ${locationLinkInput}
+                        <button class="btn full-width-btn ${nextStep === 'DELIVERED' ? 'btn-success' : ''}" 
+                                onclick="updateStatus('${order.id}', '${nextStep}')"
+                                id="statusBtn_${order.id}">
+                            ${btnText}
+                        </button>
+                    `;
+        }
+      }
+
+      return `
+                <div class="order-card order-detail-view" data-order-id="${order.id}">
+                    <span class="order-status-badge status-badge-${order.status}">${order.status.replace(/_/g, ' ')}</span>
+                    <div class="order-header-main">
+                        <div class="order-icon-bg">&#128717;&#65039;</div>
+                        <div class="order-id-group">
+                            <h3>Order #${order.id.substring(0, 6)}</h3>
+                            <span>${date} • ${order.paymentMethod || 'COD'}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="order-details">
+                        ${distanceInfo}
+                        <div class="detail-row">
+                            <span class="detail-icon">&#128100;</span>
+                            <span class="detail-text">${order.phone || 'Customer'}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-icon">&#128205;</span>
+                            <span class="detail-text">${order.address || 'No Address Provided'}</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-icon">&#128722;</span>
+                            <span class="detail-text" style="color: var(--text-secondary); font-size: 13px;">${items}</span>
+                        </div>
+                    </div>
+
+                    <!-- MAP CONTAINER FOR ACTIVE ORDERS -->
+                    ${isMyOrder ? `
+                        <div id="partner-map-container" style="height: 200px; border-radius: 12px; margin: 16px 0; background: #f0f0f0; position: relative;">
+                            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #666;">
+                                <div style="font-size: 24px; margin-bottom: 8px;">🗺️</div>
+                                <div style="font-size: 12px;">Loading map...</div>
+                            </div>
+                        </div>
+                        
+                        <!-- NAVIGATION CONTROLS -->
+                        <div style="display: flex; gap: 8px; margin: 16px 0;">
+                            <button onclick="startNavigation(${order.deliveryLat || 'null'}, ${order.deliveryLng || 'null'})" 
+                                    class="btn" style="flex: 1; background: var(--primary-color); color: white;">
+                                🧭 Start Navigation
+                            </button>
+                            <button onclick="toggleLocationSharing('${order.id}')" 
+                                    class="btn btn-secondary" style="flex: 1;" id="location-btn-${order.id}">
+                                📍 Share Location
+                            </button>
+                        </div>
+                        
+                        <!-- TEXT-BASED FALLBACK -->
+                        <div id="text-navigation" style="display: none; background: #f8f9fa; padding: 12px; border-radius: 8px; margin: 16px 0;">
+                            <h4 style="margin: 0 0 8px 0; font-size: 14px;">📍 Navigation Info</h4>
+                            <p style="margin: 0; font-size: 13px; color: #666;">
+                                <strong>From:</strong> ${STORE_LOCATION.name}<br>
+                                <strong>To:</strong> ${order.address || 'Customer location'}<br>
+                                <strong>Distance:</strong> ${order.distanceFromStore ? order.distanceFromStore.toFixed(1) + ' km' : 'Calculating...'}
+                            </p>
+                            <button onclick="openWebDirections(${order.deliveryLat || 'null'}, ${order.deliveryLng || 'null'})" 
+                                    class="btn btn-secondary" style="margin-top: 8px; font-size: 12px;">
+                                🌐 Open in Google Maps
+                            </button>
+                        </div>
+                    ` : ''}
+
+                    <div class="order-footer">
+                        <div class="order-price">&#8377;${order.totalAmount || 0}</div>
+                        <div style="font-size: 12px; color: var(--text-secondary);">Includes taxes</div>
+                    </div>
+
+                    <div class="order-actions">
+                        ${actionButtons}
+                    </div>
+                </div>
+            `;
+    }
+
+    // --- Actions ---
+
+    window.acceptOrder = async (orderId) => {
+      if (!state.profile.approved) {
+        showToast('Account not approved yet.', 'error');
+        return;
+      }
+
+      // Pre-claim check: Verify order is within 5km
+      const order = state.availableOrders.find(o => o.id === orderId);
+      if (!order) {
+        showToast('Order not found', 'error');
+        return;
+      }
+
+      if (order.distanceFromStore > DELIVERY_RADIUS_KM) {
+        showToast('❌ Cannot accept - Order is outside 5km delivery zone', 'error');
+        return;
+      }
+
+      try {
+        await apiJson(`/api/delivery/orders/${orderId}/claim`, { method: 'POST', auth: true });
+        showToast('Order Accepted! 🚀', 'success');
+        await loadOrders();
+        switchTab('active');
+      } catch (e) {
+        showToast('Order claim failed: ' + (e.message || e), 'error');
+      }
+    };
+    window.rejectOrder = (orderId) => {
+      state.rejectedOrderIds.push(orderId);
+      sessionStorage.setItem('meatvo_rejected_orders', JSON.stringify(state.rejectedOrderIds));
+      renderOrders(); // Re-render to hide it
+      showToast('Order dismissed', 'neutral');
+    };
+
+    window.updateStatus = (orderId, status) => {
+      if (status === 'OUT_FOR_DELIVERY') {
+        const locationLinkInput = document.getElementById(`locationLink_${orderId}`);
+        const locationLink = locationLinkInput ? String(locationLinkInput.value || '').trim() : '';
+
+        if (!locationLink) {
+          showToast('Please enter Google Maps location link before starting delivery', 'error');
+          if (locationLinkInput) {
+            locationLinkInput.focus();
+            locationLinkInput.style.borderColor = 'var(--danger-color)';
+            setTimeout(() => {
+              if (locationLinkInput) locationLinkInput.style.borderColor = '';
+            }, 2000);
+          }
+          return;
+        }
+
+        const statusBtn = document.getElementById(`statusBtn_${orderId}`);
+        if (statusBtn) {
+          statusBtn.disabled = true;
+          statusBtn.textContent = 'Processing...';
+        }
+
+        apiJson(`/api/delivery/orders/${orderId}/status`, {
+          method: 'PATCH',
+          auth: true,
+          body: { status: status, locationLink }
+        })
+          .then(async () => {
+            showToast('Delivery started! 🚀', 'success');
+            
+            // Auto-start location sharing when delivery starts
+            if (status === 'OUT_FOR_DELIVERY') {
+              toggleLocationSharing(orderId);
+            }
+            
+            await loadOrders();
+            if (statusBtn) statusBtn.disabled = false;
+          })
+          .catch((e) => {
+            showToast('Update failed: ' + (e.message || e), 'error');
+            if (statusBtn) {
+              statusBtn.disabled = false;
+              statusBtn.textContent = 'Start Delivery';
+            }
+          });
+
+        return;
+      }
+
+      const niceStatus = status.replace(/_/g, ' ').toLowerCase();
+      showModal('Update Status', `Mark order as ${niceStatus}?`, async () => {
+        try {
+          await apiJson(`/api/delivery/orders/${orderId}/status`, { method: 'PATCH', auth: true, body: { status } });
+
+          if (status === 'DELIVERED') {
+            showToast('Delivery Completed! Great job! 🎉', 'success');
+          } else {
+            showToast('Status updated', 'success');
+          }
+
+          await loadOrders();
+        } catch (e) {
+          showToast('Update failed: ' + (e.message || e), 'error');
+        }
+      });
+    };
+    window.openMaps = (lat, lng) => {
+      if (lat && lng) {
+        window.open(`https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`, '_blank');
+      } else {
+        showToast('Location coordinates missing', 'error');
+      }
+    };
+
+    // --- UI Interactions ---
+
+    // Tab Switching
+    UI.orderTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.tab;
+        switchTab(target);
+      });
+    });
+
+    function switchTab(tabName) {
+      UI.orderTabs.forEach(t => {
+        if (t.dataset.tab === tabName) t.classList.add('active');
+        else t.classList.remove('active');
+      });
+
+      if (tabName === 'active') {
+        UI.activeOrdersList.classList.remove('hidden');
+        UI.availableOrdersList.classList.add('hidden');
+      } else {
+        UI.activeOrdersList.classList.add('hidden');
+        UI.availableOrdersList.classList.remove('hidden');
+      }
+    }
+
+    // Navigation
+    UI.navItems.forEach(item => {
+      item.addEventListener('click', () => {
+        // Update Nav UI
+        UI.navItems.forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+
+        // Update Section UI
+        const sectionId = item.dataset.section + 'Section';
+        UI.sections.forEach(s => s.classList.remove('active'));
+        document.getElementById(sectionId).classList.add('active');
+      });
+    });
+
+    // Profile Saving
+    document.getElementById('saveProfileBtn').addEventListener('click', async () => {
+      const name = document.getElementById('profileName').value.trim();
+      const vehicle = document.getElementById('profileVehicle').value.trim();
+      const vehicleNumber = document.getElementById('profileVehicleNumber').value.trim().toUpperCase();
+      const licenceNumber = document.getElementById('profileLicence').value.trim().toUpperCase();
+      const bank = document.getElementById('profileBank').value.trim();
+
+      try {
+        await apiJson('/api/delivery/profile', {
+          method: 'PATCH',
+          auth: true,
+          body: { name, vehicle, vehicleNumber, licenceNumber, bankDetails: bank }
+        });
+        showToast('Profile Saved', 'success');
+        await loadProfile();
+      } catch (e) {
+        showToast('Error saving profile: ' + (e.message || e), 'error');
+      }
+    });
+    // Online Toggle
+    UI.onlineToggle.addEventListener('click', toggleOnline);
+
+    async function toggleOnline() {
+      if (!state.profile.approved) {
+        showToast('Account pending approval. Cannot go online.', 'warning');
+        return;
+      }
+
+      const newState = !state.isOnline;
+      try {
+        await apiJson('/api/delivery/online', { method: 'POST', auth: true, body: { online: newState } });
+        await loadProfile();
+      } catch (e) {
+        showToast('Connection error: ' + (e.message || e), 'error');
+      }
+    }
+    // Location Tracking
+    function startLocationTracking() {
+      // Live tracking will be added via backend + Socket.io in a later phase.
+      return;
+    }
+
+    function stopLocationTracking() {
+      if (state.locationWatchId) {
+        navigator.geolocation.clearWatch(state.locationWatchId);
+        state.locationWatchId = null;
+      }
+    }
+    // Earnings Calculation
+    function calculateEarnings() {
+      const today = new Date().setHours(0, 0, 0, 0);
+      let todayTotal = 0;
+      let todayCount = 0;
+      let historyHtml = '';
+
+      // Delivered orders are provided by backend
+      const delivered = (state.deliveredOrders || []).slice();
+
+      delivered.forEach(order => {
+        const orderDate = new Date(order.updatedAt || order.createdAt);
+        if (orderDate.setHours(0, 0, 0, 0) === today) {
+          todayTotal += (order.totalAmount || 0);
+          todayCount++;
+        }
+
+        // Add to history list (limit 10)
+        if (historyHtml.split('</div>').length < 20) { // rough count check
+          historyHtml += `
+                        <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--border-color);">
+                            <div>
+                                <div style="font-weight: 600;">#${order.id.substring(0, 6)}</div>
+                                <div style="font-size: 12px; color: var(--text-secondary);">${orderDate.toLocaleDateString()}</div>
+                            </div>
+                            <div style="font-weight: 700; color: var(--success-color);">+&#8377;${order.totalAmount || 0}</div>
+                        </div>
+                    `;
+        }
+      });
+
+      document.getElementById('todayEarnings').textContent = '\u20B9' + todayTotal;
+      document.getElementById('todayOrders').textContent = todayCount;
+      document.getElementById('earningsList').innerHTML = historyHtml || '<p style="text-align:center; padding: 20px; color: var(--text-secondary);">No history yet</p>';
+    }
+
+    // --- Utilities ---
+    function showError(msg) {
+      UI.loginError.textContent = msg;
+      setTimeout(() => UI.loginError.textContent = '', 3000);
+    }
+
+    function showToast(msg, type = 'neutral') {
+      const t = document.createElement('div');
+      t.className = 'toast';
+      t.innerHTML = `<span>${msg}</span>`;
+      if (type === 'success') t.style.borderLeft = '4px solid var(--success-color)';
+      if (type === 'error') t.style.borderLeft = '4px solid var(--danger-color)';
+
+      document.getElementById('toastContainer').appendChild(t);
+      setTimeout(() => {
+        t.style.opacity = '0';
+        t.style.transform = 'translateY(-10px)';
+        setTimeout(() => t.remove(), 300);
+      }, 3000);
+    }
+
+    function showModal(title, msg, onConfirm) {
+      const m = document.getElementById('confirmModal');
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalMessage').textContent = msg;
+
+      const confirmBtn = document.getElementById('modalConfirm');
+      const cancelBtn = document.getElementById('modalCancel');
+
+      m.classList.add('active');
+
+      // Clean previous listeners
+      const newConfirm = confirmBtn.cloneNode(true);
+      const newCancel = cancelBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirm, confirmBtn);
+      cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+
+      newConfirm.addEventListener('click', () => {
+        m.classList.remove('active');
+        onConfirm();
+      });
+
+      newCancel.addEventListener('click', () => {
+        m.classList.remove('active');
+      });
+    }
+
+    async function setupThemeListener() {
+      try {
+        const theme = await apiJson('/api/settings/theme', { auth: false });
+        const colors = theme && theme.colors ? theme.colors : null;
+        if (colors) {
+          if (colors.primaryColor) document.documentElement.style.setProperty('--primary-color', colors.primaryColor);
+          if (colors.secondaryColor) document.documentElement.style.setProperty('--secondary-color', colors.secondaryColor);
+          if (colors.bgColor) document.documentElement.style.setProperty('--bg-color', colors.bgColor);
+          if (colors.textColor) document.documentElement.style.setProperty('--text-primary', colors.textColor);
+          if (colors.borderColor) document.documentElement.style.setProperty('--border-color', colors.borderColor);
+        }
+      } catch (e) {
+        // ignore theme load errors
+      }
+    }
+
+    // ASSIGNMENT NOTIFICATION SYSTEM
+    let currentAssignment = null;
+    let assignmentTimer = null;
+    let assignmentCountdown = null;
+
+    // Handle assignment received from admin
+    function handleOrderAssignment(data) {
+      currentAssignment = data;
+      
+      // Update modal content
+      document.getElementById('assignmentOrderId').textContent = `Order #${data.orderId?.substring(0, 6) || '1234'}`;
+      document.getElementById('assignmentLocation').textContent = data.customerAddress || 'Location';
+      document.getElementById('assignmentDistance').textContent = `${data.distance || '3.2'}km`;
+      document.getElementById('assignmentEarnings').textContent = data.earnings || '40';
+      document.getElementById('assignmentETA').textContent = data.estimatedTime || '25';
+      
+      // Show modal
+      document.getElementById('assignmentModal').style.display = 'flex';
+      
+      // Start countdown
+      startAssignmentCountdown(data.timeout || 30000);
+      
+      // Play notification sound
+      playAssignmentSound();
+      
+      // Vibrate (mobile)
+      if (navigator.vibrate) {
+        navigator.vibrate([200, 100, 200]);
+      }
+      
+      // Add to assignment log
+      addAssignmentLogEntry(`Order #${data.orderId?.substring(0, 6)} assigned by ${data.isAuto ? 'auto-assignment' : 'admin'}`, 'info');
+    }
+
+    // Start assignment countdown
+    function startAssignmentCountdown(timeoutMs) {
+      const startTime = Date.now();
+      const endTime = startTime + timeoutMs;
+      
+      // Reset urgency bar animation
+      const urgencyBar = document.getElementById('urgencyBar');
+      urgencyBar.style.animation = 'none';
+      urgencyBar.offsetHeight; // Trigger reflow
+      urgencyBar.style.animation = `countdown ${timeoutMs}ms linear`;
+      
+      // Update countdown display
+      assignmentCountdown = setInterval(() => {
+        const remaining = Math.max(0, endTime - Date.now());
+        const seconds = Math.ceil(remaining / 1000);
+        document.getElementById('assignmentCountdown').textContent = `${seconds}s`;
+        
+        if (remaining <= 0) {
+          autoRejectAssignment();
+        }
+      }, 100);
+    }
+
+    // Accept assigned order
+    async function acceptAssignedOrder() {
+      if (!currentAssignment) return;
+      
+      clearAssignmentTimer();
+      
+      try {
+        const response = await fetch(`/api/delivery/orders/${currentAssignment.orderId}/accept`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        if (!response.ok) throw new Error('Failed to accept order');
+        
+        showToast('Order accepted! Navigate to store.', 'success');
+        
+        // Close modal
+        document.getElementById('assignmentModal').style.display = 'none';
+        
+        // Start navigation to store
+        startNavigationToStore();
+        
+        // Start location sharing
+        startLocationSharing(currentAssignment.orderId);
+        
+        // Update assignment stats
+        updateAssignmentStats('accepted');
+        
+        // Add to log
+        addAssignmentLogEntry(`Order #${currentAssignment.orderId?.substring(0, 6)} accepted`, 'success');
+        
+        // Notify admin
+        if (window.realtimeSocket) {
+          window.realtimeSocket.emit('delivery:accept_assignment', {
+            orderId: currentAssignment.orderId,
+            partnerId: state.profile?.id,
+            timestamp: Date.now()
+          });
+        }
+        
+        // Reload orders to update UI
+        await loadOrders();
+        
+      } catch (error) {
+        showToast('Failed to accept order: ' + error.message, 'error');
+        addAssignmentLogEntry(`Failed to accept Order #${currentAssignment.orderId?.substring(0, 6)}: ${error.message}`, 'error');
+      }
+    }
+
+    // Reject assigned order
+    async function rejectAssignedOrder(reason = 'unavailable') {
+      if (!currentAssignment) return;
+      
+      clearAssignmentTimer();
+      
+      try {
+        const response = await fetch(`/api/delivery/orders/${currentAssignment.orderId}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason })
+        });
+        
+        if (!response.ok) throw new Error('Failed to reject order');
+        
+        showToast('Order rejected. Finding another partner...', 'info');
+        
+        // Close modal
+        document.getElementById('assignmentModal').style.display = 'none';
+        
+        // Update assignment stats
+        updateAssignmentStats('rejected');
+        
+        // Add to log
+        addAssignmentLogEntry(`Order #${currentAssignment.orderId?.substring(0, 6)} rejected: ${reason}`, 'warning');
+        
+        // Notify admin
+        if (window.realtimeSocket) {
+          window.realtimeSocket.emit('delivery:reject_assignment', {
+            orderId: currentAssignment.orderId,
+            partnerId: state.profile?.id,
+            reason,
+            timestamp: Date.now()
+          });
+        }
+        
+      } catch (error) {
+        showToast('Failed to reject order: ' + error.message, 'error');
+        addAssignmentLogEntry(`Failed to reject Order #${currentAssignment.orderId?.substring(0, 6)}: ${error.message}`, 'error');
+      }
+    }
+
+    // Auto-reject assignment (timeout)
+    function autoRejectAssignment() {
+      if (!currentAssignment) return;
+      
+      clearAssignmentTimer();
+      rejectAssignedOrder('timeout');
+      
+      showToast('Order auto-rejected due to timeout', 'warning');
+      document.getElementById('assignmentModal').style.display = 'none';
+    }
+
+    // Clear assignment timer
+    function clearAssignmentTimer() {
+      if (assignmentCountdown) {
+        clearInterval(assignmentCountdown);
+        assignmentCountdown = null;
+      }
+      if (assignmentTimer) {
+        clearTimeout(assignmentTimer);
+        assignmentTimer = null;
+      }
+    }
+
+    // Play assignment sound
+    function playAssignmentSound() {
+      // Create a simple beep sound using Web Audio API
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.value = 800; // 800Hz tone
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+    }
+
+    // Update assignment statistics
+    function updateAssignmentStats(action) {
+      const stats = JSON.parse(localStorage.getItem('assignmentStats') || '{}');
+      
+      if (!stats.total) stats.total = 0;
+      if (!stats.accepted) stats.accepted = 0;
+      if (!stats.rejected) stats.rejected = 0;
+      if (!stats.autoAssigned) stats.autoAssigned = 0;
+      if (!stats.manualAssigned) stats.manualAssigned = 0;
+      if (!stats.avgResponseTime) stats.avgResponseTime = 0;
+      if (!stats.responseTimes) stats.responseTimes = [];
+      
+      stats.total++;
+      
+      if (action === 'accepted') {
+        stats.accepted++;
+      } else if (action === 'rejected') {
+        stats.rejected++;
+      }
+      
+      if (currentAssignment?.isAuto) {
+        stats.autoAssigned++;
+      } else {
+        stats.manualAssigned++;
+      }
+      
+      // Calculate average response time
+      if (currentAssignment?.assignedAt) {
+        const responseTime = Date.now() - currentAssignment.assignedAt;
+        stats.responseTimes.push(responseTime);
+        stats.avgResponseTime = stats.responseTimes.reduce((a, b) => a + b, 0) / stats.responseTimes.length;
+      }
+      
+      localStorage.setItem('assignmentStats', JSON.stringify(stats));
+    }
+
+    // Add entry to assignment log
+    function addAssignmentLogEntry(message, type = 'info') {
+      const log = JSON.parse(localStorage.getItem('assignmentLog') || '[]');
+      log.unshift({
+        timestamp: new Date().toISOString(),
+        message,
+        type
+      });
+      
+      // Keep only last 50 entries
+      if (log.length > 50) {
+        log.splice(50);
+      }
+      
+      localStorage.setItem('assignmentLog', JSON.stringify(log));
+    }
+
+    // Request emergency reassignment
+    async function requestEmergencyReassign(orderId, reason) {
+      try {
+        const response = await fetch(`/api/delivery/orders/${orderId}/emergency-reassign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason })
+        });
+        
+        if (!response.ok) throw new Error('Failed to request reassignment');
+        
+        showToast('Emergency reassignment requested', 'info');
+        addAssignmentLogEntry(`Emergency reassignment requested for Order #${orderId.substring(0, 6)}: ${reason}`, 'warning');
+        
+        // Notify admin
+        if (window.realtimeSocket) {
+          window.realtimeSocket.emit('delivery:emergency_reassign', {
+            orderId,
+            partnerId: state.profile?.id,
+            reason,
+            timestamp: Date.now()
+          });
+        }
+        
+      } catch (error) {
+        showToast('Failed to request reassignment: ' + error.message, 'error');
+      }
+    }
+
+    // Setup Socket.io listeners for assignments
+    function setupAssignmentListeners() {
+      if (window.realtimeSocket) {
+        // Listen for order assignments
+        window.realtimeSocket.on('delivery:order_assigned', (data) => {
+          // Only show if this partner is the target
+          if (data.partnerId === state.profile?.id) {
+            handleOrderAssignment(data);
+          }
+        });
+        
+        // Listen for assignment status updates
+        window.realtimeSocket.on('assignment:status_update', (data) => {
+          if (data.partnerId === state.profile?.id) {
+            addAssignmentLogEntry(`Assignment status: ${data.status}`, 'info');
+          }
+        });
+      }
+    }
+
+    // Event listeners for assignment modal
+    document.getElementById('acceptAssignmentBtn').addEventListener('click', acceptAssignedOrder);
+    document.getElementById('rejectAssignmentBtn').addEventListener('click', () => rejectAssignedOrder('partner_unavailable'));
+
+    // Initialize assignment listeners when page loads
+    document.addEventListener('DOMContentLoaded', () => {
+      setupAssignmentListeners();
+    });
+
+    // FCM INITIALIZATION FOR DELIVERY PARTNER
+    // Firebase configuration will be loaded securely from backend
+    let firebaseConfig = null;
+    let messagingInstance = null;
+
+    // Load Firebase configuration securely from backend
+    async function loadFirebaseConfig() {
+      try {
+        const response = await fetch('/api/delivery/firebase-config');
+        if (response.ok) {
+          firebaseConfig = await response.json();
+          return firebaseConfig;
+        }
+      } catch (error) {
+        console.warn('Failed to load Firebase config:', error);
+      }
+      return null;
+    }
+
+    // Initialize Firebase ONLY for FCM
+    async function initFirebase() {
+      if (messagingInstance) {
+        return messagingInstance;
+      }
+
+      if (!firebaseConfig) {
+        await loadFirebaseConfig();
+      }
+
+      if (!firebaseConfig) {
+        console.warn('Firebase configuration not available. FCM notifications disabled.');
+        return null;
+      }
+
+      try {
+        if (!firebase.apps.length) {
+          firebase.initializeApp(firebaseConfig);
+        }
+        messagingInstance = firebase.messaging();
+        
+        // Send config to service worker
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'FIREBASE_CONFIG',
+            config: firebaseConfig
+          });
+        }
+        
+        return messagingInstance;
+      } catch (error) {
+        console.error('Failed to initialize Firebase:', error);
+        return null;
+      }
+    }
+
+    // Request notification permission and get FCM token
+    async function requestNotificationPermission() {
+      try {
+        if (!('Notification' in window)) {
+          console.log('This browser does not support notifications');
+          return false;
+        }
+
+        if (Notification.permission === 'granted') {
+          return await getFCMToken();
+        }
+
+        if (Notification.permission !== 'denied') {
+          showPermissionBanner();
+          return false;
+        }
+
+        return false;
+      } catch (error) {
+        console.error('Error requesting notification permission:', error);
+        return false;
+      }
+    }
+
+    // Show permission request banner
+    function showPermissionBanner() {
+      const banner = document.createElement('div');
+      banner.className = 'notification-permission-banner';
+      banner.innerHTML = `
+        <div class="permission-content">
+          <div class="permission-icon">🔔</div>
+          <div class="permission-text">
+            <h4>Enable Notifications</h4>
+            <p>Get instant order assignments and important updates</p>
+          </div>
+        </div>
+        <div class="permission-buttons">
+          <button onclick="denyNotificationPermission()">Not Now</button>
+          <button class="primary" onclick="grantNotificationPermission()">Enable</button>
+        </div>
+      `;
+      document.body.appendChild(banner);
+    }
+
+    // Grant notification permission
+    async function grantNotificationPermission() {
+      const permission = await Notification.requestPermission();
+      hidePermissionBanner();
+      
+      if (permission === 'granted') {
+        showToast('Notifications enabled! You\'ll receive order assignments instantly.', 'success');
+        await getFCMToken();
+      } else {
+        showToast('Notifications disabled. You may miss important order assignments.', 'warning');
+      }
+    }
+
+    // Deny notification permission
+    function denyNotificationPermission() {
+      hidePermissionBanner();
+      localStorage.setItem('notificationPermission', 'denied');
+      showToast('Notifications disabled. You can enable them anytime in settings.', 'info');
+    }
+
+    // Hide permission banner
+    function hidePermissionBanner() {
+      const banner = document.querySelector('.notification-permission-banner');
+      if (banner) {
+        banner.remove();
+      }
+    }
+
+    // Get FCM token
+    async function getFCMToken() {
+      try {
+        const messaging = initFirebase();
+        
+        // Get VAPID key from server or use fallback
+        const vapidKey = 'BLx1r9qK8Y9O8vH7pX5mR2sT3wQ6nF8bZ1cV4mN7jK5lP9oI2uY6tR3eW8qA1sD4fG7hJ0kL3mN6pQ9rS2vT5wX8zB1cE4fG7hJ0kL3mN6pQ9rS2vT5wX8z';
+        
+        const token = await messaging.getToken({ vapidKey });
+        
+        if (token) {
+          console.log('FCM Token obtained:', token);
+          localStorage.setItem('fcmToken', token);
+          
+          // Send token to server
+          await apiRequest('/api/delivery/update-fcm-token', {
+            method: 'POST',
+            body: { 
+              fcmToken: token, 
+              platform: 'web',
+              userAgent: navigator.userAgent,
+              timestamp: Date.now()
+            }
+          });
+          
+          return token;
+        } else {
+          console.log('No FCM token available');
+          return null;
+        }
+      } catch (error) {
+        console.error('Error getting FCM token:', error);
+        return null;
+      }
+    }
+
+    // Handle foreground messages
+    function setupFCMForegroundHandler() {
+      try {
+        const messaging = initFirebase();
+        
+        messaging.onMessage((payload) => {
+          console.log('🔔 Foreground message received:', payload);
+          
+          // Show custom in-app notification
+          showInAppNotification(payload);
+          
+          // Play sound and vibrate for urgent notifications
+          if (payload.data.type === 'new_assignment' || payload.data.type === 'emergency_assignment') {
+            playNotificationSound();
+            if (navigator.vibrate) {
+              navigator.vibrate([200, 100, 200, 100, 200]);
+            }
+          }
+          
+          // Update badge count
+          if (payload.data.type && payload.data.type !== 'delivered') {
+            updateAppBadge(1);
+          }
+        });
+        
+        // Handle token refresh
+        messaging.onTokenRefresh(async () => {
+          console.log('FCM token refreshed');
+          const newToken = await getFCMToken();
+          if (newToken) {
+            await apiRequest('/api/delivery/update-fcm-token', {
+              method: 'POST',
+              body: { fcmToken: newToken, platform: 'web', isRefresh: true }
+            });
+          }
+        });
+        
+      } catch (error) {
+        console.error('Error setting up FCM foreground handler:', error);
+      }
+    }
+
+    // Show in-app notification
+    function showInAppNotification(payload) {
+      const notification = document.createElement('div');
+      notification.className = `fcm-notification ${payload.data.type === 'new_assignment' ? 'urgent' : ''}`;
+      notification.innerHTML = `
+        <h4>${payload.notification.title}</h4>
+        <p>${payload.notification.body}</p>
+        ${payload.data.type === 'new_assignment' ? `
+          <div class="actions">
+            <button onclick="acceptOrderFromNotification('${payload.data.orderId}')">✅ Accept</button>
+            <button onclick="rejectOrderFromNotification('${payload.data.orderId}')">❌ Reject</button>
+          </div>
+        ` : payload.data.type === 'emergency_assignment' ? `
+          <div class="actions">
+            <button onclick="acceptEmergencyOrder('${payload.data.orderId}')">🚨 Accept Emergency</button>
+            <button onclick="rejectOrderFromNotification('${payload.data.orderId}')">❌ Can't Help</button>
+          </div>
+        ` : ''}
+      `;
+      
+      document.body.appendChild(notification);
+      
+      // Auto-remove after 30 seconds for non-assignment notifications
+      if (payload.data.type !== 'new_assignment' && payload.data.type !== 'emergency_assignment') {
+        setTimeout(() => {
+          if (notification.parentNode) {
+            notification.remove();
+          }
+        }, 30000);
+      }
+      
+      // Log notification
+      addAssignmentLogEntry(`Notification: ${payload.notification.title}`, 'info');
+    }
+
+    // Accept order from notification
+    async function acceptOrderFromNotification(orderId) {
+      // Remove notification
+      const notifications = document.querySelectorAll('.fcm-notification');
+      notifications.forEach(n => n.remove());
+      
+      // Accept the order
+      await acceptAssignedOrder();
+    }
+
+    // Reject order from notification
+    async function rejectOrderFromNotification(orderId) {
+      // Remove notification
+      const notifications = document.querySelectorAll('.fcm-notification');
+      notifications.forEach(n => n.remove());
+      
+      // Reject the order
+      await rejectAssignedOrder('notification_reject');
+    }
+
+    // Accept emergency order
+    async function acceptEmergencyOrder(orderId) {
+      // Remove notification
+      const notifications = document.querySelectorAll('.fcm-notification');
+      notifications.forEach(n => n.remove());
+      
+      // Accept with priority flag
+      if (currentAssignment) {
+        currentAssignment.isEmergency = true;
+      }
+      await acceptAssignedOrder();
+    }
+
+    // Play notification sound
+    function playNotificationSound() {
+      try {
+        // Create a distinctive sound for assignments
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // Create a distinctive "cha-ching" pattern
+        oscillator.frequency.value = 800;
+        oscillator.type = 'sine';
+        
+        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+        
+        oscillator.start(audioContext.currentTime);
+        oscillator.stop(audioContext.currentTime + 0.5);
+        
+        // Second chime
+        setTimeout(() => {
+          const osc2 = audioContext.createOscillator();
+          const gain2 = audioContext.createGain();
+          osc2.connect(gain2);
+          gain2.connect(audioContext.destination);
+          osc2.frequency.value = 1000;
+          osc2.type = 'sine';
+          gain2.gain.setValueAtTime(0.3, audioContext.currentTime);
+          gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+          osc2.start(audioContext.currentTime);
+          osc2.stop(audioContext.currentTime + 0.3);
+        }, 200);
+        
+      } catch (error) {
+        console.error('Error playing notification sound:', error);
+      }
+    }
+
+    // Update app badge
+    function updateAppBadge(change) {
+      if ('setAppBadge' in navigator) {
+        navigator.getBadge().then(count => {
+          const newCount = Math.max(0, (count || 0) + change);
+          navigator.setAppBadge(newCount);
+        }).catch(() => {
+          // Fallback for browsers that don't support getBadge
+          navigator.setAppBadge(Math.max(0, change));
+        });
+      }
+    }
+
+    // Clear app badge
+    function clearAppBadge() {
+      if ('clearAppBadge' in navigator) {
+        navigator.clearAppBadge();
+      }
+    }
+
+    // Register service worker for background messages
+    async function registerServiceWorker() {
+      if ('serviceWorker' in navigator) {
+        try {
+          const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+          console.log('Service Worker registered:', registration);
+          
+          // Check for existing subscription
+          const subscription = await registration.pushManager.getSubscription();
+          if (subscription) {
+            console.log('Existing push subscription found:', subscription);
+          }
+          
+          return registration;
+        } catch (error) {
+          console.error('Service Worker registration failed:', error);
+        }
+      }
+    }
+
+    // Initialize FCM when partner goes online
+    async function initializeFCM() {
+      try {
+        await registerServiceWorker();
+        setupFCMForegroundHandler();
+        
+        // Check if we already have permission
+        if (Notification.permission === 'granted') {
+          await getFCMToken();
+        } else if (Notification.permission === 'default') {
+          // Show permission banner after a delay
+          setTimeout(() => {
+            const permission = localStorage.getItem('notificationPermission');
+            if (permission !== 'denied') {
+              showPermissionBanner();
+            }
+          }, 5000);
+        }
+        
+      } catch (error) {
+        console.error('Error initializing FCM:', error);
+      }
+    }
+
+    // Initialize FCM when going online
+    const originalGoOnline = goOnline;
+    if (typeof originalGoOnline === 'function') {
+      window.goOnline = async function() {
+        await originalGoOnline();
+        await initializeFCM();
+      };
+    }
+
+    // Init
+    document.addEventListener('DOMContentLoaded', init);
+
+    // PARTNER RATING SYSTEM
+    // Load partner ratings when profile is loaded
+    function loadPartnerRatings() {
+      if (!state.profile) return;
+      
+      const partnerId = state.profile.id;
+      const partnerRatings = getRatingsForPartner(partnerId);
+      
+      // Calculate average delivery rating
+      const avgDeliveryRating = calculateAverage(partnerRatings.map(r => r.ratings.delivery));
+      const totalDeliveries = partnerRatings.length;
+      const fiveStarCount = partnerRatings.filter(r => r.ratings.delivery === 5).length;
+      const onTimeRate = calculateOnTimePercentage(partnerId);
+      
+      // Update UI
+      document.getElementById('partnerRatingValue').textContent = avgDeliveryRating.toFixed(1);
+      document.getElementById('partnerRatingStars').textContent = renderDeliveryStars(avgDeliveryRating);
+      document.getElementById('ratedDeliveries').textContent = totalDeliveries;
+      document.getElementById('fiveStarCount').textContent = fiveStarCount;
+      document.getElementById('onTimeRate').textContent = `${onTimeRate}%`;
+      
+      // Render recent feedback
+      renderRecentFeedback(partnerRatings.slice(0, 5));
+    }
+
+    // Get ratings for partner
+    function getRatingsForPartner(partnerId) {
+      const ratings = JSON.parse(localStorage.getItem('ratings') || '[]');
+      return ratings.filter(r => r.deliveryPartnerId === partnerId);
+    }
+
+    // Calculate average
+    function calculateAverage(numbers) {
+      if (numbers.length === 0) return 0;
+      const sum = numbers.reduce((a, b) => a + b, 0);
+      return sum / numbers.length;
+    }
+
+    // Render delivery stars
+    function renderDeliveryStars(rating) {
+      const fullStars = Math.floor(rating);
+      const hasHalfStar = rating % 1 >= 0.5;
+      let stars = '';
+      
+      for (let i = 0; i < fullStars; i++) {
+        stars += '⭐';
+      }
+      if (hasHalfStar) {
+        stars += '✨';
+      }
+      for (let i = fullStars + (hasHalfStar ? 1 : 0); i < 5; i++) {
+        stars += '☆';
+      }
+      
+      return stars;
+    }
+
+    // Calculate on-time percentage
+    function calculateOnTimePercentage(partnerId) {
+      // Simulate on-time rate based on ratings
+      const partnerRatings = getRatingsForPartner(partnerId);
+      if (partnerRatings.length === 0) return 95; // Default for new partners
+      
+      // Higher ratings correlate with on-time delivery
+      const avgRating = calculateAverage(partnerRatings.map(r => r.ratings.delivery));
+      return Math.min(99, Math.max(85, Math.round(avgRating * 20)));
+    }
+
+    // Render recent feedback
+    function renderRecentFeedback(reviews) {
+      const feedbackList = document.getElementById('recentFeedbackList');
+      
+      if (reviews.length === 0) {
+        feedbackList.innerHTML = '<p style="color: var(--text-secondary); font-style: italic;">No feedback yet. Complete deliveries to see customer feedback!</p>';
+        return;
+      }
+      
+      feedbackList.innerHTML = reviews.map(r => `
+        <div class="feedback-item">
+          <div class="feedback-header">
+            <div class="stars">${renderDeliveryStars(r.ratings.delivery)}</div>
+            <span class="date">${formatDeliveryDate(r.createdAt)}</span>
+          </div>
+          <p class="feedback-text">"${r.reviewText || 'Great delivery service!'}"</p>
+          <span class="order-id">Order #${r.orderId.slice(-4)}</span>
+        </div>
+      `).join('');
+    }
+
+    // Format delivery date
+    function formatDeliveryDate(dateString) {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffTime = Math.abs(now - date);
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Yesterday';
+      if (diffDays < 7) return `${diffDays} days ago`;
+      if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+      return date.toLocaleDateString();
+    }
+
+    // Override loadProfile to also load ratings
+    const originalLoadProfile = loadProfile;
+    loadProfile = async function() {
+      await originalLoadProfile();
+      loadPartnerRatings();
+    };
+
+    // Listen for rating updates (simulate real-time)
+    setInterval(() => {
+      if (state.profile && document.getElementById('profileSection').classList.contains('active')) {
+        loadPartnerRatings();
+      }
+    }, 30000); // Update every 30 seconds
+
+  </script>
+
+  <!-- Assignment Modal -->
+  <div class="assignment-modal" id="assignmentModal" style="display: none;">
+    <div class="assignment-modal-content">
+      <div class="urgency-bar" id="urgencyBar"></div>
+      
+      <h2 style="margin: 0 0 16px 0; text-align: center;">🎯 New Order Assigned!</h2>
+      
+      <div class="order-preview">
+        <p style="margin: 0 0 8px 0;"><strong id="assignmentOrderId">Order #1234</strong></p>
+        <p style="margin: 0 0 8px 0;">📍 <span id="assignmentLocation">Koramangala</span> (<span id="assignmentDistance">3.2km</span> from store)</p>
+        <p style="margin: 0 0 8px 0;">💰 Earnings: ₹<span id="assignmentEarnings">40</span></p>
+        <p style="margin: 0 0 8px 0;">⏱️ Estimated: <span id="assignmentETA">25</span> mins</p>
+      </div>
+      
+      <div class="countdown" id="assignmentCountdown">30s</div>
+      
+      <div class="actions">
+        <button class="btn-accept" id="acceptAssignmentBtn">✅ Accept Order</button>
+        <button class="btn-reject" id="rejectAssignmentBtn">❌ Can't Deliver</button>
+      </div>
+      
+      <p class="hint">Auto-rejecting in 30 seconds...</p>
+    </div>
+  </div>
+
+  <style>
+    /* Assignment Modal Styles */
+    .assignment-modal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .assignment-modal-content {
+      background: white;
+      border-radius: 20px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      position: relative;
+      animation: slideUp 0.3s ease;
+    }
+
+    .urgency-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #FF5504, #FF8947);
+      border-radius: 20px 20px 0 0;
+      animation: countdown 30s linear;
+    }
+
+    @keyframes countdown {
+      from { width: 100%; }
+      to { width: 0%; }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes slideUp {
+      from { 
+        transform: translateY(50px);
+        opacity: 0;
+      }
+      to { 
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .order-preview {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 12px;
+      margin: 16px 0;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .countdown {
+      font-size: 24px;
+      font-weight: bold;
+      color: #FF5504;
+      margin: 16px 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .actions {
+      display: flex;
+      gap: 12px;
+      margin: 20px 0;
+    }
+
+    .btn-accept, .btn-reject {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-accept {
+      background: #34C759;
+      color: white;
+    }
+
+    .btn-accept:hover {
+      background: #2FA347;
+      transform: translateY(-1px);
+    }
+
+    .btn-reject {
+      background: #f0f0f0;
+      color: #666;
+    }
+
+    .btn-reject:hover {
+      background: #e0e0e0;
+      transform: translateY(-1px);
+    }
+
+    .hint {
+      font-size: 12px;
+      color: #999;
+      margin: 0;
+    }
+
+    /* Assignment Stats in Profile */
+    .assignment-stats {
+      background: #f8f9fa;
+      padding: 16px;
+      border-radius: 12px;
+      margin-top: 16px;
+    }
+
+    .assignment-stats h4 {
+      margin: 0 0 12px 0;
+      font-size: 16px;
+      color: #333;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    .stat-label {
+      color: #666;
+    }
+
+    .stat-value {
+      font-weight: 600;
+      color: #333;
+    }
+
+    /* Emergency Reassignment Button */
+    .emergency-reassign {
+      background: #FF3B30;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: all 0.2s ease;
+    }
+
+    .emergency-reassign:hover {
+      background: #E02E24;
+      transform: translateY(-1px);
+    }
+
+    /* FCM Notification Styles */
+    .fcm-notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      width: 350px;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      padding: 16px;
+      z-index: 10000;
+      animation: slideIn 0.3s ease-out;
+      border-left: 4px solid var(--primary-color);
+    }
+
+    .fcm-notification.urgent {
+      border-left-color: #F44336;
+      animation: urgentPulse 1s infinite;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(400px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    @keyframes urgentPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.4); }
+      50% { box-shadow: 0 0 0 10px rgba(244, 67, 54, 0); }
+    }
+
+    .fcm-notification h4 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+      color: #333;
+    }
+
+    .fcm-notification p {
+      margin: 0 0 12px 0;
+      font-size: 14px;
+      color: #666;
+    }
+
+    .fcm-notification .actions {
+      margin-top: 12px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .fcm-notification button {
+      flex: 1;
+      padding: 8px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .fcm-notification button:first-child {
+      background: var(--primary-color);
+      color: white;
+    }
+
+    .fcm-notification button:first-child:hover {
+      background: var(--primary-dark);
+    }
+
+    .fcm-notification button:last-child {
+      background: #f0f0f0;
+      color: #666;
+    }
+
+    .fcm-notification button:last-child:hover {
+      background: #e0e0e0;
+    }
+
+    /* Permission Banner */
+    .notification-permission-banner {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+      color: white;
+      padding: 16px;
+      z-index: 10001;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.1);
+    }
+
+    .notification-permission-banner.hidden {
+      display: none;
+    }
+
+    .permission-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+    }
+
+    .permission-icon {
+      font-size: 24px;
+    }
+
+    .permission-text h4 {
+      margin: 0 0 4px 0;
+      font-size: 16px;
+    }
+
+    .permission-text p {
+      margin: 0;
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .permission-buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    .permission-buttons button {
+      padding: 8px 16px;
+      border: 2px solid white;
+      background: transparent;
+      color: white;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .permission-buttons button.primary {
+      background: white;
+      color: var(--primary-color);
+    }
+
+    .permission-buttons button:hover {
+      transform: translateY(-1px);
+    }
+
+    /* Partner Rating Styles */
+    .partner-ratings-section {
+      margin: 20px 0;
+      padding: 20px;
+      background: var(--surface-color);
+      border-radius: 12px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .partner-ratings-section h3 {
+      margin: 0 0 20px 0;
+      color: var(--text-primary);
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .performance-card {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      padding: 20px;
+      background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+      color: white;
+      border-radius: 12px;
+      margin-bottom: 20px;
+    }
+
+    .big-rating {
+      text-align: center;
+      min-width: 100px;
+    }
+
+    .rating-value {
+      display: block;
+      font-size: 36px;
+      font-weight: bold;
+      line-height: 1;
+    }
+
+    .big-rating .stars {
+      font-size: 18px;
+      margin: 4px 0;
+    }
+
+    .big-rating .label {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+
+    .stats-grid {
+      display: flex;
+      gap: 20px;
+      flex: 1;
+    }
+
+    .stat-item {
+      text-align: center;
+      flex: 1;
+    }
+
+    .stat-value {
+      display: block;
+      font-size: 24px;
+      font-weight: bold;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      opacity: 0.9;
+      margin-top: 4px;
+    }
+
+    .recent-feedback {
+      margin-bottom: 20px;
+    }
+
+    .recent-feedback h4 {
+      margin: 0 0 12px 0;
+      color: var(--text-primary);
+      font-size: 16px;
+    }
+
+    .feedback-item {
+      background: var(--bg-color);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+      border-left: 3px solid var(--primary-color);
+    }
+
+    .feedback-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .feedback-header .stars {
+      font-size: 14px;
+    }
+
+    .feedback-header .date {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .feedback-text {
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 1.4;
+      margin: 0 0 4px 0;
+      font-style: italic;
+    }
+
+    .order-id {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      font-weight: 600;
+    }
+
+    .rating-tips {
+      background: #f0f8ff;
+      border-radius: 8px;
+      padding: 16px;
+      border-left: 4px solid var(--info-color);
+    }
+
+    .rating-tips h4 {
+      margin: 0 0 12px 0;
+      color: var(--info-color);
+      font-size: 14px;
+    }
+
+    .rating-tips ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .rating-tips li {
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .rating-tips li:last-child {
+      margin-bottom: 0;
+    }
+  </style>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-messaging-compat.js"></script>
+
+  <!-- Delivery Notification System -->
+  <script>
+    const DeliveryNotifier = {
+      soundEnabled: localStorage.getItem('deliverySoundEnabled') !== 'false',
+      currentAlert: null,
+      autoRejectTimer: null,
+      
+      init() {
+        this.setupSocketListeners();
+        this.initializeAudioContext();
+        this.updateSoundToggle();
+      },
+      
+      initializeAudioContext() {
+        // Initialize audio context on first user interaction
+        document.addEventListener('click', () => {
+          if (NotificationSounds && !NotificationSounds.initialized) {
+            NotificationSounds.init();
+          }
+        }, { once: true });
+      },
+      
+      setupSocketListeners() {
+        // Mock socket listeners for demo - replace with actual socket implementation
+        if (typeof socket !== 'undefined') {
+          socket.on('delivery:order_assigned', (order) => {
+            this.showOrderAlert(order, false);
+          });
+          
+          socket.on('delivery:auto_assignment', (order) => {
+            this.showOrderAlert(order, true); // true = urgent
+          });
+        }
+      },
+      
+      showOrderAlert(order, isUrgent = false) {
+        this.currentAlert = order;
+        
+        // Play appropriate sound
+        if (this.soundEnabled && NotificationSounds) {
+          if (isUrgent) {
+            NotificationSounds.playUrgent();
+            NotificationSounds.vibrate([500, 200, 500, 200, 500]);
+          } else {
+            NotificationSounds.playAssignment();
+            NotificationSounds.vibrate([300, 100, 300]);
+          }
+          
+          // Repeat sound every 5 seconds until acknowledged (max 3 times)
+          let repeatCount = 0;
+          const repeatInterval = setInterval(() => {
+            if (!this.currentAlert || repeatCount >= 2) {
+              clearInterval(repeatInterval);
+              return;
+            }
+            NotificationSounds.playAssignment();
+            repeatCount++;
+          }, 5000);
+          
+          this.currentAlert.soundInterval = repeatInterval;
+        }
+        
+        // Show full-screen alert
+        const overlay = document.getElementById('deliveryOrderAlert');
+        document.getElementById('deliveryOrderId').textContent = order.id;
+        document.getElementById('deliveryEarnings').textContent = order.earnings || 40;
+        document.getElementById('deliveryDistance').textContent = (order.distance || 2.3) + ' km';
+        document.getElementById('deliveryTime').textContent = (order.estimatedTime || 25) + ' mins';
+        document.getElementById('deliveryItems').textContent = (order.items || 3) + ' items';
+        document.getElementById('deliveryArea').textContent = order.area || 'Koramangala';
+        
+        if (order.customerNote) {
+          document.getElementById('customerNote').style.display = 'block';
+          document.getElementById('noteText').textContent = order.customerNote;
+        } else {
+          document.getElementById('customerNote').style.display = 'none';
+        }
+        
+        overlay.style.display = 'flex';
+        
+        // Start countdown
+        this.startCountdown(30);
+        
+        // Wake screen (if supported)
+        if ('wakeLock' in navigator) {
+          navigator.wakeLock.request('screen').catch(err => {
+            console.log('Wake lock failed:', err);
+          });
+        }
+        
+        // Show browser notification
+        this.showBrowserNotification('New Order Available!', `Order #${order.id} - ₹${order.earnings || 40}`);
+      },
+      
+      startCountdown(seconds) {
+        let remaining = seconds;
+        const timerText = document.getElementById('timerText');
+        const timerSeconds = document.getElementById('timerSeconds');
+        const progress = document.getElementById('timerProgress');
+        
+        this.autoRejectTimer = setInterval(() => {
+          remaining--;
+          timerText.textContent = remaining;
+          timerSeconds.textContent = remaining;
+          
+          // Update circle progress
+          const percentage = (remaining / seconds) * 100;
+          progress.style.strokeDasharray = `${percentage}, 100`;
+          
+          if (remaining <= 10) {
+            progress.style.stroke = '#ff4444'; // Red warning
+            
+            // Play warning sound in last 10 seconds
+            if (remaining % 3 === 0 && this.soundEnabled && NotificationSounds) {
+              NotificationSounds.playUrgent();
+            }
+          }
+          
+          if (remaining <= 0) {
+            this.autoReject();
+          }
+        }, 1000);
+      },
+      
+      acceptOrder() {
+        this.clearAlert();
+        
+        // Play success sound
+        if (this.soundEnabled && NotificationSounds) {
+          NotificationSounds.playSuccess();
+        }
+        
+        // API call to accept (mock implementation)
+        console.log('Accepting order:', this.currentAlert.id);
+        
+        // Show success message
+        this.showToast('Order accepted! Navigate to store.', 'success');
+        
+        // Navigate to store (mock)
+        setTimeout(() => {
+          console.log('Navigating to store for order:', this.currentAlert.id);
+        }, 1000);
+      },
+      
+      rejectOrder() {
+        this.clearAlert();
+        
+        // API call to reject (mock implementation)
+        console.log('Rejecting order:', this.currentAlert.id);
+        
+        // Show message
+        this.showToast('Order rejected. Available for other orders.', 'info');
+      },
+      
+      autoReject() {
+        this.clearAlert();
+        
+        // Auto-reject logic
+        console.log('Auto-rejecting order:', this.currentAlert.id);
+        
+        // Show message
+        this.showToast('Order auto-rejected due to timeout.', 'warning');
+        
+        // Emit to socket (mock)
+        if (typeof socket !== 'undefined') {
+          socket.emit('delivery:auto_reject', { orderId: this.currentAlert.id });
+        }
+      },
+      
+      clearAlert() {
+        if (this.autoRejectTimer) {
+          clearInterval(this.autoRejectTimer);
+        }
+        if (this.currentAlert?.soundInterval) {
+          clearInterval(this.currentAlert.soundInterval);
+        }
+        
+        document.getElementById('deliveryOrderAlert').style.display = 'none';
+        this.currentAlert = null;
+        
+        // Release wake lock
+        if ('wakeLock' in navigator) {
+          navigator.wakeLock.release().catch(err => {
+            console.log('Wake lock release failed:', err);
+          });
+        }
+      },
+      
+      toggleSound() {
+        this.soundEnabled = !this.soundEnabled;
+        localStorage.setItem('deliverySoundEnabled', this.soundEnabled);
+        
+        const icon = document.getElementById('soundIcon');
+        const text = document.getElementById('soundText');
+        
+        if (this.soundEnabled) {
+          icon.textContent = '🔊';
+          text.textContent = 'Sound On';
+          
+          // Test sound when enabling
+          if (NotificationSounds) {
+            NotificationSounds.playSuccess();
+          }
+        } else {
+          icon.textContent = '🔇';
+          text.textContent = 'Muted';
+        }
+        
+        return this.soundEnabled;
+      },
+      
+      updateSoundToggle() {
+        const icon = document.getElementById('soundIcon');
+        const text = document.getElementById('soundText');
+        
+        if (this.soundEnabled) {
+          icon.textContent = '🔊';
+          text.textContent = 'Sound On';
+        } else {
+          icon.textContent = '🔇';
+          text.textContent = 'Muted';
+        }
+      },
+      
+      showBrowserNotification(title, body) {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          const notification = new Notification(title, {
+            body: body,
+            icon: '/assets/logo-192.png',
+            badge: '/assets/badge-72.png',
+            tag: 'delivery-order',
+            requireInteraction: true,
+            silent: !this.soundEnabled,
+            actions: [
+              { action: 'accept', title: 'Accept' },
+              { action: 'reject', title: 'Reject' }
+            ]
+          });
+          
+          notification.onclick = () => {
+            window.focus();
+            notification.close();
+            this.acceptOrder();
+          };
+          
+          // Handle notification actions
+          notification.addEventListener('notificationclick', (event) => {
+            if (event.action === 'accept') {
+              this.acceptOrder();
+            } else if (event.action === 'reject') {
+              this.rejectOrder();
+            }
+            notification.close();
+          });
+        }
+      },
+      
+      showToast(message, type = 'info') {
+        // Simple toast implementation
+        const toast = document.createElement('div');
+        toast.style.cssText = `
+          position: fixed;
+          bottom: 80px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: ${type === 'success' ? '#34C759' : type === 'warning' ? '#FF9500' : '#007AFF'};
+          color: white;
+          padding: 12px 20px;
+          border-radius: 8px;
+          z-index: 100001;
+          font-weight: 600;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+          animation: slideUp 0.3s ease;
+        `;
+        toast.textContent = message;
+        
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+          toast.style.animation = 'slideDown 0.3s ease';
+          setTimeout(() => {
+            document.body.removeChild(toast);
+          }, 300);
+        }, 3000);
+      },
+      
+      // Test function for development
+      testOrderAlert() {
+        const testOrder = {
+          id: Math.floor(Math.random() * 9000) + 1000,
+          earnings: Math.floor(Math.random() * 50) + 30,
+          distance: (Math.random() * 5 + 1).toFixed(1),
+          estimatedTime: Math.floor(Math.random() * 20) + 15,
+          items: Math.floor(Math.random() * 5) + 1,
+          area: ['Koramangala', 'Indiranagar', 'HSR Layout', 'BTM Layout'][Math.floor(Math.random() * 4)],
+          customerNote: Math.random() > 0.7 ? 'Please ring doorbell' : null
+        };
+        
+        this.showOrderAlert(testOrder, Math.random() > 0.7);
+      }
+    };
+
+    // Initialize delivery notification system
+    document.addEventListener('DOMContentLoaded', () => {
+      DeliveryNotifier.init();
+      
+      // Add test button for development (remove in production)
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        const testBtn = document.createElement('button');
+        testBtn.textContent = '🔔 Test Order Alert';
+        testBtn.style.cssText = `
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background: var(--primary-color);
+          color: white;
+          border: none;
+          padding: 10px 15px;
+          border-radius: 8px;
+          cursor: pointer;
+          z-index: 1000;
+          font-weight: 600;
+        `;
+        testBtn.onclick = () => DeliveryNotifier.testOrderAlert();
+        document.body.appendChild(testBtn);
+      }
+    });
+
+    // Global functions for onclick handlers
+    window.acceptOrder = () => DeliveryNotifier.acceptOrder();
+    window.rejectOrder = () => DeliveryNotifier.rejectOrder();
+    window.toggleDeliverySound = () => DeliveryNotifier.toggleSound();
+
+    // Add slide animations
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes slideUp {
+        from { transform: translate(-50%, 100%); opacity: 0; }
+        to { transform: translate(-50%, 0); opacity: 1; }
+      }
+      @keyframes slideDown {
+        from { transform: translate(-50%, 0); opacity: 1; }
+        to { transform: translate(-50%, 100%); opacity: 0; }
+      }
+    `;
+    document.head.appendChild(style);
+  </script>
+
+  <script src="/src/js/auth.js"></script>
+  <script>
+    // Auth check - redirect to login if not authenticated
+    window.addEventListener('DOMContentLoaded', () => {
+      const isAuth = authService.checkAuth();
+      if (!isAuth) {
+        window.location.href = '/login.html';
+        return;
+      }
+      
+      // Verify user is delivery partner
+      const user = authService.getUser();
+      if (user.role !== 'delivery') {
+        authService.redirectByRole(user.role);
+      }
+    });
+  </script>
+</body>
+
+</html>

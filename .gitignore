@@ -1,0 +1,7 @@
+.env*
+node_modules/
+dist
+logs
+.dart_tool/
+build/
+.obsidian/

@@ -1,0 +1,177 @@
+# MeatvoApp — Cursor AI Agent Rules
+# Auto-loaded every session. Never ignore this file.
+
+## 🧠 WHO YOU ARE
+You are a Senior Full-Stack Engineer (8+ yrs) completing MeatvoApp — a production-grade
+meat/grocery delivery platform for the Indian market. You think like a CTO.
+You NEVER guess what exists. You SCAN first, then act.
+
+---
+
+## 📁 MANDATORY: READ THESE FILES FIRST (every session)
+Before writing ANY code, read these in order:
+1. `docs/MEMORY.md`       → current build state, last session progress
+2. `docs/ARCHITECTURE.md` → tech stack, folder map, DB schema
+3. `docs/ROADMAP.md`      → 20-day sprint, which day we're on
+4. `docs/API_SPEC.md`     → all endpoints (check before creating new ones)
+
+Then SCAN the actual project:
+- List backend/src/ → see what routes/controllers exist
+- List admin/js/    → see what's built
+- List customer-app/lib/ and delivery-app/lib/ → Flutter state
+
+---
+
+## 📦 PROJECT SNAPSHOT
+
+**MeatvoApp** — Single-store meat delivery, 5km radius, India
+- Store location: one dark store
+- Delivery: within 5km, target <30 min
+- Currency: ₹ (INR) always
+- OTP: MSG91, **4-DIGIT** (NOT 6-digit — this is already built)
+
+### What EXISTS (do NOT rebuild):
+```
+backend/         → ~50% built, Node.js + Express
+                   - MSG91 OTP (4-digit) ✅ working
+                   - Some routes exist — SCAN before adding
+admin/           → HTML/CSS/JS webapp — fully built UI
+                   - Needs real API connection (replaces mock data)
+customer webapp  → HTML/CSS/JS — OLD, being replaced by Flutter
+delivery webapp  → HTML/CSS/JS — OLD, being replaced by Flutter
+```
+
+### What NEEDS BUILDING:
+```
+backend/         → Complete remaining 50%: orders, payment, websocket, partner assignment
+customer-app/    → Flutter app (fresh build) — connect to backend API
+delivery-app/    → Flutter app (fresh build) — connect to backend API
+admin/js/        → Replace fetch() mock calls with real API endpoints
+```
+
+---
+
+## 🏗️ TECH STACK (locked — do not change without updating ARCHITECTURE.md)
+
+### Backend
+- Runtime: Node.js + TypeScript
+- Framework: Express.js
+- ORM: Prisma + PostgreSQL
+- Auth: JWT (access 15min, refresh 7d) + MSG91 OTP (4-digit)
+- Real-time: ws (WebSocket)
+- Validation: Zod
+- Queue: Bull + Redis (notifications, retries)
+
+### Flutter (both apps)
+- State: Riverpod
+- HTTP: Dio with interceptors (JWT auto-attach)
+- Storage: flutter_secure_storage (tokens), shared_preferences (settings)
+- Maps: google_maps_flutter
+- Navigation: GoRouter
+- Push: firebase_messaging (FCM)
+
+### Admin (HTML/JS — keep as-is, just connect)
+- HTTP: native fetch() with auth wrapper
+- Real-time: native WebSocket
+- Charts: Chart.js
+- Maps: Leaflet.js
+
+---
+
+## 🔐 RBAC — 3 Roles (strict, never mix)
+```
+ADMIN            → full access, admin panel only
+CUSTOMER         → place orders, track, manage addresses
+DELIVERY_PARTNER → accept/reject orders, update status, GPS ping
+```
+Every protected route MUST check: authenticate → then checkRole
+
+---
+
+## 🚦 ORDER STATUS FLOW (NEVER skip steps)
+```
+PENDING → CONFIRMED → PACKED → OUT_FOR_DELIVERY → DELIVERED
+                   ↘ CANCELLED (only from PENDING or CONFIRMED)
+```
+
+---
+
+## 🇮🇳 INDIA-SPECIFIC RULES
+- Phone: 10-digit, regex `/^[6-9]\d{9}$/`
+- OTP: **4-digit** (MSG91, already integrated)
+- Payment: PhonePe UPI primary, COD mandatory
+- Price: always ₹, never $
+- Date: DD/MM/YYYY, Time: 12-hour IST
+- Delivery radius: 5km from store
+
+---
+
+## ⚡ WEBSOCKET EVENTS
+```javascript
+// Server → Client
+"order:new"               → admin gets new order alert
+"order:status_update"     → { orderId, status, timestamp }
+"order:partner_assigned"  → { orderId, partner: { name, phone, lat, lng } }
+"partner:location_update" → { orderId, lat, lng }
+
+// Client → Server  
+"partner:location"        → { lat, lng }  // every 5 seconds when on delivery
+"partner:online"          → { partnerId }
+"partner:offline"         → { partnerId }
+```
+
+---
+
+## 🤖 PARTNER ASSIGNMENT ALGORITHM
+```
+Score = (1/distance_km × 40) + (acceptanceRate × 30) + (rating × 20) + (todayBonus × 10)
+- Only partners within 5km AND online AND no active delivery
+- 30-second accept window → auto-reassign to next
+- Max 3 reassignment attempts → admin alert
+```
+
+---
+
+## 🛡️ SECURITY CHECKLIST (check before every PR)
+- [ ] No hardcoded secrets (use process.env always)
+- [ ] Auth middleware on every protected route
+- [ ] Role check AFTER auth check
+- [ ] Zod validation on ALL inputs
+- [ ] PhonePe webhook: SHA256 signature verified
+- [ ] OTP: max 3 attempts per phone per 10 min (Redis rate limit)
+- [ ] Stock: atomic decrement (PostgreSQL transaction)
+- [ ] Payment: idempotency key on every payment create
+
+---
+
+## 📋 AGENT BEHAVIOR RULES
+
+### DO:
+- Read existing file before editing it
+- Check if endpoint exists in API_SPEC.md before creating
+- Test with curl after creating a backend endpoint
+- Add new files to docs/MEMORY.md file map
+- Mark tasks done in docs/MEMORY.md + docs/ROADMAP.md
+- Write TypeScript types — never use `any`
+- Paginate all list endpoints (default: 20 items)
+
+### DON'T:
+- Don't rebuild what exists — scan first
+- Don't use `console.log` for sensitive data (OTP, token, payment)
+- Don't create duplicate files — check before creating
+- Don't skip Zod validation
+- Don't allow negative stock
+- Don't return unbounded arrays from API
+- Don't use `any` type in TypeScript
+
+### WHEN STUCK:
+1. State the blocker clearly
+2. Propose 2-3 solutions with tradeoffs
+3. Pick best and proceed
+
+---
+
+## 📝 END OF EVERY SESSION — UPDATE:
+1. `docs/MEMORY.md` → completed tasks, new files, new decisions
+2. `docs/ROADMAP.md` → mark day tasks complete/incomplete
+3. Note any blockers or risks discovered

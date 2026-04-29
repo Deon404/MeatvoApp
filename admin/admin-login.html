@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login - Meatvo</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #E53935;
+            --primary-dark: #C62828;
+            --secondary: #212121;
+            --background: #FFF8F6;
+            --accent: #FFB300;
+            --success: #2E7D32;
+            --error: #D32F2F;
+            --white: #FFFFFF;
+            --gray-100: #F5F5F5;
+            --gray-300: #E0E0E0;
+            --gray-500: #9E9E9E;
+            --text-primary: #212121;
+            --text-secondary: #616161;
+            --text-muted: #9E9E9E;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--background);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            max-width: 480px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .logo-section {
+            text-align: center;
+            padding: 48px 0 32px;
+        }
+
+        .logo { font-size: 48px; margin-bottom: 16px; }
+
+        .brand-name {
+            font-family: 'Poppins', sans-serif;
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+
+        .tagline { font-size: 14px; color: var(--text-muted); }
+
+        .admin-badge {
+            display: inline-block;
+            background: var(--primary);
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-section {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 32px 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        .step-title {
+            font-family: 'Poppins', sans-serif;
+            font-size: 24px;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .step-subtitle {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+
+        .phone-display {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            padding: 8px 12px;
+            background: var(--gray-100);
+            border-radius: 8px;
+            display: inline-block;
+        }
+
+        .form-group { margin-bottom: 20px; }
+
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+        }
+
+        .phone-input-wrapper {
+            display: flex;
+            align-items: center;
+            border: 2px solid var(--gray-300);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+
+        .phone-input-wrapper:focus-within { border-color: var(--primary); }
+
+        .country-code {
+            padding: 14px 16px;
+            background: var(--gray-100);
+            font-weight: 600;
+            color: var(--text-secondary);
+            border-right: 1px solid var(--gray-300);
+        }
+
+        .form-input {
+            flex: 1;
+            padding: 14px 16px;
+            border: none;
+            font-size: 16px;
+            outline: none;
+        }
+
+        /* OTP Input Styles */
+        .otp-input-container {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 24px;
+        }
+
+        .otp-input {
+            width: 56px;
+            height: 64px;
+            border: 2px solid var(--gray-300);
+            border-radius: 12px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: 700;
+            font-family: 'Poppins', sans-serif;
+            outline: none;
+            transition: all 0.2s ease;
+            background: white;
+            color: var(--text-primary);
+        }
+
+        .otp-input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(229,57,53,0.15);
+            transform: scale(1.05);
+        }
+
+        .otp-input.filled {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 12px rgba(229, 57, 53, 0.3);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: var(--primary-dark);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary:disabled {
+            background: var(--gray-300);
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .btn-secondary {
+            background: var(--gray-100);
+            color: var(--text-secondary);
+            margin-top: 12px;
+        }
+
+        .btn-secondary:hover { background: var(--gray-300); }
+
+        /* Resend Timer */
+        .resend-timer {
+            text-align: center;
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-top: 20px;
+            padding: 12px;
+            background: var(--gray-100);
+            border-radius: 8px;
+        }
+
+        .resend-timer a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .resend-timer a.disabled {
+            color: var(--text-muted);
+            pointer-events: none;
+            opacity: 0.6;
+        }
+
+        #timer { font-weight: 700; color: var(--primary); }
+
+        /* Error/Success Messages */
+        .error-message, .success-message {
+            font-size: 14px;
+            margin-top: 8px;
+            display: none;
+            text-align: center;
+        }
+
+        .error-message { color: var(--error); }
+        .success-message { color: var(--success); }
+        .error-message.show, .success-message.show { display: block; }
+
+        .hidden { display: none !important; }
+
+        /* Loading Spinner */
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .back-link {
+            text-align: center;
+            margin-top: 24px;
+        }
+
+        .back-link a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo-section">
+            <div class="logo">🍖</div>
+            <div class="brand-name">Meatvo</div>
+            <div class="tagline">Fresh Meat Delivery</div>
+            <div class="admin-badge">Admin Portal</div>
+        </div>
+
+        <div class="form-section">
+            <!-- Phone Step -->
+            <div id="phone-step">
+                <div class="step-title">Admin Login</div>
+                <div class="step-subtitle">Enter your phone number to continue</div>
+
+                <div class="form-group">
+                    <label class="form-label">Phone Number</label>
+                    <div class="phone-input-wrapper">
+                        <span class="country-code">+91</span>
+                        <input type="tel" class="form-input" id="phone-input" placeholder="9999999999" maxlength="10">
+                    </div>
+                </div>
+
+                <p class="error-message" id="phone-error"></p>
+
+                <button class="btn btn-primary" id="send-otp-btn">
+                    Send OTP
+                </button>
+
+                <button class="btn btn-secondary" onclick="window.location.href='/'">
+                    Back to Home
+                </button>
+            </div>
+
+            <!-- OTP Step -->
+            <div id="otp-step" class="hidden">
+                <div class="step-title">Enter OTP</div>
+                <div class="step-subtitle">Code sent to your phone</div>
+                
+                <div class="phone-display" id="phone-display"></div>
+
+                <div class="otp-input-container">
+                    <input type="tel" class="otp-input" maxlength="1" data-index="0">
+                    <input type="tel" class="otp-input" maxlength="1" data-index="1">
+                    <input type="tel" class="otp-input" maxlength="1" data-index="2">
+                    <input type="tel" class="otp-input" maxlength="1" data-index="3">
+                </div>
+
+                <p class="error-message" id="otp-error"></p>
+                <p class="success-message" id="otp-success"></p>
+
+                <button class="btn btn-primary" id="verify-btn">
+                    Verify & Continue
+                </button>
+
+                <div class="resend-timer">
+                    Resend code in <span id="timer">30</span>s<br>
+                    <a id="resend-link" class="disabled">Resend OTP</a>
+                </div>
+
+                <button class="btn btn-secondary" id="back-btn">
+                    Change Number
+                </button>
+            </div>
+        </div>
+
+        <div class="back-link">
+            <a href="/login.html">Customer Login →</a>
+        </div>
+    </div>
+
+    <script type="module">
+        import { sendOTP, verifyOTP, validatePhone } from './js/auth.js';
+
+        const phoneInput = document.getElementById('phone-input');
+        const phoneError = document.getElementById('phone-error');
+        const otpInputs = document.querySelectorAll('.otp-input');
+        let currentPhone = '';
+        let resendTimer = null;
+
+        // Phone input validation
+        phoneInput.addEventListener('input', function(e) {
+            this.value = this.value.replace(/\D/g, '');
+            phoneError.classList.remove('show');
+        });
+
+        // Send OTP handler
+        document.getElementById('send-otp-btn').addEventListener('click', async () => {
+            const phone = phoneInput.value.trim();
+            const btn = document.getElementById('send-otp-btn');
+
+            if (!validatePhone(phone)) {
+                phoneError.textContent = 'Please enter a valid 10-digit phone number';
+                phoneError.classList.add('show');
+                return;
+            }
+
+            currentPhone = phone;
+            btn.disabled = true;
+            btn.innerHTML = 'Sending<span class="loading"></span>';
+
+            try {
+                const result = await sendOTP(phone);
+                
+                if (result.success) {
+                    document.getElementById('phone-step').classList.add('hidden');
+                    document.getElementById('otp-step').classList.remove('hidden');
+                    document.getElementById('phone-display').textContent = result.formattedPhone;
+                    otpInputs[0].focus();
+                    startResendTimer();
+                    
+                    if (result.data?.devOTP) {
+                        console.log('Dev OTP:', result.data.devOTP);
+                    }
+                } else {
+                    phoneError.textContent = result.message || 'Failed to send OTP';
+                    phoneError.classList.add('show');
+                }
+            } catch (error) {
+                phoneError.textContent = 'Network error. Please try again.';
+                phoneError.classList.add('show');
+                console.error('Send OTP error:', error);
+            }
+
+            btn.disabled = false;
+            btn.innerHTML = 'Send OTP';
+        });
+
+        // OTP input handling
+        otpInputs.forEach((input, index) => {
+            input.addEventListener('input', function(e) {
+                this.value = this.value.replace(/\D/g, '');
+                this.classList.toggle('filled', this.value !== '');
+                if (this.value && index < 3) otpInputs[index + 1].focus();
+                document.getElementById('otp-error').classList.remove('show');
+            });
+
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Backspace' && !this.value && index > 0) {
+                    otpInputs[index - 1].focus();
+                }
+            });
+
+            input.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pasteData = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 4);
+                pasteData.split('').forEach((digit, i) => {
+                    if (otpInputs[i]) {
+                        otpInputs[i].value = digit;
+                        otpInputs[i].classList.add('filled');
+                    }
+                });
+                if (otpInputs[pasteData.length - 1]) otpInputs[pasteData.length - 1].focus();
+            });
+        });
+
+        // Verify OTP handler
+        document.getElementById('verify-btn').addEventListener('click', async () => {
+            const otp = Array.from(otpInputs).map(input => input.value).join('');
+            const btn = document.getElementById('verify-btn');
+            const errorEl = document.getElementById('otp-error');
+            const successEl = document.getElementById('otp-success');
+
+            if (otp.length !== 4) {
+                errorEl.textContent = 'Please enter the 4-digit OTP';
+                errorEl.classList.add('show');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = 'Verifying<span class="loading"></span>';
+
+            try {
+                const result = await verifyOTP(currentPhone, otp);
+
+                if (result.success && result.data) {
+                    const token = result.data.token || result.data.accessToken;
+                    const user = result.data.user;
+                    if (!token || user?.role !== 'admin') {
+                        errorEl.textContent = 'Access denied. Admin only.';
+                        errorEl.classList.add('show');
+                        btn.disabled = false;
+                        btn.textContent = 'Verify & Continue';
+                        return;
+                    }
+                    localStorage.setItem('adminToken', token);
+                    localStorage.setItem('adminUser', JSON.stringify({
+                        id: user.id,
+                        phone: user.mobile || user.phone,
+                        role: user.role,
+                        name: user.name || 'Admin'
+                    }));
+                    successEl.textContent = 'Login successful! Redirecting...';
+                    successEl.classList.add('show');
+                    setTimeout(() => window.location.replace('/admin/admin.html'), 500);
+                } else {
+                    errorEl.textContent = result.message || 'Invalid OTP';
+                    errorEl.classList.add('show');
+                    btn.disabled = false;
+                    btn.textContent = 'Verify & Continue';
+                }
+            } catch (error) {
+                errorEl.textContent = 'Verification failed. Please try again.';
+                errorEl.classList.add('show');
+                console.error('Verify OTP error:', error);
+                btn.disabled = false;
+                btn.textContent = 'Verify & Continue';
+            }
+        });
+
+        // Resend OTP handler
+        document.getElementById('resend-link').addEventListener('click', async () => {
+            const resendLink = document.getElementById('resend-link');
+            if (resendLink.classList.contains('disabled')) return;
+            
+            try {
+                const result = await sendOTP(currentPhone);
+                if (result.success) {
+                    startResendTimer();
+                    const successEl = document.getElementById('otp-success');
+                    successEl.textContent = 'OTP resent successfully!';
+                    successEl.classList.add('show');
+                    setTimeout(() => successEl.classList.remove('show'), 3000);
+                }
+            } catch (error) {
+                document.getElementById('otp-error').textContent = 'Failed to resend OTP';
+                document.getElementById('otp-error').classList.add('show');
+            }
+        });
+
+        // Back button handler
+        document.getElementById('back-btn').addEventListener('click', () => {
+            document.getElementById('otp-step').classList.add('hidden');
+            document.getElementById('phone-step').classList.remove('hidden');
+            otpInputs.forEach(input => { input.value = ''; input.classList.remove('filled'); });
+            document.getElementById('otp-error').classList.remove('show');
+            document.getElementById('otp-success').classList.remove('show');
+            if (resendTimer) clearInterval(resendTimer);
+        });
+
+        // Resend timer
+        function startResendTimer() {
+            let timeLeft = 30;
+            const timerEl = document.getElementById('timer');
+            const resendLink = document.getElementById('resend-link');
+            
+            resendLink.classList.add('disabled');
+            timerEl.textContent = timeLeft;
+            
+            if (resendTimer) clearInterval(resendTimer);
+            
+            resendTimer = setInterval(() => {
+                timeLeft--;
+                timerEl.textContent = timeLeft;
+                if (timeLeft <= 0) {
+                    clearInterval(resendTimer);
+                    resendLink.classList.remove('disabled');
+                }
+            }, 1000);
+        }
+
+        // Allow Enter key to submit
+        otpInputs[3].addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                document.getElementById('verify-btn').click();
+            }
+        });
+    </script>
+</body>
+</html>

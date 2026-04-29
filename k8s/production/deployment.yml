@@ -1,0 +1,220 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meatvo-backend
+  namespace: production
+  labels:
+    app: meatvo-backend
+    environment: production
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: meatvo-backend
+      environment: production
+  template:
+    metadata:
+      labels:
+        app: meatvo-backend
+        environment: production
+    spec:
+      containers:
+      - name: meatvo-backend
+        image: ghcr.io/meatvo/meatvo/backend:${IMAGE_TAG:-latest}
+        ports:
+        - containerPort: 5000
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "5000"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: TRUST_PROXY
+          value: "true"
+        # Database configuration (from secrets)
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: redis-url
+        # JWT secrets
+        - name: JWT_ACCESS_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: jwt-access-secret
+        - name: JWT_REFRESH_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: jwt-refresh-secret
+        - name: OTP_HASH_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: otp-hash-secret
+        # External services
+        - name: MSG91_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: msg91-api-key
+        - name: PHONEPE_MERCHANT_ID
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: phonepe-merchant-id
+        - name: PHONEPE_SALT_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: phonepe-salt-key
+        - name: GOOGLE_MAPS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: google-maps-api-key
+        # Firebase
+        - name: FIREBASE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: firebase-api-key
+        - name: FIREBASE_PROJECT_ID
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: firebase-project-id
+        - name: FIREBASE_MESSAGING_SENDER_ID
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: firebase-messaging-sender-id
+        - name: FIREBASE_APP_ID
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: firebase-app-id
+        - name: FCM_SERVER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: fcm-server-key
+        # Monitoring
+        - name: SENTRY_DSN
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: sentry-dsn
+        - name: ELASTICSEARCH_URL
+          value: "http://elasticsearch:9200"
+        # CORS
+        - name: CORS_ORIGINS
+          value: "https://meatvo.com,https://api.meatvo.com,https://admin.meatvo.com"
+        - name: CORS_ALLOW_NULL_ORIGIN
+          value: "false"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log/meatvo
+        - name: uploads
+          mountPath: /app/uploads
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: meatvo-uploads-pvc
+      imagePullSecrets:
+      - name: ghcr-secret
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meatvo-frontend
+  namespace: production
+  labels:
+    app: meatvo-frontend
+    environment: production
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: meatvo-frontend
+      environment: production
+  template:
+    metadata:
+      labels:
+        app: meatvo-frontend
+        environment: production
+    spec:
+      containers:
+      - name: meatvo-frontend
+        image: ghcr.io/meatvo/meatvo/frontend:${IMAGE_TAG:-latest}
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      imagePullSecrets:
+      - name: ghcr-secret
