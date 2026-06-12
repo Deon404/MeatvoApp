@@ -8,20 +8,21 @@
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const { logger } = require('./src/utils/logger');
 
 // Database connection
 const pool = new Pool({
     host: process.env.DB_HOST || 'localhost',
     port: process.env.DB_PORT || 5432,
     user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME || 'meatvo',
 });
 
 const migrationsDir = path.join(__dirname, 'migrations');
 
 async function runMigrations() {
-    console.log('🚀 Starting migrations...\n');
+    logger.info('Starting migrations...');
 
     // Get all SQL files sorted
     const files = fs.readdirSync(migrationsDir)
@@ -29,36 +30,35 @@ async function runMigrations() {
         .sort();
 
     if (files.length === 0) {
-        console.log('No migrations found.');
+        logger.info('No migrations found.');
         process.exit(0);
     }
 
-    console.log(`Found ${files.length} migration(s):\n`);
+    logger.info(`Found ${files.length} migration(s).`);
 
     for (const file of files) {
         const filePath = path.join(migrationsDir, file);
         const sql = fs.readFileSync(filePath, 'utf8');
 
-        console.log(`📄 Running: ${file}`);
+        logger.info(`Running migration: ${file}`);
 
         try {
             await pool.query(sql);
-            console.log(`   ✅ Success\n`);
+            logger.info(`Migration succeeded: ${file}`);
         } catch (err) {
-            console.log(`   ❌ Error: ${err.message}`);
-            console.log(`      SQL State: ${err.sqlState}`);
-            console.log(`      Code: ${err.code}`);
-            console.log(`\n`);
+            logger.error(`Migration failed: ${file} - ${err.message}`);
+            logger.error(`Migration SQL State: ${err.sqlState}`);
+            logger.error(`Migration Code: ${err.code}`);
             // Continue with next migration
         }
     }
 
-    console.log('✅ All migrations completed!\n');
+    logger.info('All migrations completed.');
 
     await pool.end();
 }
 
 runMigrations().catch(err => {
-    console.error('Fatal error:', err);
+    logger.error(`Fatal error: ${err.message}`);
     process.exit(1);
 });

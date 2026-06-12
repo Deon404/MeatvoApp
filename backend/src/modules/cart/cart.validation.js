@@ -16,16 +16,40 @@ const addToCartSchema = z.object({
 });
 
 const updateCartItemSchema = z.object({
+  params: z.object({
+    itemId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).refine(id => Number(id) > 0, 'Invalid product ID').optional(),
+    productId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).refine(id => Number(id) > 0, 'Invalid product ID').optional(),
+  }).optional(),
   body: z.object({
-    productId: cartItemSchema.shape.productId,
+    productId: cartItemSchema.shape.productId.optional(),
     quantity: z.coerce.number().int().min(0).max(10),
   }),
+}).superRefine((data, ctx) => {
+  const bodyId = data.body?.productId;
+  const paramId = data.params?.itemId || data.params?.productId;
+  if (!bodyId && !paramId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['body', 'productId'],
+      message: 'productId or itemId is required',
+    });
+  }
 });
 
 const removeFromCartSchema = z.object({
   params: z.object({
-    productId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).refine(id => Number(id) > 0)
+    itemId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).refine(id => Number(id) > 0).optional(),
+    productId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).refine(id => Number(id) > 0).optional()
   })
+}).superRefine((data, ctx) => {
+  const paramId = data.params?.itemId || data.params?.productId;
+  if (!paramId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['params', 'itemId'],
+      message: 'itemId or productId is required',
+    });
+  }
 });
 
 const clearCartSchema = z.object({

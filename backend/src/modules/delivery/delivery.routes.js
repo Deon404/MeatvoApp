@@ -17,6 +17,11 @@ const {
   getEarnings,
   toggleOnline,
   updateProfile,
+  bulkAssignZones,
+  getMyOptimizedRoute,
+  getOptimizedRouteForRider,
+  getAdminOptimizedRoute,
+  assignMultiRiderRoutes,
 } = require('./delivery.controller');
 
 const {
@@ -36,11 +41,50 @@ const {
   getEarningsSchema,
   toggleOnlineSchema,
   updateProfileSchema,
+  bulkAssignZonesSchema,
 } = require('./delivery.validation');
 
 // Public routes - no auth required
 router.get('/slots', getAvailableSlots);
 router.get('/slots/:id', getSlotById);
+
+// Admin zone assignment (admin JWT; must be before delivery-only guard)
+router.put(
+  '/orders/bulk-assign',
+  protect,
+  rbac(ROLES.ADMIN),
+  validate(bulkAssignZonesSchema),
+  bulkAssignZones
+);
+
+// Admin route optimization endpoints
+router.get(
+  '/route/optimize',
+  protect,
+  rbac(ROLES.ADMIN),
+  getOptimizedRouteForRider
+);
+
+router.get(
+  '/admin/route/optimize',
+  protect,
+  rbac(ROLES.ADMIN),
+  getAdminOptimizedRoute
+);
+
+router.post(
+  '/admin/assign-routes',
+  protect,
+  rbac(ROLES.ADMIN),
+  assignMultiRiderRoutes
+);
+
+router.post(
+  '/slots/:id/release',
+  protect,
+  rbac(ROLES.ADMIN, ROLES.DELIVERY),
+  releaseSlot
+);
 
 // Protected routes for delivery partners
 router.use(protect, rbac(ROLES.DELIVERY));
@@ -61,8 +105,10 @@ router.post('/location/update', validate(updateLocationSchema), updateLocation);
 router.get('/earnings', validate(getEarningsSchema), getEarnings);
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 
+// Rider's optimized route (own deliveries)
+router.get('/my-route', getMyOptimizedRoute);
+
 // Slot booking routes (protected)
 router.post('/slots/:id/book', protect, bookSlot);
-router.post('/slots/:id/release', protect, releaseSlot);
 
 module.exports = router;

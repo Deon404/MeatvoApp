@@ -1,4 +1,9 @@
 const crypto = require('crypto');
+const {
+  generateChecksum,
+  verifyChecksum,
+  parsePhonePeWebhookBody,
+} = require('../../utils/phonepeChecksum');
 const axios = require('axios');
 const { logger } = require('../../utils/logger');
 
@@ -11,9 +16,21 @@ class PhonePeService {
     this.redirectUrl = process.env.PHONEPE_REDIRECT_URL || 'http://localhost:3000/payment/return';
     this.webhookUrl = process.env.PHONEPE_WEBHOOK_URL || 'http://localhost:8080/api/payments/phonepe/webhook';
 
+    this.isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+
     if (!this.merchantId || !this.saltKey) {
-      throw new Error('PhonePe configuration missing. Please set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY');
+      logger.error('phonepe_config_missing', {
+        merchantId: this.merchantId ? 'configured' : 'missing',
+        saltKey: this.saltKey ? 'configured' : 'missing',
+      });
+      if (this.isProd) {
+        throw new Error('PhonePe configuration missing. Please set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY');
+      }
     }
+  }
+
+  isConfigured() {
+    return Boolean(this.merchantId && this.saltKey);
   }
 
   /**
@@ -22,24 +39,20 @@ class PhonePeService {
    * @returns {string} Checksum
    */
   generateChecksum(payload) {
-    const stringToHash = payload + this.saltKey;
-    const hash = crypto.createHash('sha256').update(stringToHash).digest('hex');
-    return hash + '###' + this.saltIndex;
+    return generateChecksum(payload, this.saltKey, this.saltIndex);
   }
 
   /**
    * Verify PhonePe webhook signature
-   * @param {string} payload - JSON payload string
+   * @param {string|object} payload - base64 response or JSON body
    * @param {string} signature - X-VERIFY header
    * @returns {boolean} True if signature is valid
    */
   verifyWebhookSignature(payload, signature) {
-    // Use canonical JSON to prevent whitespace issues
-    const canonicalPayload = typeof payload === 'string' 
-      ? payload 
-      : JSON.stringify(payload, Object.keys(payload).sort());
-    const expectedChecksum = this.generateChecksum(canonicalPayload);
-    return signature === expectedChecksum;
+    const payloadStr = typeof payload === 'string'
+      ? payload
+      : parsePhonePeWebhookBody(payload).payloadForSignature;
+    return verifyChecksum(payloadStr, signature, this.saltKey, this.saltIndex);
   }
 
   /**
@@ -132,6 +145,10 @@ class PhonePeService {
    * @returns {Promise<Object>} Payment status
    */
   async checkPaymentStatus(merchantTransactionId) {
+    if (!this.isConfigured()) {
+      return { success: false, error: 'PhonePe is not configured' };
+    }
+
     const payload = `/pg/v1/status/${this.merchantId}/${merchantTransactionId}`;
     const checksum = this.generateChecksum(payload);
 

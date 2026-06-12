@@ -1,4 +1,16 @@
 const Redis = require('ioredis');
+const { logger } = require('../utils/logger');
+
+if (process.env.NODE_ENV === 'production' && !process.env.REDIS_URL) {
+  console.error('FATAL: REDIS_URL required in production. Exiting.');
+  process.exit(1);
+}
+
+if (!process.env.REDIS_URL) {
+  console.warn('⚠️  WARNING: Redis unavailable — using memory fallback.');
+  console.warn('⚠️  Cart, sessions, and rate limits will reset on restart.');
+  console.warn('⚠️  Set REDIS_URL for production use.');
+}
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const allowFallback =
@@ -119,35 +131,73 @@ let redisReady = false;
 client.on('connect', () => {
   redisReady = true;
   loggedRedisError = false;
-  console.log('Redis connected');
+  logger.info('redis_connected');
 });
 
 client.on('end', () => {
   redisReady = false;
+  logger.warn('redis_disconnected');
 });
 
 client.on('error', (err) => {
   redisReady = false;
   if (!allowFallback) {
-    console.error('Redis connection error:', err);
+    logger.error('redis_connection_error', { message: err.message });
     return;
   }
-  // Avoid flooding the console on retry loops.
   if (!loggedRedisError) {
     loggedRedisError = true;
-    console.warn('Redis unavailable; falling back to in-memory store for this process.');
+    logger.warn('redis_unavailable_using_memory_fallback');
   }
 });
 
 // Kick off connection in background (don’t block server startup).
 client.connect().catch(() => {});
 
+const OTP_REDIS_KEY_PREFIXES = ['otp:', 'otp:send-lock:', 'lockout:', 'rl:otp:', 'rl:verify:'];
+
+const isOtpRedisKey = (key) =>
+  typeof key === 'string' && OTP_REDIS_KEY_PREFIXES.some((p) => key.startsWith(p));
+
+const waitForRedis = (maxMs = 5000) =>
+  new Promise((resolve) => {
+    if (redisReady) return resolve(true);
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (redisReady || Date.now() - started >= maxMs) {
+        clearInterval(timer);
+        resolve(redisReady);
+      }
+    }, 50);
+  });
+
 const withFallback = (fnName) =>
   async (...args) => {
+    const key = args[0];
+    const otpCritical = isOtpRedisKey(key) && Boolean(process.env.REDIS_URL);
+
+    if (otpCritical) {
+      if (!redisReady) await waitForRedis(5000);
+      if (redisReady) return client[fnName](...args);
+      const err = new Error('Redis is required for OTP but is not connected. Start Redis and retry.');
+      err.code = 'REDIS_UNAVAILABLE';
+      throw err;
+    }
+
     if (redisReady) return client[fnName](...args);
     if (!allowFallback) return client[fnName](...args); // will throw; surface error
     return memory[fnName](...args);
   };
+
+const disconnect = async () => {
+  try {
+    if (client.status === 'ready' || client.status === 'connect') {
+      await client.quit();
+    }
+  } catch (err) {
+    logger.warn('redis_disconnect_error', { message: err?.message });
+  }
+};
 
 module.exports = {
   get: withFallback('get'),
@@ -157,4 +207,5 @@ module.exports = {
   expire: withFallback('expire'),
   sadd: withFallback('sadd'),
   scard: withFallback('scard'),
+  disconnect,
 };

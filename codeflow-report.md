@@ -94,7 +94,7 @@
 
 - **File:** `android/app/src/main/assets/public/customer/customer.html`
 - **Description:** String concatenation in SQL queries. Use parameterized queries instead.
-- **Code:** `const response = await fetch(`[https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`)
+- **Code:** `const response = await fetch(`[[https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`)](https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`))
 
 ### HIGH: XSS Vulnerability
 
@@ -190,7 +190,7 @@
 
 - **File:** `customer/customer-original-backup.html`
 - **Description:** String concatenation in SQL queries. Use parameterized queries instead.
-- **Code:** `const response = await fetch(`[https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`)
+- **Code:** `const response = await fetch(`[[https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`)](https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`))
 
 ### HIGH: XSS Vulnerability
 
@@ -213,7 +213,7 @@
 
 - **File:** `customer/customer.html`
 - **Description:** String concatenation in SQL queries. Use parameterized queries instead.
-- **Code:** `const response = await fetch(`[https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`)
+- **Code:** `const response = await fetch(`[[https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`)](https://nominatim.openstreetmap.org/reverse?format`](https://nominatim.openstreetmap.org/reverse?format`))
 
 ### HIGH: XSS Vulnerability
 

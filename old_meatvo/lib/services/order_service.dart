@@ -1,0 +1,452 @@
+import 'package:flutter/foundation.dart';
+import 'package:dio/dio.dart';
+import '../config/api_config.dart' show ApiOrderPaths;
+import '../models/order_model.dart';
+import '../models/cart_model.dart';
+import '../utils/order_status_util.dart';
+import 'api_service.dart';
+import 'error_tracking_service.dart';
+import 'delivery_service.dart';
+
+/// Order service — custom Node.js backend
+class OrderService {
+  final ApiService _api = ApiService();
+  // DeliveryService kept for delivery-radius validation
+  final DeliveryService _deliveryService = DeliveryService();
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  bool _isRequestSuccessful(dynamic data) {
+    if (data is! Map) return false;
+    final map = data.cast<String, dynamic>();
+    return map['success'] == true || map['ok'] == true;
+  }
+
+  String _responseMessage(dynamic data, {String fallback = 'Request failed'}) {
+    if (data is Map) {
+      final map = data.cast<String, dynamic>();
+      final error = map['error'];
+      if (error is Map && error['message'] != null) {
+        return error['message'].toString();
+      }
+      final message = map['message'];
+      if (message != null && message.toString().trim().isNotEmpty) {
+        return message.toString();
+      }
+    } else if (data is String && data.trim().isNotEmpty) {
+      return data.trim();
+    }
+    return fallback;
+  }
+
+  dynamic _extractData(dynamic responseData) {
+    if (responseData is Map) {
+      return responseData['data'];
+    }
+    return null;
+  }
+
+  String _normalizeStatus(String? status) => normalizeOrderStatus(status);
+
+  String? _normalizeAddress(dynamic address) {
+    if (address == null) return null;
+    if (address is String) return address;
+    if (address is Map) {
+      final map = Map<String, dynamic>.from(address);
+      final parts = <String>[
+        (map['text'] ?? map['fullAddress'] ?? map['addressLine1'] ?? map['address_line1'] ?? '').toString(),
+        (map['addressLine2'] ?? map['address_line2'] ?? '').toString(),
+        (map['landmark'] ?? '').toString(),
+        (map['city'] ?? '').toString(),
+        (map['state'] ?? '').toString(),
+        (map['pincode'] ?? '').toString(),
+      ].where((part) => part.trim().isNotEmpty).toList();
+      return parts.isEmpty ? null : parts.join(', ');
+    }
+    return address.toString();
+  }
+
+  String _formatDeliveryAddress(Map<String, dynamic> address) {
+    final formatted = _normalizeAddress(address);
+    if (formatted == null || formatted.trim().isEmpty) {
+      throw Exception('Delivery address is missing. Please select a saved address.');
+    }
+    return formatted;
+  }
+
+  Map<String, dynamic> _normalizeOrderItem(Map<String, dynamic> json) {
+    final item = Map<String, dynamic>.from(json);
+    final quantity = item['quantity'];
+    final unitPrice = item['unit_price'] ?? item['price'];
+    final qtyValue =
+        quantity is num ? quantity.toDouble() : double.tryParse('$quantity') ?? 0;
+    final unitPriceValue = unitPrice is num
+        ? unitPrice.toDouble()
+        : double.tryParse('$unitPrice') ?? 0;
+
+    item['product_id'] = (item['product_id'] ?? item['productId'] ?? '').toString();
+    item['product_name'] ??= item['name'] ?? '';
+    item['image_url'] ??= item['imageUrl'] ?? '';
+    item['unit'] ??= item['weight_option'] ?? '';
+    item['unit_price'] = unitPriceValue;
+    item['total_price'] ??= unitPriceValue * qtyValue;
+    if (item['variant_id'] != null) {
+      item['variant_id'] = item['variant_id'].toString();
+    }
+    return item;
+  }
+
+  Map<String, dynamic> _extractOrderPayload(dynamic data) {
+    if (data is! Map) return <String, dynamic>{};
+
+    final payload = Map<String, dynamic>.from(data);
+    final orderPayload = payload['order'];
+    if (orderPayload is Map) {
+      final order = Map<String, dynamic>.from(orderPayload);
+      if (payload['items'] is List) {
+        order['items'] = payload['items'];
+      }
+      if (payload['pricing'] is Map) {
+        final pricing = Map<String, dynamic>.from(payload['pricing']);
+        order['subtotal'] ??= pricing['subtotal'];
+        order['delivery_charge'] ??=
+            pricing['deliveryCharge'] ?? pricing['delivery_charge'];
+        order['final_amount'] ??=
+            pricing['totalAmount'] ?? pricing['finalAmount'] ?? pricing['final_amount'];
+        order['total_price'] ??= order['final_amount'];
+      }
+      return order;
+    }
+
+    return payload;
+  }
+
+  List<dynamic> _extractOrdersPayload(dynamic data) {
+    if (data is List) return data;
+    if (data is Map) {
+      final payload = Map<String, dynamic>.from(data);
+      final orders = payload['orders'];
+      if (orders is List) return orders;
+    }
+    return const [];
+  }
+
+  OrderModel _parseOrder(Map<String, dynamic> json) {
+    final m = Map<String, dynamic>.from(json);
+
+    // Normalise items list
+    final rawItems = (m['items'] as List<dynamic>? ?? [])
+        .map((i) => Map<String, dynamic>.from(i as Map))
+        .toList();
+    m['items'] = rawItems;
+
+    // Normalise camelCase → snake_case for OrderModel.fromJson
+    m['id'] = (m['id'] ?? '').toString();
+    m['user_id'] =
+        (m['user_id'] ?? m['userId'] ?? m['customer_id'] ?? m['customerId'] ?? '')
+            .toString();
+    m['total_price'] ??= m['totalPrice'] ?? m['total'];
+    m['total_price'] ??= m['final_amount'] ?? m['total_amount'];
+    m['payment_method'] ??= m['paymentMethod'];
+    m['payment_method'] ??= m['payment_mode'];
+    if (m['payment_method'] != null) {
+      m['payment_method'] = m['payment_method'].toString().toLowerCase();
+    }
+    m['payment_status'] ??= m['paymentStatus'];
+    if (m['payment_status'] != null) {
+      m['payment_status'] = m['payment_status'].toString().toLowerCase();
+    }
+    m['delivery_address'] ??= m['deliveryAddress'];
+    m['delivery_address'] ??= _normalizeAddress(m['address']);
+    final addressObj = m['address'];
+    if (addressObj is Map) {
+      final addrMap = Map<String, dynamic>.from(addressObj);
+      m['delivery_latitude'] ??= addrMap['lat'] ?? addrMap['latitude'];
+      m['delivery_longitude'] ??= addrMap['lng'] ?? addrMap['longitude'];
+    }
+    m['created_at'] ??= m['createdAt'];
+    m['updated_at'] ??= m['updatedAt'];
+    m['estimated_delivery_time'] ??= m['estimatedDeliveryTime'];
+    m['eta_minutes'] ??= m['etaMinutes'];
+    m['rider_id'] ??= m['riderId'];
+    if (m['rider_id'] != null) {
+      m['rider_id'] = m['rider_id'].toString();
+    }
+    m['status'] = _normalizeStatus(m['status']?.toString());
+    m['items'] = rawItems.map(_normalizeOrderItem).toList();
+
+    return OrderModel.fromJson(m);
+  }
+
+  OrderModel _mergeAssignment(OrderModel order, dynamic assignment) {
+    if (assignment is! Map) return order;
+    final map = Map<String, dynamic>.from(assignment);
+    final partnerId = map['delivery_partner_id'] ?? map['deliveryPartnerId'];
+    final lat = map['current_lat'] ?? map['currentLat'];
+    final lng = map['current_lng'] ?? map['currentLng'];
+    final riderLat = lat is num
+        ? lat.toDouble()
+        : double.tryParse('$lat');
+    final riderLng = lng is num
+        ? lng.toDouble()
+        : double.tryParse('$lng');
+
+    return order.copyWith(
+      riderId: partnerId?.toString(),
+      riderName: map['user_name']?.toString() ?? map['userName']?.toString(),
+      riderPhone: map['user_phone']?.toString() ?? map['userPhone']?.toString(),
+      riderLatitude: riderLat,
+      riderLongitude: riderLng,
+    );
+  }
+
+  OrderModel _parseOrderResponse(dynamic data) {
+    if (data is! Map) return _parseOrder(<String, dynamic>{});
+    final payload = Map<String, dynamic>.from(data);
+    final orderPayload = _extractOrderPayload(payload);
+    final eta = payload['eta'];
+    if (eta is Map) {
+      final etaMap = Map<String, dynamic>.from(eta);
+      orderPayload['estimated_delivery_time'] ??=
+          etaMap['estimatedTime'] ?? etaMap['estimated_time'];
+      orderPayload['eta_minutes'] ??= etaMap['minutes'] ?? etaMap['etaMinutes'];
+    }
+    final order = _parseOrder(orderPayload);
+    return _mergeAssignment(order, payload['assignment']);
+  }
+
+  // ── CRUD ──────────────────────────────────────────────────────────────────
+
+  /// Create order from cart.
+  /// [deliveryAddress] must contain an 'id' key (addressId from the addresses list).
+  Future<OrderModel> createOrder({
+    required CartModel cart,
+    required Map<String, dynamic> deliveryAddress,
+    required String deliverySlot,
+    required String paymentMethod,
+    String? couponCode,
+    String? specialInstructions,
+    int? deliverySlotId,
+    Map<String, dynamic>? deliverySlotMeta,
+  }) async {
+    if (cart.isEmpty) throw Exception('Cart is empty');
+
+    // Validate delivery radius (unchanged logic)
+    final deliveryLat = deliveryAddress['latitude'] as double? ??
+        deliveryAddress['lat'] as double?;
+    final deliveryLng = deliveryAddress['longitude'] as double? ??
+        deliveryAddress['lng'] as double?;
+
+    if (deliveryLat != null && deliveryLng != null) {
+      try {
+        await _deliveryService.ensureDeliveryAvailable(
+          latitude: deliveryLat,
+          longitude: deliveryLng,
+        );
+      } on DeliveryException catch (e) {
+        throw Exception(e.message);
+      }
+    } else {
+      throw Exception(
+          'Delivery address coordinates are missing. Please select location on map.');
+    }
+
+    try {
+      return await placeOrder(
+        address: deliveryAddress,
+        deliverySlot: deliverySlot,
+        paymentMethod: paymentMethod,
+        couponCode: couponCode,
+        specialInstructions: specialInstructions,
+        deliverySlotId: deliverySlotId,
+        deliverySlotMeta: deliverySlotMeta,
+      );
+    } on DioException catch (e) {
+      await ErrorTrackingService.captureException(
+        e,
+        tag: 'order_creation',
+        context: {'cart_items_count': cart.items.length},
+      );
+      throw Exception(
+          'Failed to create order: ${e.response?.data?['message'] ?? e.message}');
+    } catch (e, st) {
+      await ErrorTrackingService.captureException(e, stackTrace: st, tag: 'order_creation');
+      throw Exception('Failed to create order: $e');
+    }
+  }
+
+  /// Place order via backend.
+  /// POST /orders — order items are read from the server Redis cart.
+  Future<OrderModel> placeOrder({
+    required Map<String, dynamic> address,
+    required String deliverySlot,
+    required String paymentMethod,
+    String? couponCode,
+    String? specialInstructions,
+    int? deliverySlotId,
+    Map<String, dynamic>? deliverySlotMeta,
+  }) async {
+    try {
+      final addressId = (address['id'] ?? address['addressId'])?.toString();
+
+      final normalizedPaymentMethod = paymentMethod.trim().toUpperCase();
+      if (normalizedPaymentMethod != 'COD' &&
+          normalizedPaymentMethod != 'ONLINE') {
+        throw Exception('Invalid payment method. Use COD or ONLINE.');
+      }
+
+      final lat = address['latitude'] ?? address['lat'];
+      final lng = address['longitude'] ?? address['lng'];
+
+      final body = <String, dynamic>{
+        if (addressId != null && addressId.isNotEmpty) 'addressId': addressId,
+        'deliveryAddress': _formatDeliveryAddress(address),
+        if (lat != null) 'lat': lat,
+        if (lng != null) 'lng': lng,
+        if (deliverySlotId != null && deliverySlotId > 0)
+          'deliverySlotId': deliverySlotId,
+        if (deliverySlotMeta != null && deliverySlotMeta.isNotEmpty)
+          'deliverySlot': deliverySlotMeta,
+        'paymentMethod': normalizedPaymentMethod,
+        if (couponCode != null && couponCode.isNotEmpty) 'couponCode': couponCode,
+        if (specialInstructions != null && specialInstructions.isNotEmpty)
+          'specialInstructions': specialInstructions,
+      };
+
+      final res = await _api.post(ApiOrderPaths.orders, data: body);
+      if (!_isRequestSuccessful(res.data)) {
+        throw Exception(res.data['message'] ?? 'Failed to place order');
+      }
+
+      final order = _parseOrderResponse(_extractData(res.data));
+      if (order.id.isNotEmpty && order.items.isEmpty) {
+        try {
+          return await getOrderById(order.id);
+        } catch (_) {
+          return order;
+        }
+      }
+      return order;
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to place order: ${e.response?.data?['message'] ?? e.message}');
+    } catch (e) {
+      throw Exception('Failed to place order: $e');
+    }
+  }
+
+  /// Get all orders for the logged-in user.
+  Future<List<OrderModel>> getUserOrders() async {
+    return getOrders();
+  }
+
+  /// Get orders.
+  /// GET /orders
+  Future<List<OrderModel>> getOrders() async {
+    try {
+      final res = await _api.get(ApiOrderPaths.orders);
+      if (!_isRequestSuccessful(res.data)) {
+        throw Exception(res.data['message'] ?? 'Failed to fetch orders');
+      }
+      final list = _extractOrdersPayload(_extractData(res.data));
+      return list
+          .map((e) => _parseOrder(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to fetch orders: ${e.response?.data?['message'] ?? e.message}');
+    } catch (e) {
+      throw Exception('Failed to fetch orders: $e');
+    }
+  }
+
+  /// Get single order by ID.
+  Future<OrderModel> getOrderById(String orderId) async {
+    try {
+      final res = await _api.get('${ApiOrderPaths.orderById}$orderId');
+      if (!_isRequestSuccessful(res.data)) {
+        throw Exception(
+          _responseMessage(res.data, fallback: 'Failed to fetch order'),
+        );
+      }
+      return _parseOrderResponse(_extractData(res.data));
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to fetch order: ${_responseMessage(e.response?.data, fallback: e.message ?? 'Failed to fetch order')}');
+    } catch (e) {
+      throw Exception('Failed to fetch order: $e');
+    }
+  }
+
+  /// Cancel order.
+  /// PUT /orders/:id/cancel
+  Future<void> cancelOrder(String orderId) async {
+    try {
+      final res = await _api.put('${ApiOrderPaths.cancelOrder}$orderId/cancel');
+      if (!_isRequestSuccessful(res.data)) {
+        throw Exception(
+          _responseMessage(res.data, fallback: 'Failed to cancel order'),
+        );
+      }
+    } on DioException catch (e) {
+      throw Exception(
+        'Failed to cancel order: ${_responseMessage(e.response?.data, fallback: e.message ?? 'Failed to cancel order')}',
+      );
+    } catch (e) {
+      if (e is Exception) rethrow;
+      throw Exception('Failed to cancel order: $e');
+    }
+  }
+
+  // ── Coupon helpers (local calculation — no dedicated backend endpoint) ─────
+
+  Future<Map<String, dynamic>> applyCoupon(String code, double amount) async {
+    // Coupon validation will be done server-side on order creation.
+    // Return a placeholder so existing UI doesn't break.
+    return {
+      'code': code,
+      'discount': 0.0,
+      'description': 'Coupon applied (validated on checkout)',
+    };
+  }
+
+  // ── Review / rating stubs ─────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>?> getOrderReview(String orderId) async => null;
+
+  Future<void> submitReview({
+    required String orderId,
+    int? riderRating,
+    int? productQualityRating,
+    int? deliverySpeedRating,
+    String? feedback,
+  }) async {
+    debugPrint('⚠️ submitReview: not yet supported by backend');
+  }
+
+  @Deprecated('Use submitReview instead')
+  Future<void> rateOrder({
+    required String orderId,
+    required double orderRating,
+    String? orderReview,
+    double? riderRating,
+    String? riderReview,
+  }) =>
+      submitReview(
+        orderId: orderId,
+        riderRating: riderRating?.toInt(),
+        productQualityRating: orderRating.toInt(),
+        feedback: orderReview ?? riderReview,
+      );
+
+  Future<OrderModel> getOrderTracking(String orderId) async =>
+      getOrderById(orderId);
+
+  // ── Polling-based tracking ───────────────────────────────────────────────
+
+  /// Fallback polling for active orders (prefer [OrderTrackingSubscription] + socket).
+  Stream<OrderModel> trackOrder(String orderId) {
+    return Stream.periodic(const Duration(seconds: 15))
+        .asyncMap((_) => getOrderById(orderId));
+  }
+}

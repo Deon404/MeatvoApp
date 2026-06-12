@@ -1,0 +1,354 @@
+{
+  "version": "1.0",
+  "generated_from": "backend/src/config/env.constants.js",
+  "variables": {
+    "PORT": {
+      "required": "always",
+      "default": "8080",
+      "type": "number",
+      "description": "HTTP server listen port"
+    },
+    "NODE_ENV": {
+      "required": "optional",
+      "default": "development",
+      "type": "string",
+      "description": "Runtime environment (development, production, test)"
+    },
+    "LOG_LEVEL": {
+      "required": "optional",
+      "default": "info",
+      "type": "string",
+      "description": "Winston / application log level"
+    },
+    "TRUST_PROXY": {
+      "required": "optional",
+      "default": "false",
+      "type": "boolean",
+      "description": "Trust X-Forwarded-* headers when behind a reverse proxy"
+    },
+    "DB_HOST": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "PostgreSQL host (split DB config; validated by validateEnv.js)"
+    },
+    "DB_PORT": {
+      "required": "always",
+      "default": null,
+      "type": "number",
+      "description": "PostgreSQL port (split DB config)"
+    },
+    "DB_NAME": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "PostgreSQL database name"
+    },
+    "DB_USER": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "PostgreSQL username"
+    },
+    "DB_PASSWORD": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "PostgreSQL password"
+    },
+    "DATABASE_URL": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "PostgreSQL connection string (alternative to split DB_* vars)"
+    },
+    "REDIS_URL": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "Redis connection URL for sessions, cache, and rate limiting"
+    },
+    "JWT_ACCESS_SECRET": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "Secret for signing short-lived access JWTs"
+    },
+    "JWT_REFRESH_SECRET": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "Secret for signing refresh JWTs"
+    },
+    "JWT_SECRET": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Legacy single JWT secret; accepted if JWT_ACCESS_SECRET/JWT_REFRESH_SECRET pair is absent"
+    },
+    "OTP_HASH_SECRET": {
+      "required": "always",
+      "default": null,
+      "type": "string",
+      "description": "HMAC secret for hashing OTP codes at rest"
+    },
+    "JWT_ACCESS_EXPIRY": {
+      "required": "optional",
+      "default": "15m",
+      "type": "string",
+      "description": "Access token lifetime (e.g. 15m, 1h)"
+    },
+    "JWT_REFRESH_EXPIRY": {
+      "required": "optional",
+      "default": "7d",
+      "type": "string",
+      "description": "Refresh token lifetime (e.g. 7d, 30d)"
+    },
+    "MSG91_AUTH_KEY": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "MSG91 API auth key for OTP SMS (required when SMS_PROVIDER is msg91)"
+    },
+    "MSG91_API_KEY": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "MSG91 API key alias (secret manager mapping)"
+    },
+    "MSG91_TEMPLATE_ID": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "MSG91 DLT template ID for OTP SMS"
+    },
+    "MSG91_OTP_TEMPLATE_ID": {
+      "required": "optional",
+      "default": "meatvo_otp",
+      "type": "string",
+      "description": "MSG91 OTP template name; falls back to MSG91_TEMPLATE_ID if unset"
+    },
+    "MSG91_SENDER_ID": {
+      "required": "production",
+      "default": "MEATVO",
+      "type": "string",
+      "description": "MSG91 sender ID (6-character DLT header)"
+    },
+    "SMS_PROVIDER": {
+      "required": "optional",
+      "default": "msg91",
+      "type": "string",
+      "description": "SMS backend (msg91, console, etc.); drives OTP env validation"
+    },
+    "OTP_TTL_SECONDS": {
+      "required": "optional",
+      "default": "300",
+      "type": "number",
+      "description": "OTP validity window in seconds"
+    },
+    "OTP_MAX_ATTEMPTS": {
+      "required": "optional",
+      "default": "3",
+      "type": "number",
+      "description": "Maximum OTP verification attempts per session"
+    },
+    "PHONEPE_MERCHANT_ID": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "PhonePe merchant ID; used in backend and Flutter app"
+    },
+    "PHONEPE_SALT_KEY": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "PhonePe salt key for checksum signing; used in backend and Flutter app"
+    },
+    "PHONEPE_SALT_INDEX": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "PhonePe salt index (PAYMENT_REQUIRED); used in backend and Flutter app"
+    },
+    "PHONEPE_ENVIRONMENT": {
+      "required": "optional",
+      "default": "UAT",
+      "type": "string",
+      "description": "PhonePe API environment (UAT or PRODUCTION)"
+    },
+    "GOOGLE_MAPS_API_KEY": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "Google Maps Platform API key; used in both backend and Flutter app"
+    },
+    "FIREBASE_API_KEY": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "Firebase Web API key; used in backend and Flutter app"
+    },
+    "FIREBASE_AUTH_DOMAIN": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Firebase auth domain (admin web / hosting)"
+    },
+    "FIREBASE_PROJECT_ID": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Firebase project ID; used in backend and Flutter app"
+    },
+    "FIREBASE_MESSAGING_SENDER_ID": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Firebase Cloud Messaging sender ID; used in backend and Flutter app"
+    },
+    "FIREBASE_APP_ID": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Firebase app ID"
+    },
+    "FIREBASE_VAPID_KEY": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Firebase VAPID key for web push; required when FIREBASE_API_KEY is set in production"
+    },
+    "AWS_REGION": {
+      "required": "optional",
+      "default": "us-east-1",
+      "type": "string",
+      "description": "AWS region for S3, Secrets Manager, and backups"
+    },
+    "AWS_S3_BUCKET": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "S3 bucket for user uploads and media"
+    },
+    "AWS_BACKUP_BUCKET": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "S3 bucket for scheduled database backups"
+    },
+    "SENTRY_DSN": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "Sentry DSN for error reporting; used in backend and Flutter app"
+    },
+    "ELASTICSEARCH_URL": {
+      "required": "optional",
+      "default": "http://localhost:9200",
+      "type": "string",
+      "description": "Elasticsearch endpoint for logs and search"
+    },
+    "CORS_ORIGINS": {
+      "required": "optional",
+      "default": null,
+      "type": "array",
+      "description": "Comma-separated allowed CORS origins; default empty list"
+    },
+    "CORS_ALLOW_NULL_ORIGIN": {
+      "required": "optional",
+      "default": "false",
+      "type": "boolean",
+      "description": "Allow requests with no Origin header (e.g. mobile, curl)"
+    },
+    "DEV_AUTH_BYPASS_ENABLED": {
+      "required": "optional",
+      "default": "false",
+      "type": "boolean",
+      "description": "Enable dev-only auth bypass (never enable in production)"
+    },
+    "DEV_AUTH_BYPASS_SECRET": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Shared secret for dev auth bypass header"
+    },
+    "DEFAULT_COUNTRY_CODE": {
+      "required": "optional",
+      "default": "+91",
+      "type": "string",
+      "description": "Default phone country code for OTP and login"
+    },
+    "MAX_LOGIN_ATTEMPTS": {
+      "required": "optional",
+      "default": "5",
+      "type": "number",
+      "description": "Failed login attempts before account lockout (1–10)"
+    },
+    "LOCKOUT_DURATION": {
+      "required": "optional",
+      "default": "900000",
+      "type": "number",
+      "description": "Account lockout duration in milliseconds (60000–3600000)"
+    },
+    "RATE_LIMIT_WINDOW_MS": {
+      "required": "optional",
+      "default": "900000",
+      "type": "number",
+      "description": "Global rate limit window in milliseconds"
+    },
+    "RATE_LIMIT_MAX_REQUESTS": {
+      "required": "optional",
+      "default": "100",
+      "type": "number",
+      "description": "Max requests per IP per rate limit window"
+    },
+    "AUTH_RATE_LIMIT_MAX_REQUESTS": {
+      "required": "optional",
+      "default": "5",
+      "type": "number",
+      "description": "Max auth endpoint requests per window"
+    },
+    "MAX_FILE_SIZE": {
+      "required": "optional",
+      "default": "5242880",
+      "type": "number",
+      "description": "Maximum upload size in bytes (default 5 MiB)"
+    },
+    "ALLOWED_FILE_TYPES": {
+      "required": "optional",
+      "default": null,
+      "type": "array",
+      "description": "Comma-separated MIME types; default image/jpeg, image/png, image/webp"
+    },
+    "BACKUP_SCHEDULE": {
+      "required": "optional",
+      "default": "0 2 * * *",
+      "type": "string",
+      "description": "Cron expression for automated DB backups"
+    },
+    "BACKUP_RETENTION_DAYS": {
+      "required": "optional",
+      "default": "30",
+      "type": "number",
+      "description": "Days to retain backup objects (1–365)"
+    },
+    "FCM_SERVER_KEY": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Legacy FCM server key for push notifications"
+    },
+    "NOTIFICATION_COOLDOWN_MS": {
+      "required": "optional",
+      "default": "30000",
+      "type": "number",
+      "description": "Minimum interval between duplicate notifications to the same user"
+    },
+    "MAX_NOTIFICATIONS_PER_MINUTE": {
+      "required": "optional",
+      "default": "20",
+      "type": "number",
+      "description": "Per-user notification rate cap per minute"
+    }
+  }
+}

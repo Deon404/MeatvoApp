@@ -1,177 +1,261 @@
-# MeatvoApp — Cursor AI Agent Rules
-# Auto-loaded every session. Never ignore this file.
+# Meatvo — Cursor Rules
 
-## 🧠 WHO YOU ARE
-You are a Senior Full-Stack Engineer (8+ yrs) completing MeatvoApp — a production-grade
-meat/grocery delivery platform for the Indian market. You think like a CTO.
-You NEVER guess what exists. You SCAN first, then act.
+## 1. Project Overview
 
----
+**Meatvo** is a hyperlocal raw-meat delivery platform for India. Customers browse a catalog, add items to cart, pick a delivery slot and address, pay (COD or PhonePe), and track orders in real time. Delivery riders and store admins have dedicated flows.
 
-## 📁 MANDATORY: READ THESE FILES FIRST (every session)
-Before writing ANY code, read these in order:
-1. `docs/MEMORY.md`       → current build state, last session progress
-2. `docs/ARCHITECTURE.md` → tech stack, folder map, DB schema
-3. `docs/ROADMAP.md`      → 20-day sprint, which day we're on
-4. `docs/API_SPEC.md`     → all endpoints (check before creating new ones)
+This is a **monorepo**:
 
-Then SCAN the actual project:
-- List backend/src/ → see what routes/controllers exist
-- List admin/js/    → see what's built
-- List customer-app/lib/ and delivery-app/lib/ → Flutter state
+| Path | Purpose |
+|------|---------|
+| `backend/` | Node.js REST API + Socket.io + PostgreSQL/Redis |
+| `old_meatvo/` | Flutter customer/rider/admin mobile app |
+| `admin/`, `customer/`, `delivery/` | Web SPAs served by the backend |
+| `shared/` | Shared env manifest (`env-manifest.json`) |
+
+**UX reference:** Zappfresh-inspired dark commerce UI.
 
 ---
 
-## 📦 PROJECT SNAPSHOT
+## 2. Backend Tech Stack & Folder Structure
 
-**MeatvoApp** — Single-store meat delivery, 5km radius, India
-- Store location: one dark store
-- Delivery: within 5km, target <30 min
-- Currency: ₹ (INR) always
-- OTP: MSG91, **4-DIGIT** (NOT 6-digit — this is already built)
+### Stack
+- **Runtime:** Node.js (CommonJS), Express 5
+- **Database:** PostgreSQL (`pg`), Redis (`ioredis`)
+- **Auth:** JWT access/refresh tokens, OTP via MSG91, optional MFA (speakeasy)
+- **Payments:** PhonePe gateway
+- **Real-time:** Socket.io
+- **Security:** Helmet, CORS, rate limiting, CSRF, CSP, RBAC, account lockout
+- **Observability:** Winston, Sentry, Elasticsearch logger
+- **Validation:** Joi, Zod, express-validator
 
-### What EXISTS (do NOT rebuild):
+### `backend/src/` structure
+
 ```
-backend/         → ~50% built, Node.js + Express
-                   - MSG91 OTP (4-digit) ✅ working
-                   - Some routes exist — SCAN before adding
-admin/           → HTML/CSS/JS webapp — fully built UI
-                   - Needs real API connection (replaces mock data)
-customer webapp  → HTML/CSS/JS — OLD, being replaced by Flutter
-delivery webapp  → HTML/CSS/JS — OLD, being replaced by Flutter
+backend/src/
+├── config/          # env validation, secrets (AWS SSM), security config
+├── constants/       # shared constants (e.g. health)
+├── db/              # postgres.js, redis.js, schema.sql, ensureSchema.js
+├── middlewares/     # auth, RBAC, rate limit, error handler, validation
+├── modules/         # feature modules (controller + routes + validation)
+│   ├── auth/        # OTP login, JWT refresh, MFA
+│   ├── users/
+│   ├── addresses/
+│   ├── products/
+│   ├── categories/
+│   ├── catalog/
+│   ├── cart/        # Redis-backed cart
+│   ├── orders/      # order state machine
+│   ├── payments/    # PhonePe initiate/verify/webhook
+│   ├── delivery/    # slots, rider orders, location
+│   ├── admin/       # dashboard, CRUD, uploads
+│   ├── banners/
+│   ├── coupons/
+│   ├── settings/    # store config, serviceability
+│   ├── firebase/
+│   └── uploads/
+├── routes/          # health, metrics, debug
+├── security/        # OTP/JWT/payment/socket security services
+├── services/        # cross-module services (e.g. assignment)
+├── socket/          # Socket.io init
+└── utils/           # jwt, sms, response helpers, order state machine
 ```
 
-### What NEEDS BUILDING:
+Entry point: `backend/index.js` (default port **8080**).
+
+---
+
+## 3. Flutter Tech Stack & Folder Structure
+
+### Stack
+- **Framework:** Flutter 3.9+ (`old_meatvo/`)
+- **State:** flutter_riverpod
+- **HTTP:** Dio via `ApiService` / `ApiClient`
+- **Navigation:** Navigator (MaterialPageRoute) + partial go_router
+- **Storage:** flutter_secure_storage, shared_preferences, Hive
+- **Maps:** google_maps_flutter, geolocator, geocoding
+- **Real-time:** socket_io_client
+- **UI:** shimmer, carousel_slider, google_fonts (Poppins)
+- **Payments:** PhonePe via backend redirect URL (native SDK disabled)
+- **Env:** flutter_dotenv (`.env` in assets)
+
+### `old_meatvo/lib/` structure
+
 ```
-backend/         → Complete remaining 50%: orders, payment, websocket, partner assignment
-customer-app/    → Flutter app (fresh build) — connect to backend API
-delivery-app/    → Flutter app (fresh build) — connect to backend API
-admin/js/        → Replace fetch() mock calls with real API endpoints
+old_meatvo/lib/
+├── main.dart                 # app entry, ProviderScope, theme
+├── config/                   # env_config, api_config, backend_resolver, feature_flags
+├── core/
+│   ├── constants/            # AppColors, AppTextStyles, AppSpacing, AppRadius (canonical)
+│   └── widgets/              # meatvo_button, shimmer_loader, product_card, section_header
+├── design_system/
+│   ├── tokens/               # meatvo_colors, meatvo_spacing, meatvo_radii
+│   └── theme/                # meatvo_theme (premium warm palette — secondary)
+├── features/                 # feature-scoped providers + widgets
+│   ├── catalog/
+│   ├── home/
+│   ├── connectivity/
+│   └── tracking/
+├── screens/                  # full-page UI
+│   ├── auth/                 # splash, phone, OTP, login
+│   ├── onboarding/           # onboarding, location setup
+│   ├── home/
+│   ├── cart/, checkout/
+│   ├── orders/, product/, categories/, search/
+│   ├── address/, profile/, settings/
+│   ├── payment/
+│   ├── rider/                # rider dashboard, orders, profile
+│   ├── admin/                # admin dashboard, CRUD screens
+│   ├── wishlist/, notifications/
+│   └── ...
+├── services/                 # API + domain services (ALL HTTP goes through here)
+│   ├── api_client.dart       # Dio client, token refresh, interceptors
+│   ├── api_service.dart      # thin wrapper over ApiClient — use this in services
+│   ├── auth_service.dart, cart_service.dart, order_service.dart, ...
+│   └── socket_service.dart, payment_service.dart, maps_service.dart, ...
+├── providers/                # Riverpod providers (auth, cart, product, order, theme)
+├── models/                   # data models
+├── widgets/                  # shared UI (home, cart, checkout, location, skeletons)
+├── ui/                       # design-system atoms/organisms/shells
+├── theme/                    # app_theme.dart (legacy light/dark)
+└── utils/                    # app_colors.dart (DEPRECATED — use AppColors)
 ```
 
 ---
 
-## 🏗️ TECH STACK (locked — do not change without updating ARCHITECTURE.md)
+## 4. Design System Constants
+
+**Primary palette** — use `AppColors` from `old_meatvo/lib/core/constants/app_constants.dart`:
+
+| Token | Value |
+|-------|-------|
+| Background | `#0F0F0F` |
+| Surface / Cards | `#1C1C1E` |
+| Primary / CTA | `#C8102E` |
+| Primary Hover | `#E8293F` |
+| Text Primary | `#FFFFFF` |
+| Text Secondary | `#A0A0A0` |
+| Success | `#2ECC71` |
+| Warning | `#F39C12` |
+| Divider | `#2C2C2E` |
+
+**Typography:** Poppins (all weights) via `AppTextStyles` in the same file.
+
+**Radii:** card `16px`, button `12px`, chip `20px`, image `12px` (`AppRadius`).
+
+**Spacing:** xs `4`, sm `8`, md `16`, lg `24`, xl `32` (`AppSpacing`).
+
+> Note: `MeatvoColors` (`design_system/tokens/meatvo_colors.dart`) is a secondary warm palette. Do not mix palettes on the same screen. Prefer `AppColors` unless explicitly building a MeatvoTheme screen.
+
+---
+
+## 5. Code Rules
+
+### Flutter
+- Use **Riverpod** for all shared/async state (`providers/`, `features/*/`)
+- Use **`AppColors`**, **`AppTextStyles`**, **`AppSpacing`**, **`AppRadius`** — never hardcode colors, font sizes, or radii
+- **All API calls** go through `old_meatvo/lib/services/api_service.dart` (or domain services that use it) — never call Dio/HTTP directly from widgets
+- Never use emoji as icons — use `Icons` or `font_awesome_flutter`
+- Every data-fetching screen must handle **loading** (shimmer), **empty**, and **error** states
+- Secrets and API keys live in `.env` / `EnvConfig` — never commit or hardcode them
+- Import design tokens from `core/constants/app_constants.dart`
 
 ### Backend
-- Runtime: Node.js + TypeScript
-- Framework: Express.js
-- ORM: Prisma + PostgreSQL
-- Auth: JWT (access 15min, refresh 7d) + MSG91 OTP (4-digit)
-- Real-time: ws (WebSocket)
-- Validation: Zod
-- Queue: Bull + Redis (notifications, retries)
+- **Parameterized queries only** (`$1`, `$2`, …) — never string-concatenate SQL
+- **Never hardcode secrets** — use `process.env` / `config/secrets/` only
+- Validate and sanitize input before DB operations (Joi/Zod/express-validator)
+- Use `ok()` / `fail()` from `src/utils/response.js` for consistent API responses
+- Follow module pattern: `*.routes.js` → `*.controller.js` → `*.validation.js`
 
-### Flutter (both apps)
-- State: Riverpod
-- HTTP: Dio with interceptors (JWT auto-attach)
-- Storage: flutter_secure_storage (tokens), shared_preferences (settings)
-- Maps: google_maps_flutter
-- Navigation: GoRouter
-- Push: firebase_messaging (FCM)
-
-### Admin (HTML/JS — keep as-is, just connect)
-- HTTP: native fetch() with auth wrapper
-- Real-time: native WebSocket
-- Charts: Chart.js
-- Maps: Leaflet.js
+### General
+- Monorepo scripts: root `npm run dev` starts backend; Flutter runs from `old_meatvo/`
+- Env keys must match `shared/env-manifest.json`
 
 ---
 
-## 🔐 RBAC — 3 Roles (strict, never mix)
-```
-ADMIN            → full access, admin panel only
-CUSTOMER         → place orders, track, manage addresses
-DELIVERY_PARTNER → accept/reject orders, update status, GPS ping
-```
-Every protected route MUST check: authenticate → then checkRole
+## 6. API Base URL Pattern
 
----
+### Backend
+- Default: `http://0.0.0.0:8080` (`PORT` env, fallback 8080)
+- Health: `GET /health`
+- Metrics: `GET /metrics`
 
-## 🚦 ORDER STATUS FLOW (NEVER skip steps)
+### REST API prefix
+All endpoints are under **`{BACKEND_ROOT}/api`**:
+
 ```
-PENDING → CONFIRMED → PACKED → OUT_FOR_DELIVERY → DELIVERED
-                   ↘ CANCELLED (only from PENDING or CONFIRMED)
+{BACKEND_ROOT}/api/auth/send-otp
+{BACKEND_ROOT}/api/auth/verify-otp
+{BACKEND_ROOT}/api/products
+{BACKEND_ROOT}/api/categories
+{BACKEND_ROOT}/api/catalog
+{BACKEND_ROOT}/api/cart
+{BACKEND_ROOT}/api/orders
+{BACKEND_ROOT}/api/payments/initiate
+{BACKEND_ROOT}/api/delivery/slots
+{BACKEND_ROOT}/api/addresses
+{BACKEND_ROOT}/api/admin/*
+{BACKEND_ROOT}/api/store/status
+{BACKEND_ROOT}/api/store/check-delivery
 ```
 
----
+Some routes also expose `/api/v1/*` aliases (orders, products, addresses, admin, payments, delivery).
 
-## 🇮🇳 INDIA-SPECIFIC RULES
-- Phone: 10-digit, regex `/^[6-9]\d{9}$/`
-- OTP: **4-digit** (MSG91, already integrated)
-- Payment: PhonePe UPI primary, COD mandatory
-- Price: always ₹, never $
-- Date: DD/MM/YYYY, Time: 12-hour IST
-- Delivery radius: 5km from store
+### Flutter resolution (`EnvConfig` + `ApiConfig`)
+1. Read `API_BASE_URL` (or `MEATVO_API_ROOT`, `BACKEND_ROOT_URL`, `API_URL`) from `.env`
+2. Fallback: Android emulator → `http://10.0.2.2:8080`; iOS/simulator/web → `http://127.0.0.1:8080`
+3. `ApiConfig.baseUrl` = `{BACKEND_ROOT}/api`
+4. `ApiConfig.socketUrl` = `{BACKEND_ROOT}` (Socket.io)
 
 ---
 
-## ⚡ WEBSOCKET EVENTS
-```javascript
-// Server → Client
-"order:new"               → admin gets new order alert
-"order:status_update"     → { orderId, status, timestamp }
-"order:partner_assigned"  → { orderId, partner: { name, phone, lat, lng } }
-"partner:location_update" → { orderId, lat, lng }
+## 7. Done vs Pending
 
-// Client → Server  
-"partner:location"        → { lat, lng }  // every 5 seconds when on delivery
-"partner:online"          → { partnerId }
-"partner:offline"         → { partnerId }
-```
+### ✅ Done (Backend)
+- OTP auth (MSG91), JWT refresh, MFA routes
+- Product/category/catalog CRUD
+- Redis cart sync
+- Order placement, state machine, cancellation
+- PhonePe payment initiate/verify/webhook
+- Delivery slots, rider assignment, location updates
+- Admin APIs (dashboard, users, riders, products, orders, banners, settings)
+- Address management, store serviceability check
+- Banners, coupons
+- Socket.io real-time order updates
+- Security hardening (rate limits, CSRF, CSP, account lockout, RBAC)
+- PostgreSQL schema + migrations, Redis
+- Web SPAs: `/admin`, `/customer`, `/delivery`
 
----
+### ✅ Done (Flutter — `old_meatvo/`)
+- Auth: splash → phone OTP → session persistence
+- Onboarding + location permission/setup
+- Home: banners, categories, product carousel, search
+- Catalog, product detail, categories list
+- Cart sync + checkout (address, slot, coupon, COD/ONLINE)
+- Orders list + order detail + live status
+- Address CRUD with map picker
+- Profile + account settings
+- Rider dashboard, orders, profile
+- Admin screens (dashboard, orders, products, users, riders, banners, categories, settings)
+- Payment flow via PhonePe redirect + status poller
+- Shimmer loaders, empty/error state patterns
+- Socket service for live order tracking
 
-## 🤖 PARTNER ASSIGNMENT ALGORITHM
-```
-Score = (1/distance_km × 40) + (acceptanceRate × 30) + (rating × 20) + (todayBonus × 10)
-- Only partners within 5km AND online AND no active delivery
-- 30-second accept window → auto-reassign to next
-- Max 3 reassignment attempts → admin alert
-```
-
----
-
-## 🛡️ SECURITY CHECKLIST (check before every PR)
-- [ ] No hardcoded secrets (use process.env always)
-- [ ] Auth middleware on every protected route
-- [ ] Role check AFTER auth check
-- [ ] Zod validation on ALL inputs
-- [ ] PhonePe webhook: SHA256 signature verified
-- [ ] OTP: max 3 attempts per phone per 10 min (Redis rate limit)
-- [ ] Stock: atomic decrement (PostgreSQL transaction)
-- [ ] Payment: idempotency key on every payment create
-
----
-
-## 📋 AGENT BEHAVIOR RULES
-
-### DO:
-- Read existing file before editing it
-- Check if endpoint exists in API_SPEC.md before creating
-- Test with curl after creating a backend endpoint
-- Add new files to docs/MEMORY.md file map
-- Mark tasks done in docs/MEMORY.md + docs/ROADMAP.md
-- Write TypeScript types — never use `any`
-- Paginate all list endpoints (default: 20 items)
-
-### DON'T:
-- Don't rebuild what exists — scan first
-- Don't use `console.log` for sensitive data (OTP, token, payment)
-- Don't create duplicate files — check before creating
-- Don't skip Zod validation
-- Don't allow negative stock
-- Don't return unbounded arrays from API
-- Don't use `any` type in TypeScript
-
-### WHEN STUCK:
-1. State the blocker clearly
-2. Propose 2-3 solutions with tradeoffs
-3. Pick best and proceed
+### 🚧 Pending / Incomplete
+| Area | Status |
+|------|--------|
+| **Wishlist** | Flutter screen shows "coming soon" |
+| **Notifications** | Flutter screen placeholder; FCM disabled |
+| **PhonePe native SDK** | Commented out in `pubspec.yaml`; uses URL redirect only |
+| **FCM push notifications** | `PushNotificationService` local-only mode |
+| **Sentry init** | `ErrorTrackingService.initialize()` not called in `main.dart` |
+| **Privacy Policy / ToS** | Placeholder toasts in account settings |
+| **Design system unification** | Two palettes (`AppColors` dark vs `MeatvoColors` warm) coexist |
+| **Expo/React Native stubs** | `old_meatvo/app/(tabs)/*` are "Coming soon" placeholders |
+| **Web customer SPA** | Location switcher, membership, driver messaging, help center |
+| **Web admin** | Order detail modal marked "coming soon" |
+| **Flutter at repo root** | App currently in `old_meatvo/`; no root-level `lib/` yet |
 
 ---
 
-## 📝 END OF EVERY SESSION — UPDATE:
-1. `docs/MEMORY.md` → completed tasks, new files, new decisions
-2. `docs/ROADMAP.md` → mark day tasks complete/incomplete
-3. Note any blockers or risks discovered
+*Last reviewed: project structure as of June 2026.*

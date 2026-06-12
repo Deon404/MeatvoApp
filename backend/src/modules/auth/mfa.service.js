@@ -1,5 +1,6 @@
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
+const { query } = require('../../db/postgres');
 const { logger } = require('../../utils/logger');
 const { sentry } = require('../../utils/sentry');
 
@@ -210,7 +211,7 @@ class MFAService {
    * Check if user has MFA enabled
    */
   isMFAEnabled(user) {
-    return user.mfaEnabled && user.mfaSecret;
+    return Boolean((user.mfaEnabled || user.mfa_enabled) && (user.mfaSecret || user.mfa_secret));
   }
 
   /**
@@ -218,12 +219,17 @@ class MFAService {
    */
   async enableMFA(userId, secret, backupCodes) {
     try {
-      // In production, update user in database
-      // await User.update(userId, { 
-      //   mfaEnabled: true,
-      //   mfaSecret: secret,
-      //   mfaBackupCodes: backupCodes 
-      // });
+      const hashedBackupCodes =
+        this.backupCodes.get(userId) || (backupCodes || []).map((code) => this.hashBackupCode(code));
+
+      await query(
+        `UPDATE users
+         SET mfa_enabled = TRUE,
+             mfa_secret = $2,
+             mfa_backup_codes = $3::jsonb
+         WHERE id = $1`,
+        [userId, secret, JSON.stringify(hashedBackupCodes)]
+      );
 
       logger.info('mfa_enabled', { userId });
       return true;
@@ -242,12 +248,14 @@ class MFAService {
    */
   async disableMFA(userId) {
     try {
-      // In production, update user in database
-      // await User.update(userId, { 
-      //   mfaEnabled: false,
-      //   mfaSecret: null,
-      //   mfaBackupCodes: null 
-      // });
+      await query(
+        `UPDATE users
+         SET mfa_enabled = FALSE,
+             mfa_secret = NULL,
+             mfa_backup_codes = NULL
+         WHERE id = $1`,
+        [userId]
+      );
 
       // Clear backup codes from memory
       this.backupCodes.delete(userId);
@@ -329,6 +337,19 @@ class MFAService {
       hasBackupCodes: this.getRemainingBackupCodes(user.id) > 0,
       backupCodesCount: this.getRemainingBackupCodes(user.id)
     };
+  }
+
+  async getUserMFA(userId) {
+    const { rows } = await query(
+      `SELECT id,
+              mfa_enabled AS "mfaEnabled",
+              mfa_secret AS "mfaSecret",
+              mfa_backup_codes AS "mfaBackupCodes"
+       FROM users
+       WHERE id = $1`,
+      [userId]
+    );
+    return rows[0] || null;
   }
 
   /**

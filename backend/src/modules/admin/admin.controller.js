@@ -1,30 +1,52 @@
 const asyncHandler = require('express-async-handler');
 const { withTransaction, query } = require('../../db/postgres');
+const { repairAppSettingsSchema } = require('../../db/appSettings');
 const { ok, fail } = require('../../utils/response');
 const { emitToAll } = require('../../socket/socket');
-
-const addressToText = (addr) => {
-  if (!addr) return '';
-  if (typeof addr === 'string') return addr;
-  const text = addr.text || addr.addressText;
-  if (text) return String(text);
-  const parts = [addr.line1, addr.line2, addr.city, addr.state, addr.pincode].filter(Boolean);
-  return parts.join(', ');
-};
+const { addressToText } = require('../../utils/address');
+const { canTransition } = require('../../utils/orderStateMachine');
+const {
+  emitAssignmentSuccess,
+  emitAssignmentCancelled,
+} = require('../../services/assignment.service');
 
 const dashboard = asyncHandler(async (req, res) => {
-  const [{ rows: ordersCount }, { rows: customersCount }, { rows: deliveryCount }, { rows: revenue }] =
-    await Promise.all([
-      query('SELECT COUNT(*)::int AS total FROM orders'),
-      query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'customer'"),
-      query(
-        `SELECT COUNT(*)::int AS total
-         FROM delivery_partners dp
-         JOIN users u ON u.id = dp.user_id
-         WHERE u.role = 'delivery'`
-      ),
-      query("SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total FROM orders WHERE status = 'DELIVERED'"),
-    ]);
+  const [
+    { rows: ordersCount },
+    { rows: customersCount },
+    { rows: deliveryCount },
+    { rows: revenue },
+    { rows: todayOrdersRows },
+    { rows: todayRevenueRows },
+    { rows: activeRidersRows },
+  ] = await Promise.all([
+    query('SELECT COUNT(*)::int AS total FROM orders'),
+    query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'customer'"),
+    query(
+      `SELECT COUNT(*)::int AS total
+       FROM delivery_partners dp
+       JOIN users u ON u.id = dp.user_id
+       WHERE u.role = 'delivery'`
+    ),
+    query("SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total FROM orders WHERE status = 'DELIVERED'"),
+    query(
+      `SELECT COUNT(*)::int AS total
+       FROM orders
+       WHERE created_at >= CURRENT_DATE`
+    ),
+    query(
+      `SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total
+       FROM orders
+       WHERE status = 'DELIVERED' AND created_at >= CURRENT_DATE`
+    ),
+    query(
+      `SELECT COUNT(*)::int AS total
+       FROM delivery_partners dp
+       JOIN users u ON u.id = dp.user_id
+       WHERE dp.is_online = true
+         AND u.role = 'delivery'`
+    ),
+  ]);
 
   const { rows: liveOrders } = await query(
     "SELECT COUNT(*)::int AS total FROM orders WHERE status NOT IN ('DELIVERED','CANCELLED')"
@@ -39,30 +61,269 @@ const dashboard = asyncHandler(async (req, res) => {
         totalCustomers: customersCount[0].total,
         totalDeliveryPartners: deliveryCount[0].total,
         deliveredRevenue: revenue[0].total,
+        todayOrders: todayOrdersRows[0].total,
+        todayRevenue: todayRevenueRows[0].total,
+        activeRiders: activeRidersRows[0].total,
       },
     },
     'Dashboard'
   );
 });
 
-const customers = asyncHandler(async (req, res) => {
-  const { rows } = await query(
-    `SELECT u.id, u.phone, u.name, u.role,
-            (SELECT o.address FROM orders o WHERE o.customer_id = u.id ORDER BY o.created_at DESC LIMIT 1) AS last_address
-     FROM users u
-     WHERE u.role IN ('customer', 'delivery')
-     ORDER BY u.created_at DESC`
-  );
+const mapUserRole = (role) => {
+  if (role === 'delivery') return 'delivery_partner';
+  return role || 'customer';
+};
 
-  const out = rows.map((u) => ({
+const mapUserRow = (u) => {
+  const role = mapUserRole(u.role);
+  const rider =
+    role === 'delivery_partner' && u.partner_id
+      ? {
+          id: String(u.partner_id),
+          total_deliveries: Number(u.total_deliveries || 0),
+          approved: u.approved !== false,
+          online: Boolean(u.is_online),
+          vehicle: u.vehicle_type || '',
+        }
+      : null;
+
+  return {
+    id: String(u.id),
     uid: String(u.id),
     name: u.name || u.phone || 'Customer',
     phone: u.phone || '',
+    email: u.email || null,
     address: addressToText(u.last_address) || '',
-    role: u.role === 'delivery' ? 'delivery_partner' : (u.role || 'customer')
+    role,
+    is_active: u.is_active !== false,
+    order_count: Number(u.order_count || 0),
+    lifetime_value: Number(u.lifetime_value || 0),
+    created_at: u.created_at ? new Date(u.created_at).toISOString() : null,
+    ...(rider ? { rider } : {}),
+  };
+};
+
+const customers = asyncHandler(async (req, res) => {
+  let rows;
+  try {
+    ({ rows } = await query(
+      `SELECT u.id, u.phone, u.name, u.role, u.created_at,
+              COALESCE(u.is_active, true) AS is_active,
+              (SELECT o.address FROM orders o WHERE o.customer_id = u.id ORDER BY o.created_at DESC LIMIT 1) AS last_address,
+              (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = u.id) AS order_count,
+              (SELECT COALESCE(SUM(o.total_amount),0)::numeric(10,2)
+               FROM orders o
+               WHERE o.customer_id = u.id AND o.status = 'DELIVERED') AS lifetime_value,
+              dp.id AS partner_id,
+              dp.approved,
+              dp.is_online,
+              dp.vehicle_type,
+              (SELECT COUNT(*)::int
+               FROM order_assignments oa
+               JOIN orders o ON o.id = oa.order_id
+               WHERE oa.delivery_partner_id = dp.id AND o.status = 'DELIVERED') AS total_deliveries
+       FROM users u
+       LEFT JOIN delivery_partners dp ON dp.user_id = u.id
+       WHERE u.role IN ('customer', 'delivery', 'admin')
+       ORDER BY u.created_at DESC`
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    ({ rows } = await query(
+      `SELECT u.id, u.phone, u.name, u.role, u.created_at,
+              true AS is_active,
+              (SELECT o.address FROM orders o WHERE o.customer_id = u.id ORDER BY o.created_at DESC LIMIT 1) AS last_address,
+              (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = u.id) AS order_count,
+              (SELECT COALESCE(SUM(o.total_amount),0)::numeric(10,2)
+               FROM orders o
+               WHERE o.customer_id = u.id AND o.status = 'DELIVERED') AS lifetime_value,
+              dp.id AS partner_id,
+              dp.approved,
+              dp.is_online,
+              dp.vehicle_type,
+              0::int AS total_deliveries
+       FROM users u
+       LEFT JOIN delivery_partners dp ON dp.user_id = u.id
+       WHERE u.role IN ('customer', 'delivery', 'admin')
+       ORDER BY u.created_at DESC`
+    ));
+  }
+
+  const out = rows.map(mapUserRow);
+  return ok(res, out, 'Customers');
+});
+
+const getUserDetail = asyncHandler(async (req, res) => {
+  const userId = Number(req.validated.params.id);
+
+  let userRows;
+  try {
+    ({ rows: userRows } = await query(
+      `SELECT u.id, u.phone, u.name, u.role, u.created_at,
+              COALESCE(u.is_active, true) AS is_active
+       FROM users u
+       WHERE u.id = $1`,
+      [userId]
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    ({ rows: userRows } = await query(
+      `SELECT u.id, u.phone, u.name, u.role, u.created_at, true AS is_active
+       FROM users u
+       WHERE u.id = $1`,
+      [userId]
+    ));
+  }
+
+  const userRow = userRows[0];
+  if (!userRow) {
+    return fail(res, 404, 'User not found');
+  }
+
+  const { rows: orderRows } = await query(
+    `SELECT o.id, o.total_amount, o.status, o.created_at
+     FROM orders o
+     WHERE o.customer_id = $1
+     ORDER BY o.created_at DESC
+     LIMIT 50`,
+    [userId]
+  );
+
+  const { rows: addressRows } = await query(
+    `SELECT id, address_line1, address_line2, city, state, pincode,
+            landmark, address_type, latitude, longitude, is_default, label
+     FROM addresses
+     WHERE user_id = $1
+     ORDER BY is_default DESC, created_at DESC`,
+    [userId]
+  ).catch((err) => {
+    if (err?.code === '42P01') return { rows: [] };
+    throw err;
+  });
+
+  let riderInfo = null;
+  const { rows: partnerRows } = await query(
+    `SELECT dp.id, dp.approved, dp.is_online, dp.vehicle_type, dp.vehicle_number,
+            dp.licence_number, dp.earnings,
+            u.created_at,
+            (SELECT COUNT(*)::int
+             FROM order_assignments oa
+             JOIN orders o ON o.id = oa.order_id
+             WHERE oa.delivery_partner_id = dp.id AND o.status = 'DELIVERED') AS total_deliveries
+     FROM delivery_partners dp
+     JOIN users u ON u.id = dp.user_id
+     WHERE dp.user_id = $1`,
+    [userId]
+  ).catch((err) => {
+    if (err?.code === '42703' || err?.code === '42P01') return { rows: [] };
+    throw err;
+  });
+
+  if (partnerRows[0] && userRow.role === 'delivery') {
+    const p = partnerRows[0];
+    riderInfo = {
+      id: String(p.id),
+      approved: Boolean(p.approved),
+      online: Boolean(p.is_online),
+      vehicle: p.vehicle_type || '',
+      vehicle_number: p.vehicle_number || '',
+      licence_number: p.licence_number || '',
+      earnings: Number(p.earnings || 0),
+      total_deliveries: Number(p.total_deliveries || 0),
+      joined_at: p.created_at ? new Date(p.created_at).toISOString() : null,
+    };
+  }
+
+  const totalOrders = orderRows.length;
+  const deliveredOrders = orderRows.filter((o) => o.status === 'DELIVERED').length;
+  const cancelledOrders = orderRows.filter((o) => o.status === 'CANCELLED').length;
+  const totalSpent = orderRows
+    .filter((o) => o.status === 'DELIVERED')
+    .reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+
+  const orders = orderRows.map((o) => ({
+    id: String(o.id),
+    total_price: Number(o.total_amount || 0),
+    status: String(o.status || '').toLowerCase(),
+    created_at: o.created_at ? new Date(o.created_at).toISOString() : null,
   }));
 
-  return ok(res, out, 'Customers');
+  const addresses = (addressRows || []).map((a) => ({
+    id: String(a.id),
+    address_line1: a.address_line1 || '',
+    address_line2: a.address_line2 || '',
+    city: a.city || '',
+    state: a.state || '',
+    pincode: a.pincode || '',
+    landmark: a.landmark || '',
+    address_type: a.address_type || 'HOME',
+    is_default: Boolean(a.is_default),
+    label: a.label || 'home',
+  }));
+
+  return ok(
+    res,
+    {
+      user: {
+        id: String(userRow.id),
+        name: userRow.name || userRow.phone || 'Customer',
+        phone: userRow.phone || '',
+        email: null,
+        role: mapUserRole(userRow.role),
+        is_active: userRow.is_active !== false,
+        created_at: userRow.created_at ? new Date(userRow.created_at).toISOString() : null,
+        profile_image: null,
+      },
+      stats: {
+        total_orders: totalOrders,
+        delivered_orders: deliveredOrders,
+        cancelled_orders: cancelledOrders,
+        total_spent: totalSpent,
+        average_order_value: deliveredOrders > 0 ? totalSpent / deliveredOrders : 0,
+      },
+      orders,
+      addresses,
+      rider_info: riderInfo,
+    },
+    'User detail'
+  );
+});
+
+const toggleUserStatus = asyncHandler(async (req, res) => {
+  const userId = Number(req.validated.params.id);
+  const isActive = Boolean(req.validated.body.is_active);
+
+  let rows;
+  try {
+    ({ rows } = await query(
+      'UPDATE users SET is_active = $1 WHERE id = $2 RETURNING id, phone, name, role, is_active, created_at',
+      [isActive, userId]
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    return fail(res, 501, 'User status toggle requires users.is_active column');
+  }
+
+  if (!rows[0]) {
+    return fail(res, 404, 'User not found');
+  }
+
+  const u = rows[0];
+  return ok(
+    res,
+    {
+      user: {
+        id: String(u.id),
+        name: u.name || u.phone || 'Customer',
+        phone: u.phone || '',
+        role: mapUserRole(u.role),
+        is_active: u.is_active !== false,
+        created_at: u.created_at ? new Date(u.created_at).toISOString() : null,
+      },
+    },
+    isActive ? 'User unblocked' : 'User blocked'
+  );
 });
 
 const deliveryPartners = asyncHandler(async (req, res) => {
@@ -74,6 +335,7 @@ const deliveryPartners = asyncHandler(async (req, res) => {
               u.phone, u.name, u.created_at
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
+       WHERE u.role = 'delivery'
        ORDER BY dp.id DESC`
     ));
   } catch (err) {
@@ -83,6 +345,7 @@ const deliveryPartners = asyncHandler(async (req, res) => {
               u.phone, u.name, u.created_at
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
+       WHERE u.role = 'delivery'
        ORDER BY dp.id DESC`
     ));
     rows = rows.map((r) => ({
@@ -97,6 +360,7 @@ const deliveryPartners = asyncHandler(async (req, res) => {
 
   const out = rows.map((p) => ({
     id: String(p.id),
+    user_id: String(p.user_id),
     phone: p.phone || '',
     profile: {
       name: p.name || '',
@@ -142,41 +406,51 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
     const dp = dpRows[0];
     if (!dp) return null;
 
-    const dpSets = [];
-    const dpParams = [];
+    const hasApproved = Object.prototype.hasOwnProperty.call(patch, 'approved');
+    const hasOnline = Object.prototype.hasOwnProperty.call(patch, 'online');
+    const hasEarnings = Object.prototype.hasOwnProperty.call(patch, 'earnings');
+    const hasVehicle = Object.prototype.hasOwnProperty.call(patch, 'vehicle');
+    const hasVehicleNumber = Object.prototype.hasOwnProperty.call(patch, 'vehicleNumber');
+    const hasLicenceNumber = Object.prototype.hasOwnProperty.call(patch, 'licenceNumber');
+    const hasBankDetails = Object.prototype.hasOwnProperty.call(patch, 'bankDetails');
+    const hasDeliveryPartnerPatch =
+      hasApproved ||
+      hasOnline ||
+      hasEarnings ||
+      hasVehicle ||
+      hasVehicleNumber ||
+      hasLicenceNumber ||
+      hasBankDetails;
 
-    if (Object.prototype.hasOwnProperty.call(patch, 'approved')) {
-      dpParams.push(Boolean(patch.approved));
-      dpSets.push(`approved = $${dpParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'online')) {
-      dpParams.push(Boolean(patch.online));
-      dpSets.push(`is_online = $${dpParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'earnings')) {
-      dpParams.push(Number(patch.earnings));
-      dpSets.push(`earnings = $${dpParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'vehicle')) {
-      dpParams.push(patch.vehicle || null);
-      dpSets.push(`vehicle_type = $${dpParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'vehicleNumber')) {
-      dpParams.push(patch.vehicleNumber || null);
-      dpSets.push(`vehicle_number = $${dpParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'licenceNumber')) {
-      dpParams.push(patch.licenceNumber || null);
-      dpSets.push(`licence_number = $${dpParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'bankDetails')) {
-      dpParams.push(patch.bankDetails || null);
-      dpSets.push(`bank_details = $${dpParams.length}`);
-    }
-
-    if (dpSets.length) {
-      dpParams.push(id);
-      await client.query(`UPDATE delivery_partners SET ${dpSets.join(', ')} WHERE id = $${dpParams.length}`, dpParams);
+    if (hasDeliveryPartnerPatch) {
+      await client.query(
+        `UPDATE delivery_partners
+         SET approved = CASE WHEN $1 THEN $2 ELSE approved END,
+             is_online = CASE WHEN $3 THEN $4 ELSE is_online END,
+             earnings = CASE WHEN $5 THEN $6 ELSE earnings END,
+             vehicle_type = CASE WHEN $7 THEN $8 ELSE vehicle_type END,
+             vehicle_number = CASE WHEN $9 THEN $10 ELSE vehicle_number END,
+             licence_number = CASE WHEN $11 THEN $12 ELSE licence_number END,
+             bank_details = CASE WHEN $13 THEN $14 ELSE bank_details END
+         WHERE id = $15`,
+        [
+          hasApproved,
+          Boolean(patch.approved),
+          hasOnline,
+          Boolean(patch.online),
+          hasEarnings,
+          Number(patch.earnings),
+          hasVehicle,
+          patch.vehicle || null,
+          hasVehicleNumber,
+          patch.vehicleNumber || null,
+          hasLicenceNumber,
+          patch.licenceNumber || null,
+          hasBankDetails,
+          patch.bankDetails || null,
+          id,
+        ]
+      );
     }
 
     if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
@@ -219,36 +493,145 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
 const listOrdersCompat = asyncHandler(async (req, res) => {
   const limit = Number(req.validated?.query?.limit || 200);
   const offset = Number(req.validated?.query?.offset || 0);
+  const fromDate = req.validated?.query?.from || null;
+  const toDate = req.validated?.query?.to || null;
 
-  const { rows } = await query(
-    `SELECT o.id, o.customer_id, u.phone, o.total_amount, o.status,
-            oa.delivery_partner_id,
-            (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
-     FROM orders o
-     JOIN users u ON u.id = o.customer_id
-     LEFT JOIN order_assignments oa ON oa.order_id = o.id
-     ORDER BY o.created_at DESC
-     LIMIT $1 OFFSET $2`,
-    [limit, offset]
-  );
+  const conditions = [];
+  const params = [limit, offset];
+  let paramIndex = 3;
+
+  if (fromDate) {
+    conditions.push(`o.created_at >= $${paramIndex}::date`);
+    params.push(fromDate);
+    paramIndex += 1;
+  }
+  if (toDate) {
+    conditions.push(`o.created_at < ($${paramIndex}::date + INTERVAL '1 day')`);
+    params.push(toDate);
+    paramIndex += 1;
+  }
+
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const baseSelect = `
+    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at,
+           COALESCE(u.phone, '') AS phone,
+           COALESCE(u.name, u.phone, 'Customer') AS customer_name`;
+
+  const runQuery = async (withAssignments) => {
+    if (withAssignments) {
+      return query(
+        `${baseSelect},
+                oa.delivery_partner_id,
+                ru.name AS rider_name,
+                ru.phone AS rider_phone,
+                (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
+         FROM orders o
+         LEFT JOIN users u ON u.id = o.customer_id
+         LEFT JOIN order_assignments oa ON oa.order_id = o.id
+         LEFT JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+         LEFT JOIN users ru ON ru.id = dp.user_id
+         ${whereClause}
+         ORDER BY o.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        params
+      );
+    }
+
+    return query(
+      `${baseSelect},
+              NULL::bigint AS delivery_partner_id,
+              NULL::text AS rider_name,
+              NULL::text AS rider_phone,
+              (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
+       FROM orders o
+       LEFT JOIN users u ON u.id = o.customer_id
+       ${whereClause}
+       ORDER BY o.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      params
+    );
+  };
+
+  let rows;
+  try {
+    ({ rows } = await runQuery(true));
+  } catch (err) {
+    if (err?.code !== '42P01') throw err;
+    ({ rows } = await runQuery(false));
+  }
+
+  const itemsByOrderId = {};
+  if (rows.length > 0) {
+    const orderIds = rows.map((row) => row.id);
+    try {
+      const { rows: itemRows } = await query(
+        `SELECT oi.order_id, oi.product_id, oi.quantity, oi.price,
+                COALESCE(p.name, 'Item') AS name
+         FROM order_items oi
+         LEFT JOIN products p ON p.id = oi.product_id
+         WHERE oi.order_id = ANY($1::bigint[])
+         ORDER BY oi.order_id, oi.id`,
+        [orderIds]
+      );
+      for (const item of itemRows) {
+        const orderId = String(item.order_id);
+        if (!itemsByOrderId[orderId]) itemsByOrderId[orderId] = [];
+        itemsByOrderId[orderId].push({
+          id: String(item.product_id),
+          name: item.name || 'Item',
+          quantity: Number(item.quantity || 0),
+          price: Number(item.price || 0),
+        });
+      }
+    } catch (err) {
+      if (err?.code !== '42P01') throw err;
+    }
+  }
 
   const out = rows.map((o) => {
     const hasAssignment = Boolean(o.delivery_partner_id);
-    const status = hasAssignment && ['CONFIRMED', 'PACKED'].includes(o.status) ? 'ASSIGNED' : o.status;
-    const createdAt = Number(o.created_at_ms || 0);
+    const status =
+      hasAssignment && ['CONFIRMED', 'PACKED'].includes(o.status) ? 'ASSIGNED' : o.status;
+    const createdAtMs = Number(o.created_at_ms || 0);
+    const customerName = o.customer_name || o.phone || 'Customer';
+    const orderId = String(o.id);
+    const items = itemsByOrderId[orderId] || [];
+
     return {
-      id: String(o.id),
+      id: orderId,
       customerUid: String(o.customer_id),
       phone: o.phone || '',
+      customerName,
       totalAmount: Number(o.total_amount || 0),
+      total_price: Number(o.total_amount || 0),
       status,
       deliveryUid: o.delivery_partner_id ? String(o.delivery_partner_id) : '',
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: createdAtMs,
+      created_at: o.created_at
+        ? new Date(o.created_at).toISOString()
+        : new Date(createdAtMs).toISOString(),
+      updatedAt: createdAtMs,
+      user: {
+        name: customerName,
+        phone: o.phone || 'N/A',
+      },
+      items,
+      assignment: o.delivery_partner_id
+        ? {
+            rider: {
+              id: String(o.delivery_partner_id),
+              user: {
+                name: o.rider_name || 'Rider',
+                phone: o.rider_phone || '',
+              },
+            },
+          }
+        : null,
     };
   });
 
-  return ok(res, out, 'Orders');
+  return ok(res, { orders: out }, 'Orders');
 });
 
 const patchOrderCompat = asyncHandler(async (req, res) => {
@@ -256,6 +639,7 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
   const { orderStatus, deliveryUserId } = req.validated.body || {};
 
   const result = await withTransaction(async (client) => {
+    const db = client;
     const { rows: oRows } = await client.query(
       `SELECT id, customer_id, status
        FROM orders
@@ -267,17 +651,58 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
     if (!order) return null;
 
     if (orderStatus === 'CANCELLED') {
+      const { rows: partnerRows } = await client.query(
+        `SELECT dp.user_id
+         FROM order_assignments oa
+         JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+         WHERE oa.order_id = $1`,
+        [orderId]
+      );
+      const cancelledPartnerUserId = partnerRows[0]?.user_id ?? null;
+
+      const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [orderId]);
+      const currentStatus = rows[0]?.status;
+      const newStatus = 'CANCELLED';
+      if (!canTransition(currentStatus, newStatus)) {
+        const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
+        err.statusCode = 400;
+        throw err;
+      }
       await client.query('UPDATE orders SET status = $1 WHERE id = $2', ['CANCELLED', orderId]);
       await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['CANCELLED', orderId]);
+
+      const { rows: updatedRows } = await client.query(
+        `SELECT o.id, o.customer_id, u.phone, o.total_amount, o.status,
+                oa.delivery_partner_id,
+                (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
+         FROM orders o
+         JOIN users u ON u.id = o.customer_id
+         LEFT JOIN order_assignments oa ON oa.order_id = o.id
+         WHERE o.id = $1`,
+        [orderId]
+      );
+
+      return {
+        ...(updatedRows[0] || {}),
+        cancelledPartnerUserId,
+      };
     } else if (orderStatus === 'ASSIGNED') {
       const partnerId = Number(deliveryUserId);
-      if (!partnerId) throw new Error('deliveryUserId is required for ASSIGNED');
+      if (!partnerId) {
+        const err = new Error('deliveryUserId is required for ASSIGNED');
+        err.statusCode = 400;
+        throw err;
+      }
 
       const { rows: dpRows } = await client.query(
         'SELECT id, approved FROM delivery_partners WHERE id = $1',
         [partnerId]
       );
-      if (!dpRows[0]) throw new Error('Delivery partner not found');
+      if (!dpRows[0]) {
+        const err = new Error('Delivery partner not found');
+        err.statusCode = 404;
+        throw err;
+      }
 
       await client.query(
         `INSERT INTO order_assignments (order_id, delivery_partner_id, status)
@@ -287,9 +712,25 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
       );
 
       if (order.status === 'PLACED') {
+        const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [orderId]);
+        const currentStatus = rows[0]?.status;
+        const newStatus = 'CONFIRMED';
+        if (!canTransition(currentStatus, newStatus)) {
+          const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
+          err.statusCode = 400;
+          throw err;
+        }
         await client.query('UPDATE orders SET status = $1 WHERE id = $2', ['CONFIRMED', orderId]);
       }
     } else if (orderStatus) {
+      const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [orderId]);
+      const currentStatus = rows[0]?.status;
+      const newStatus = orderStatus;
+      if (!canTransition(currentStatus, newStatus)) {
+        const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
+        err.statusCode = 400;
+        throw err;
+      }
       await client.query('UPDATE orders SET status = $1 WHERE id = $2', [orderStatus, orderId]);
     }
 
@@ -324,6 +765,58 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
   });
 
   if (!result) return fail(res, 404, 'Order not found');
+
+  const io = req.app.get('io');
+  if (io) {
+    if (orderStatus === 'CANCELLED') {
+      if (result.cancelledPartnerUserId) {
+        emitAssignmentCancelled(
+          io,
+          orderId,
+          result.cancelledPartnerUserId,
+          'order_cancelled'
+        );
+      }
+      if (result.customer_id) {
+        io.to(`customer_${result.customer_id}`).emit('order:status_updated', {
+          orderId,
+          status: 'CANCELLED',
+          updatedAt: new Date().toISOString(),
+        });
+        io.to('admin_room').emit('order:updated', {
+          orderId,
+          status: 'CANCELLED',
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    }
+    if (orderStatus === 'ASSIGNED' && result.delivery_partner_id) {
+      const [{ rows: orderRows }, { rows: partnerRows }] = await Promise.all([
+        query(
+          `SELECT id, customer_id, total_amount, address, payment_mode
+           FROM orders WHERE id = $1`,
+          [orderId]
+        ),
+        query(
+          `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, u.name, u.phone
+           FROM delivery_partners dp
+           JOIN users u ON u.id = dp.user_id
+           WHERE dp.id = $1`,
+          [result.delivery_partner_id]
+        ),
+      ]);
+      if (orderRows[0] && partnerRows[0]) {
+        emitAssignmentSuccess(io, orderRows[0], {
+          id: partnerRows[0].id,
+          userId: partnerRows[0].user_id,
+          name: partnerRows[0].name,
+          phone: partnerRows[0].phone,
+          current_lat: partnerRows[0].current_lat,
+          current_lng: partnerRows[0].current_lng,
+        });
+      }
+    }
+  }
 
   const hasAssignment = Boolean(result.delivery_partner_id);
   const status =
@@ -411,64 +904,32 @@ const patchCategoryCompat = asyncHandler(async (req, res) => {
   const id = Number(req.validated.params.id);
   const body = req.validated.body || {};
 
-  const sets = [];
-  const params = [];
-  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
-    params.push(body.name);
-    sets.push(`name = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'imageUrl')) {
-    params.push(body.imageUrl || null);
-    sets.push(`image_url = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'isActive')) {
-    params.push(Boolean(body.isActive));
-    sets.push(`active = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'sortOrder')) {
-    params.push(Number(body.sortOrder || 0));
-    sets.push(`sort_order = $${params.length}`);
+  const hasName      = Object.prototype.hasOwnProperty.call(body, 'name');
+  const hasImageUrl  = Object.prototype.hasOwnProperty.call(body, 'imageUrl');
+  const hasIsActive  = Object.prototype.hasOwnProperty.call(body, 'isActive');
+  const hasSortOrder = Object.prototype.hasOwnProperty.call(body, 'sortOrder');
+
+  if (!hasName && !hasImageUrl && !hasIsActive && !hasSortOrder) {
+    return fail(res, 400, 'No fields to update');
   }
 
-  if (!sets.length) return fail(res, 400, 'No fields to update');
+  const { rows } = await query(
+    `UPDATE categories
+     SET name       = CASE WHEN $1 THEN $2  ELSE name       END,
+         image_url  = CASE WHEN $3 THEN $4  ELSE image_url  END,
+         active     = CASE WHEN $5 THEN $6  ELSE active     END,
+         sort_order = CASE WHEN $7 THEN $8  ELSE sort_order END
+     WHERE id = $9
+     RETURNING id, name, image_url, active, sort_order`,
+    [
+      hasName,      body.name,
+      hasImageUrl,  body.imageUrl || null,
+      hasIsActive,  Boolean(body.isActive),
+      hasSortOrder, Number(body.sortOrder || 0),
+      id,
+    ]
+  );
 
-  params.push(id);
-  let rows;
-  try {
-    ({ rows } = await query(
-      `UPDATE categories SET ${sets.join(', ')} WHERE id = $${params.length}
-       RETURNING id, name, image_url, active, sort_order`,
-      params
-    ));
-  } catch (err) {
-    if (err?.code !== '42703') throw err;
-    // If sort_order column doesn't exist yet, retry without touching it.
-    const fallbackSets = [];
-    const fallbackParams = [];
-
-    if (Object.prototype.hasOwnProperty.call(body, 'name')) {
-      fallbackParams.push(body.name);
-      fallbackSets.push(`name = $${fallbackParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(body, 'imageUrl')) {
-      fallbackParams.push(body.imageUrl || null);
-      fallbackSets.push(`image_url = $${fallbackParams.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(body, 'isActive')) {
-      fallbackParams.push(Boolean(body.isActive));
-      fallbackSets.push(`active = $${fallbackParams.length}`);
-    }
-
-    if (!fallbackSets.length) return fail(res, 400, 'No fields to update');
-
-    fallbackParams.push(id);
-    ({ rows } = await query(
-      `UPDATE categories SET ${fallbackSets.join(', ')} WHERE id = $${fallbackParams.length}
-       RETURNING id, name, image_url, active`,
-      fallbackParams
-    ));
-    rows = rows.map((c) => ({ ...c, sort_order: 0 }));
-  }
   if (!rows[0]) return fail(res, 404, 'Category not found');
 
   const c = rows[0];
@@ -625,85 +1086,83 @@ const patchProductCompat = asyncHandler(async (req, res) => {
   const id = Number(req.validated.params.id);
   const body = req.validated.body || {};
 
-  const sets = [];
-  const params = [];
+  const hasName             = Object.prototype.hasOwnProperty.call(body, 'name');
+  const hasDescription      = Object.prototype.hasOwnProperty.call(body, 'description');
+  const hasImageUrl         = Object.prototype.hasOwnProperty.call(body, 'imageUrl');
+  const hasPrice            = Object.prototype.hasOwnProperty.call(body, 'price');
+  const hasBasePricePerKg   = Object.prototype.hasOwnProperty.call(body, 'basePricePerKg');
+  const hasUnit             = Object.prototype.hasOwnProperty.call(body, 'unit');
+  const hasStockQty         = Object.prototype.hasOwnProperty.call(body, 'stockQty');
+  const hasIsActive         = Object.prototype.hasOwnProperty.call(body, 'isActive');
+  const hasCategoryId       = Object.prototype.hasOwnProperty.call(body, 'categoryId');
+  const hasWeightVariants   = Object.prototype.hasOwnProperty.call(body, 'weightVariants');
+  const hasCutTypes         = Object.prototype.hasOwnProperty.call(body, 'cutTypes');
+  const hasMarinationOptions = Object.prototype.hasOwnProperty.call(body, 'marinationOptions');
+  const hasFreshnessDate    = Object.prototype.hasOwnProperty.call(body, 'freshnessDate');
 
-  if (Object.prototype.hasOwnProperty.call(body, 'name')) {
-    params.push(body.name);
-    sets.push(`name = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'description')) {
-    params.push(body.description || null);
-    sets.push(`description = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'imageUrl')) {
-    params.push(body.imageUrl || null);
-    sets.push(`image_url = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'price')) {
-    params.push(Number(body.price));
-    sets.push(`price = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'basePricePerKg')) {
-    params.push(Number(body.basePricePerKg));
-    sets.push(`base_price_per_kg = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'unit')) {
-    params.push(body.unit || null);
-    sets.push(`unit = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'stockQty')) {
-    params.push(Number(body.stockQty));
-    sets.push(`stock = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'isActive')) {
-    params.push(Boolean(body.isActive));
-    sets.push(`active = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'categoryId')) {
-    const raw = body.categoryId === null || body.categoryId === undefined ? '' : String(body.categoryId).trim();
-    params.push(raw ? Number(raw) : null);
-    sets.push(`category_id = $${params.length}`);
-  }
-  // New fields for Meatvo schema
-  if (Object.prototype.hasOwnProperty.call(body, 'weightVariants')) {
-    let variants = body.weightVariants;
-    if (typeof variants === 'string') {
-      try { variants = JSON.parse(variants); } catch (e) { variants = [250, 500, 1000]; }
-    }
-    params.push(Array.isArray(variants) ? variants : [250, 500, 1000]);
-    sets.push(`weight_variants = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'cutTypes')) {
-    let cuts = body.cutTypes;
-    if (typeof cuts === 'string') {
-      try { cuts = JSON.parse(cuts); } catch (e) { cuts = null; }
-    }
-    params.push(Array.isArray(cuts) ? cuts : null);
-    sets.push(`cut_types = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'marinationOptions')) {
-    let marinade = body.marinationOptions;
-    if (typeof marinade === 'string') {
-      try { marinade = JSON.parse(marinade); } catch (e) { marinade = null; }
-    }
-    params.push(marinade ? JSON.stringify(marinade) : null);
-    sets.push(`marination_options = $${params.length}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(body, 'freshnessDate')) {
-    params.push(body.freshnessDate || null);
-    sets.push(`freshness_date = $${params.length}`);
+  if (
+    !hasName && !hasDescription && !hasImageUrl && !hasPrice && !hasBasePricePerKg &&
+    !hasUnit && !hasStockQty && !hasIsActive && !hasCategoryId && !hasWeightVariants &&
+    !hasCutTypes && !hasMarinationOptions && !hasFreshnessDate
+  ) {
+    return fail(res, 400, 'No fields to update');
   }
 
-  if (!sets.length) return fail(res, 400, 'No fields to update');
+  // Pre-process complex types
+  let variants = body.weightVariants;
+  if (hasWeightVariants && typeof variants === 'string') {
+    try { variants = JSON.parse(variants); } catch (e) { variants = [250, 500, 1000]; }
+  }
 
-  params.push(id);
+  let cuts = body.cutTypes;
+  if (hasCutTypes && typeof cuts === 'string') {
+    try { cuts = JSON.parse(cuts); } catch (e) { cuts = null; }
+  }
+
+  let marinade = body.marinationOptions;
+  if (hasMarinationOptions && typeof marinade === 'string') {
+    try { marinade = JSON.parse(marinade); } catch (e) { marinade = null; }
+  }
+
+  const categoryIdVal = hasCategoryId
+    ? (() => { const raw = body.categoryId === null || body.categoryId === undefined ? '' : String(body.categoryId).trim(); return raw ? Number(raw) : null; })()
+    : null;
+
   const { rows } = await query(
-    `UPDATE products SET ${sets.join(', ')} WHERE id = $${params.length}
+    `UPDATE products
+     SET name               = CASE WHEN $1  THEN $2  ELSE name               END,
+         description        = CASE WHEN $3  THEN $4  ELSE description        END,
+         image_url          = CASE WHEN $5  THEN $6  ELSE image_url          END,
+         price              = CASE WHEN $7  THEN $8  ELSE price              END,
+         base_price_per_kg  = CASE WHEN $9  THEN $10 ELSE base_price_per_kg  END,
+         unit               = CASE WHEN $11 THEN $12 ELSE unit               END,
+         stock              = CASE WHEN $13 THEN $14 ELSE stock              END,
+         active             = CASE WHEN $15 THEN $16 ELSE active             END,
+         category_id        = CASE WHEN $17 THEN $18 ELSE category_id        END,
+         weight_variants    = CASE WHEN $19 THEN $20 ELSE weight_variants    END,
+         cut_types          = CASE WHEN $21 THEN $22 ELSE cut_types          END,
+         marination_options = CASE WHEN $23 THEN $24::jsonb ELSE marination_options END,
+         freshness_date     = CASE WHEN $25 THEN $26 ELSE freshness_date     END
+     WHERE id = $27
      RETURNING id, category_id, name, description, price, base_price_per_kg,
                weight_variants, cut_types, marination_options, freshness_date,
                image_url, stock, unit, active`,
-    params
+    [
+      hasName,              body.name,
+      hasDescription,       body.description || null,
+      hasImageUrl,          body.imageUrl || null,
+      hasPrice,             hasPrice ? Number(body.price) : null,
+      hasBasePricePerKg,    hasBasePricePerKg ? Number(body.basePricePerKg) : null,
+      hasUnit,              body.unit || null,
+      hasStockQty,          hasStockQty ? Number(body.stockQty) : null,
+      hasIsActive,          hasIsActive ? Boolean(body.isActive) : null,
+      hasCategoryId,        categoryIdVal,
+      hasWeightVariants,    hasWeightVariants ? (Array.isArray(variants) ? variants : [250, 500, 1000]) : null,
+      hasCutTypes,          hasCutTypes ? (Array.isArray(cuts) ? cuts : null) : null,
+      hasMarinationOptions, hasMarinationOptions ? (marinade ? JSON.stringify(marinade) : null) : null,
+      hasFreshnessDate,     body.freshnessDate || null,
+      id,
+    ]
   );
   if (!rows[0]) return fail(res, 404, 'Product not found');
 
@@ -767,6 +1226,494 @@ const deleteProductCompat = asyncHandler(async (req, res) => {
   );
 });
 
+const mergeBody = (req) => ({ ...(req.body || {}), ...(req.validated?.body || {}) });
+const mergeParams = (req) => ({ ...(req.params || {}), ...(req.validated?.params || {}) });
+
+const PRODUCT_UPDATE_COLUMNS = {
+  name: 'name',
+  description: 'description',
+  price: 'price',
+  category_id: 'category_id',
+  categoryId: 'category_id',
+  image_url: 'image_url',
+  imageUrl: 'image_url',
+  stock: 'stock',
+  stockQty: 'stock',
+  unit: 'unit',
+  is_active: 'active',
+  isActive: 'active',
+  weight_variants: 'weight_variants',
+  weightVariants: 'weight_variants',
+};
+
+// ─── PRODUCTS ─────────────────────────────────
+const createProduct = asyncHandler(async (req, res) => {
+  const body = mergeBody(req);
+  const {
+    name,
+    description,
+    price,
+    category_id: categoryIdSnake,
+    categoryId,
+    image_url: imageUrlSnake,
+    imageUrl,
+    stock,
+    stockQty,
+    unit,
+    weight_variants: weightVariantsSnake,
+    weightVariants,
+  } = body;
+
+  if (!name) return fail(res, 400, 'name is required');
+  if (price === undefined || price === null) return fail(res, 400, 'price is required');
+
+  const category_id = categoryIdSnake ?? (categoryId ? Number(categoryId) : null);
+  const image_url = imageUrlSnake ?? imageUrl ?? null;
+  const stockVal = stock ?? stockQty ?? 0;
+  let variants = weightVariantsSnake ?? weightVariants;
+  if (typeof variants === 'string') {
+    try {
+      variants = JSON.parse(variants);
+    } catch {
+      variants = [250, 500, 1000];
+    }
+  }
+
+  const { rows } = await query(
+    `INSERT INTO products
+     (name, description, price, category_id, image_url, stock, unit, weight_variants, active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [
+      name,
+      description ?? null,
+      Number(price),
+      category_id || null,
+      image_url,
+      Number(stockVal),
+      unit ?? null,
+      Array.isArray(variants) ? variants : [250, 500, 1000],
+      body.is_active !== undefined ? Boolean(body.is_active) : body.isActive !== false,
+    ]
+  );
+
+  emitToAll('catalog:products_changed', { id: String(rows[0].id) });
+  return ok(res, rows[0], 'Product created');
+});
+
+const updateProduct = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const updates = mergeBody(req);
+  const sets = [];
+  const params = [];
+
+  for (const [key, value] of Object.entries(updates)) {
+    const column = PRODUCT_UPDATE_COLUMNS[key];
+    if (!column || value === undefined) continue;
+    params.push(value);
+    sets.push(`${column} = $${params.length}`);
+  }
+
+  if (!sets.length) return fail(res, 400, 'No valid fields');
+
+  params.push(Number(id));
+  const { rows } = await query(
+    `UPDATE products
+     SET ${sets.join(', ')}, updated_at = NOW()
+     WHERE id = $${params.length}
+     RETURNING *`,
+    params
+  );
+
+  if (!rows[0]) return fail(res, 404, 'Product not found');
+
+  emitToAll('catalog:products_changed', { id: String(rows[0].id) });
+  return ok(res, rows[0], 'Product updated');
+});
+
+const deleteProduct = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const { rowCount } = await query('UPDATE products SET active = FALSE WHERE id = $1', [Number(id)]);
+  if (!rowCount) return fail(res, 404, 'Product not found');
+
+  emitToAll('catalog:products_changed', { id: String(id) });
+  return ok(res, null, 'Product deactivated');
+});
+
+const updateStock = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const body = mergeBody(req);
+  const stock = body.stock ?? body.stockQty;
+  if (stock === undefined || stock === null) {
+    return fail(res, 400, 'stock is required');
+  }
+
+  const { rows } = await query(
+    'UPDATE products SET stock = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+    [Number(stock), Number(id)]
+  );
+  if (!rows[0]) return fail(res, 404, 'Product not found');
+
+  emitToAll('catalog:products_changed', { id: String(rows[0].id) });
+  return ok(res, rows[0], 'Stock updated');
+});
+
+// ─── CATEGORIES ───────────────────────────────
+const createCategory = asyncHandler(async (req, res) => {
+  const body = mergeBody(req);
+  const {
+    name,
+    description,
+    image_url: imageUrlSnake,
+    imageUrl,
+    color_hex: colorHexSnake,
+    colorHex,
+    isActive,
+    is_active,
+    sortOrder,
+    sort_order,
+  } = body;
+
+  if (!name) return fail(res, 400, 'name is required');
+
+  const image_url = imageUrlSnake ?? imageUrl ?? null;
+  const color_hex = colorHexSnake ?? colorHex ?? null;
+  const active = is_active !== undefined ? Boolean(is_active) : isActive !== false;
+
+  let rows;
+  try {
+    ({ rows } = await query(
+      `INSERT INTO categories (name, description, image_url, color_hex, active, sort_order)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING *`,
+      [name, description ?? null, image_url, color_hex, active, Number(sortOrder ?? sort_order ?? 0)]
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    ({ rows } = await query(
+      `INSERT INTO categories (name, image_url, active, sort_order)
+       VALUES ($1,$2,$3,$4)
+       RETURNING *`,
+      [name, image_url, active, Number(sortOrder ?? sort_order ?? 0)]
+    ));
+  }
+
+  emitToAll('catalog:categories_changed', { id: String(rows[0].id) });
+  return ok(res, rows[0], 'Category created');
+});
+
+const updateCategory = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const body = mergeBody(req);
+  const name = body.name ?? null;
+  const description = body.description ?? null;
+  const image_url = body.image_url ?? body.imageUrl ?? null;
+  const color_hex = body.color_hex ?? body.colorHex ?? null;
+
+  let rows;
+  try {
+    ({ rows } = await query(
+      `UPDATE categories
+       SET name = COALESCE($1, name),
+           description = COALESCE($2, description),
+           image_url = COALESCE($3, image_url),
+           color_hex = COALESCE($4, color_hex)
+       WHERE id = $5
+       RETURNING *`,
+      [name, description, image_url, color_hex, Number(id)]
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    ({ rows } = await query(
+      `UPDATE categories
+       SET name = COALESCE($1, name),
+           image_url = COALESCE($2, image_url)
+       WHERE id = $3
+       RETURNING *`,
+      [name, image_url, Number(id)]
+    ));
+  }
+
+  if (!rows[0]) return fail(res, 404, 'Category not found');
+
+  emitToAll('catalog:categories_changed', { id: String(rows[0].id) });
+  return ok(res, rows[0], 'Category updated');
+});
+
+const deleteCategory = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const categoryId = Number(id);
+
+  const { rows: countRows } = await query(
+    'SELECT COUNT(*)::int AS count FROM products WHERE category_id = $1 AND active = TRUE',
+    [categoryId]
+  );
+  if (Number(countRows[0]?.count || 0) > 0) {
+    return fail(res, 400, 'Cannot delete: category has active products');
+  }
+
+  const { rowCount } = await query('DELETE FROM categories WHERE id = $1', [categoryId]);
+  if (!rowCount) return fail(res, 404, 'Category not found');
+
+  emitToAll('catalog:categories_changed', { id: String(categoryId) });
+  return ok(res, null, 'Category deleted');
+});
+
+// ─── BANNERS ──────────────────────────────────
+const listBanners = asyncHandler(async (req, res) => {
+  let rows;
+  try {
+    ({ rows } = await query('SELECT * FROM banners ORDER BY created_at DESC'));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    ({ rows } = await query('SELECT * FROM banners ORDER BY sort_order ASC, id DESC'));
+  }
+  return ok(res, rows, 'Banners');
+});
+
+const createBanner = asyncHandler(async (req, res) => {
+  const body = mergeBody(req);
+  const {
+    title,
+    subtitle,
+    image_url: imageUrlSnake,
+    imageUrl,
+    link_url: linkUrlSnake,
+    linkUrl,
+    is_active,
+    isActive,
+    active,
+    sort_order,
+    sortOrder,
+  } = body;
+
+  const image_url = imageUrlSnake ?? imageUrl ?? null;
+  const isActiveVal =
+    is_active !== undefined
+      ? Boolean(is_active)
+      : isActive !== undefined
+        ? Boolean(isActive)
+        : active !== false;
+
+  let rows;
+  try {
+    ({ rows } = await query(
+      `INSERT INTO banners (title, subtitle, image_url, link_url, is_active)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING *`,
+      [title ?? null, subtitle ?? null, image_url, linkUrlSnake ?? linkUrl ?? null, isActiveVal]
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    if (!image_url) return fail(res, 400, 'image_url is required');
+    ({ rows } = await query(
+      `INSERT INTO banners (image_url, active, sort_order)
+       VALUES ($1,$2,$3)
+       RETURNING *`,
+      [image_url, isActiveVal, Number(sortOrder ?? sort_order ?? 0)]
+    ));
+  }
+
+  return ok(res, rows[0], 'Banner created');
+});
+
+const updateBanner = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const body = mergeBody(req);
+  const { title, subtitle, image_url, imageUrl, link_url, linkUrl, is_active, isActive, active } = body;
+  const imageUrlVal = image_url ?? imageUrl ?? null;
+  const isActiveVal =
+    is_active !== undefined
+      ? is_active
+      : isActive !== undefined
+        ? isActive
+        : active;
+
+  let rows;
+  try {
+    ({ rows } = await query(
+      `UPDATE banners
+       SET title = COALESCE($1, title),
+           subtitle = COALESCE($2, subtitle),
+           image_url = COALESCE($3, image_url),
+           link_url = COALESCE($4, link_url),
+           is_active = COALESCE($5, is_active)
+       WHERE id = $6
+       RETURNING *`,
+      [title ?? null, subtitle ?? null, imageUrlVal, link_url ?? linkUrl ?? null, isActiveVal ?? null, Number(id)]
+    ));
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    ({ rows } = await query(
+      `UPDATE banners
+       SET image_url = COALESCE($1, image_url),
+           active = COALESCE($2, active)
+       WHERE id = $3
+       RETURNING *`,
+      [imageUrlVal, isActiveVal ?? null, Number(id)]
+    ));
+  }
+
+  if (!rows[0]) return fail(res, 404, 'Banner not found');
+  return ok(res, rows[0], 'Banner updated');
+});
+
+const deleteBanner = asyncHandler(async (req, res) => {
+  const { id } = mergeParams(req);
+  const { rowCount } = await query('DELETE FROM banners WHERE id = $1', [Number(id)]);
+  if (!rowCount) return fail(res, 404, 'Banner not found');
+  return ok(res, null, 'Banner deleted');
+});
+
+// ─── SETTINGS ─────────────────────────────────
+const mapOperationalRow = (row) => ({
+  delivery_charge: row?.delivery_charge,
+  min_order_amount: row?.min_order_amount,
+  store_open: row?.store_open,
+  store_open_time: row?.store_open_time ?? null,
+  store_close_time: row?.store_close_time ?? null,
+  delivery_radius_km: row?.delivery_radius_km,
+});
+
+const readOperationalSettings = async () => {
+  try {
+    const { rows } = await query(
+      `SELECT delivery_charge, min_order_amount, store_open,
+              store_open_time, store_close_time, delivery_radius_km
+       FROM app_settings
+       ORDER BY id
+       LIMIT 1`
+    );
+    return mapOperationalRow(rows[0]);
+  } catch (err) {
+    if (err?.code === '42P01') return {};
+    if (err?.code === '42703') {
+      await repairAppSettingsSchema();
+      const { rows } = await query(
+        `SELECT delivery_charge, min_order_amount, store_open,
+                store_open_time, store_close_time, delivery_radius_km
+         FROM app_settings
+         ORDER BY id
+         LIMIT 1`
+      );
+      return mapOperationalRow(rows[0]);
+    }
+    throw err;
+  }
+};
+
+const writeOperationalSettings = async (value) => {
+  const params = [
+    value.delivery_charge ?? 30,
+    value.min_order_amount ?? 150,
+    value.store_open ?? true,
+    value.store_open_time ?? null,
+    value.store_close_time ?? null,
+    value.delivery_radius_km ?? 5,
+  ];
+
+  try {
+    const { rows: existing } = await query(
+      'SELECT id FROM app_settings ORDER BY id LIMIT 1'
+    );
+
+    if (existing[0]) {
+      const { rows } = await query(
+        `UPDATE app_settings
+         SET delivery_charge = $1,
+             min_order_amount = $2,
+             store_open = $3,
+             store_open_time = $4,
+             store_close_time = $5,
+             delivery_radius_km = $6,
+             updated_at = NOW()
+         WHERE id = $7
+         RETURNING delivery_charge, min_order_amount, store_open,
+                   store_open_time, store_close_time, delivery_radius_km`,
+        [...params, existing[0].id]
+      );
+      return mapOperationalRow(rows[0]);
+    }
+
+    const { rows } = await query(
+      `INSERT INTO app_settings (
+         delivery_charge, min_order_amount, store_open,
+         store_open_time, store_close_time, delivery_radius_km, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING delivery_charge, min_order_amount, store_open,
+                 store_open_time, store_close_time, delivery_radius_km`,
+      params
+    );
+    return mapOperationalRow(rows[0]);
+  } catch (err) {
+    if (err?.code === '42703') {
+      await repairAppSettingsSchema();
+      return writeOperationalSettings(value);
+    }
+    throw err;
+  }
+};
+
+const getSettings = asyncHandler(async (req, res) => {
+  const operational = await readOperationalSettings();
+
+  return ok(
+    res,
+    {
+      delivery_charge: Number(operational.delivery_charge ?? 30),
+      min_order_amount: Number(operational.min_order_amount ?? 150),
+      store_open: operational.store_open ?? true,
+      store_open_time: operational.store_open_time ?? null,
+      store_close_time: operational.store_close_time ?? null,
+      delivery_radius_km: Number(operational.delivery_radius_km ?? 5),
+    },
+    'Settings'
+  );
+});
+
+const updateSettings = asyncHandler(async (req, res) => {
+  const body = mergeBody(req);
+  const {
+    delivery_charge,
+    min_order_amount,
+    store_open,
+    store_open_time,
+    store_close_time,
+    delivery_radius_km,
+  } = body;
+
+  const operational = await readOperationalSettings();
+  const nextOperational = {
+    ...operational,
+    ...(store_open_time !== undefined ? { store_open_time } : {}),
+    ...(store_close_time !== undefined ? { store_close_time } : {}),
+    ...(delivery_charge !== undefined ? { delivery_charge } : {}),
+    ...(min_order_amount !== undefined ? { min_order_amount } : {}),
+    ...(delivery_radius_km !== undefined ? { delivery_radius_km } : {}),
+    ...(store_open !== undefined ? { store_open } : {}),
+  };
+  const saved = await writeOperationalSettings(nextOperational);
+
+  emitToAll('store:status_changed', { isOpen: saved.store_open });
+
+  return ok(
+    res,
+    {
+      delivery_charge: Number(saved.delivery_charge ?? 30),
+      min_order_amount: Number(saved.min_order_amount ?? 150),
+      store_open: saved.store_open ?? true,
+      store_open_time: saved.store_open_time ?? null,
+      store_close_time: saved.store_close_time ?? null,
+      delivery_radius_km: Number(saved.delivery_radius_km ?? 5),
+    },
+    'Settings updated'
+  );
+});
+
+const listProducts = listProductsCompat;
+const listCategories = listCategoriesCompat;
+
 // Change user role function
 const changeUserRole = asyncHandler(async (req, res) => {
   const { id } = req.params;
@@ -777,28 +1724,41 @@ const changeUserRole = asyncHandler(async (req, res) => {
     return fail(res, 403, 'Only administrators can change user roles');
   }
 
-  // Validate role - only allow 'customer' or 'delivery_partner'
-  if (!['customer', 'delivery_partner'].includes(role)) {
-    return fail(res, 400, 'Invalid role. Only customer or delivery_partner roles can be assigned');
+  // Validate role - customer, delivery partner, or admin
+  if (!['customer', 'delivery_partner', 'admin'].includes(role)) {
+    return fail(res, 400, 'Invalid role. Allowed: customer, delivery_partner, admin');
   }
 
   // Map frontend role to database role
   const dbRole = role === 'delivery_partner' ? 'delivery' : role;
 
+  const userId = Number(id);
+
   // Update user role in database
   const { rows } = await query(
-    'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, phone, role',
-    [dbRole, id]
+    'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, phone, name, role',
+    [dbRole, userId]
   );
 
   if (rows.length === 0) {
     return fail(res, 404, 'User not found');
   }
 
+  if (dbRole === 'delivery') {
+    await query(
+      `INSERT INTO delivery_partners (user_id, is_online, approved)
+       VALUES ($1, false, false)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [userId]
+    );
+  } else {
+    await query('DELETE FROM delivery_partners WHERE user_id = $1', [userId]);
+  }
+
   // Return the updated user with frontend role format
   const updatedUser = {
     ...rows[0],
-    role: rows[0].role === 'delivery' ? 'delivery_partner' : rows[0].role
+    role: rows[0].role === 'delivery' ? 'delivery_partner' : rows[0].role,
   };
 
   return ok(res, { user: updatedUser }, 'User role updated successfully');
@@ -987,6 +1947,8 @@ const getAnalytics = asyncHandler(async (req, res) => {
 module.exports = {
   dashboard,
   customers,
+  getUserDetail,
+  toggleUserStatus,
   deliveryPartners,
   toggleDeliveryPartner,
   patchDeliveryPartner,
@@ -999,6 +1961,21 @@ module.exports = {
   createProductCompat,
   patchProductCompat,
   deleteProductCompat,
+  listProducts,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  updateStock,
+  listCategories,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  listBanners,
+  createBanner,
+  updateBanner,
+  deleteBanner,
+  getSettings,
+  updateSettings,
   changeUserRole,
   getAnalytics,
 };

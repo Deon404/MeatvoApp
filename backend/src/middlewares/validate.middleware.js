@@ -1,4 +1,5 @@
 const { ZodError } = require('zod');
+const { fail } = require('../utils/response');
 
 const validate = (schema) => (req, res, next) => {
   const result = schema.safeParse({
@@ -17,13 +18,7 @@ const validate = (schema) => (req, res, next) => {
       ? result.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message }))
       : [{ path: '', message: 'Invalid request' }];
 
-  return res.status(400).json({
-    ok: false,
-    success: false,
-    error: { message: 'Validation failed' },
-    data: { issues },
-    message: 'Validation failed',
-  });
+  return fail(res, 400, 'Validation failed', { issues });
 };
 
 module.exports = { validate };

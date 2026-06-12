@@ -3,28 +3,29 @@ const { withTransaction, query } = require('../../db/postgres');
 const { ok, fail } = require('../../utils/response');
 const { emitToRole, emitToUser } = require('../../socket/socket');
 const { ROLES } = require('../../utils/roles');
-const { assignOrderToPartner } = require('../../services/assignment.service');
+const {
+  assignOrderToPartner,
+  emitAssignmentCancelled,
+  emitCustomerPartnerAssigned,
+  emitRouteZoneAssigned,
+  clearAssignmentTimeout,
+} = require('../../services/assignment.service');
+const { addressToText, addressToObject } = require('../../utils/address');
+const {
+  calculateDeliveryEarnings,
+  recordEarningsHistory,
+  updateRiderEarnings,
+} = require('../../services/earnings.service');
+const { DELIVERY_STATUS_TRANSITIONS, canTransition } = require('../../utils/orderStatus');
 
-const STATUS_TRANSITIONS = Object.freeze({
-  CONFIRMED: new Set(['OUT_FOR_DELIVERY']),
-  PACKED: new Set(['OUT_FOR_DELIVERY']),
-  OUT_FOR_DELIVERY: new Set(['DELIVERED']),
-});
+// Enhanced tracking service
+const { updateRiderLocation: updateRiderLocationEnhanced } = require('../../services/tracking.service');
 
-const canTransition = (fromStatus, toStatus) => {
-  if (!fromStatus || !toStatus) return false;
-  if (fromStatus === toStatus) return true;
-  return STATUS_TRANSITIONS[fromStatus]?.has(toStatus) || false;
-};
-
-const addressToText = (addr) => {
-  if (!addr) return '';
-  if (typeof addr === 'string') return addr;
-  const text = addr.text || addr.addressText;
-  if (text) return String(text);
-  const parts = [addr.line1, addr.line2, addr.city, addr.state, addr.pincode].filter(Boolean);
-  return parts.join(', ');
-};
+// Route optimization
+const { optimizeRoute } = require('./route-optimizer');
+const { optimizeMultiRiderRoute } = require('./zone-splitter');
+const { getStoreSettings } = require('../settings/settings.controller');
+const { logger } = require('../../utils/logger');
 
 const getDeliveryPartnerIdForUser = async (userId) => {
   const { rows } = await query('SELECT id FROM delivery_partners WHERE user_id = $1', [userId]);
@@ -107,8 +108,9 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
 
   const baseSelect = `
-    SELECT o.id, o.customer_id, cu.phone AS phone, o.status, o.total_amount, o.address, o.payment_mode,
-           oa.delivery_partner_id,
+    SELECT o.id, o.customer_id, cu.phone AS phone, cu.name AS customer_name, o.status, o.total_amount, o.address, o.payment_mode,
+           oa.delivery_partner_id, oa.status AS assignment_status,
+           oa.assigned_at,
            (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms,
            COALESCE(
              json_agg(
@@ -130,7 +132,7 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
     LEFT JOIN products p ON p.id = oi.product_id
   `;
 
-  const groupBy = ' GROUP BY o.id, cu.phone, oa.delivery_partner_id ';
+  const groupBy = ' GROUP BY o.id, cu.phone, cu.name, oa.delivery_partner_id, oa.status, oa.assigned_at ';
 
   const { rows: available } = await query(
     `${baseSelect}
@@ -145,7 +147,7 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
   const { rows: active } = await query(
     `${baseSelect}
      WHERE oa.delivery_partner_id = $1
-       AND o.status = 'OUT_FOR_DELIVERY'
+       AND o.status IN ('OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY')
      ${groupBy}
      ORDER BY o.created_at DESC
      LIMIT 100`,
@@ -162,18 +164,24 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
     [deliveryPartnerId]
   );
 
-  const mapRow = (o) => ({
-    id: String(o.id),
-    customerUid: String(o.customer_id),
-    phone: o.phone || '',
-    status: o.status,
-    totalAmount: Number(o.total_amount || 0),
-    address: addressToText(o.address) || '',
-    paymentMethod: o.payment_mode || 'COD',
-    createdAt: Number(o.created_at_ms || 0),
-    updatedAt: Number(o.created_at_ms || 0),
-    items: Array.isArray(o.items) ? o.items : [],
-  });
+  const mapRow = (o) => {
+    const addressObj = addressToObject(o.address) || { text: '', formatted: '' };
+    return {
+      id: String(o.id),
+      customerUid: String(o.customer_id),
+      customerName: String(o.customer_name || '').trim(),
+      phone: o.phone || '',
+      status: o.status,
+      assignment_status: o.assignment_status || null,
+      assigned_at: o.assigned_at || null,
+      totalAmount: Number(o.total_amount || 0),
+      address: addressObj,
+      paymentMethod: o.payment_mode || 'COD',
+      createdAt: Number(o.created_at_ms || 0),
+      updatedAt: Number(o.created_at_ms || 0),
+      items: Array.isArray(o.items) ? o.items : [],
+    };
+  };
 
   return ok(res, { available: available.map(mapRow), active: active.map(mapRow), delivered: delivered.map(mapRow) }, 'Orders');
 });
@@ -185,21 +193,31 @@ const acceptOrder = asyncHandler(async (req, res) => {
   const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
 
-  const updated = await withTransaction(async (client) => {
+  const updatedOrder = await withTransaction(async (client) => {
     const { rows: orderRows } = await client.query(
       'SELECT id, status FROM orders WHERE id = $1 FOR UPDATE',
       [orderId]
     );
     const order = orderRows[0];
-    if (!order) throw new Error('Order not found');
-    if (!['CONFIRMED', 'PACKED'].includes(order.status)) throw new Error('Order is not available');
+    if (!order) {
+      const err = new Error('Order not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
+      const err = new Error('Order is not available');
+      err.statusCode = 400;
+      throw err;
+    }
 
     const { rows: existing } = await client.query(
       'SELECT id, delivery_partner_id FROM order_assignments WHERE order_id = $1 FOR UPDATE',
       [orderId]
     );
     if (existing[0] && Number(existing[0].delivery_partner_id) !== deliveryPartnerId) {
-      throw new Error('Order already assigned');
+      const err = new Error('Order already assigned');
+      err.statusCode = 409;
+      throw err;
     }
 
     if (existing[0]) {
@@ -217,30 +235,59 @@ const acceptOrder = asyncHandler(async (req, res) => {
        RETURNING id, customer_id, status, total_amount, coupon_id, address, payment_mode, created_at`,
       [orderId]
     );
-    
-    // Emit to customer and admin rooms
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`customer_${updatedRows[0].customer_id}`).emit('order:status_updated', {
-        orderId: orderId,
-        status: 'OUT_FOR_DELIVERY',
-        updatedAt: new Date().toISOString()
-      });
-      io.to(`customer_${updatedRows[0].customer_id}`).emit('order:status_update', {
-        orderId: orderId,
-        status: 'OUT_FOR_DELIVERY',
+
+    return updatedRows[0];
+  });
+
+  clearAssignmentTimeout(orderId);
+
+  // Emit to customer and admin rooms after transaction commits successfully
+  const io = req.app.get('io');
+  if (io) {
+    const { rows: partnerRows } = await query(
+      `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, u.name, u.phone
+       FROM delivery_partners dp
+       JOIN users u ON u.id = dp.user_id
+       WHERE dp.user_id = $1`,
+      [userId]
+    );
+    const partner = partnerRows[0];
+
+    io.to(`customer_${updatedOrder.customer_id}`).emit('order:status_updated', {
+      orderId: orderId,
+      status: 'OUT_FOR_DELIVERY',
+      updatedAt: new Date().toISOString()
+    });
+    io.to(`customer_${updatedOrder.customer_id}`).emit('order:status_update', {
+      orderId: orderId,
+      status: 'OUT_FOR_DELIVERY',
+      timestamp: new Date().toISOString(),
+    });
+
+    if (partner) {
+      const partnerPayload = {
+        orderId,
+        partner: {
+          id: Number(partner.id),
+          name: partner.name,
+          phone: partner.phone,
+          lat: Number(partner.current_lat ?? 0),
+          lng: Number(partner.current_lng ?? 0),
+        },
         timestamp: new Date().toISOString(),
-      });
-      
-      io.to('admin_room').emit('order:updated', {
-        orderId: orderId,
-        status: 'OUT_FOR_DELIVERY',
-        updatedAt: new Date().toISOString()
-      });
+      };
+      io.to(`customer_${updatedOrder.customer_id}`).emit('partner:accepted', partnerPayload);
+      io.to(`customer_${updatedOrder.customer_id}`).emit('order:partner_assigned', partnerPayload);
     }
 
-  return ok(res, { order: updatedRows[0] }, 'Order accepted');
-});
+    io.to('admin_room').emit('order:updated', {
+      orderId: orderId,
+      status: 'OUT_FOR_DELIVERY',
+      updatedAt: new Date().toISOString()
+    });
+  }
+
+  return ok(res, { order: updatedOrder }, 'Order accepted');
 });
 
 const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
@@ -256,18 +303,30 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
       'SELECT id FROM order_assignments WHERE order_id = $1 AND delivery_partner_id = $2 FOR UPDATE',
       [orderId, deliveryPartnerId]
     );
-    if (!aRows[0]) throw new Error('Order not assigned to you');
+    if (!aRows[0]) {
+      const err = new Error('Order not assigned to you');
+      err.statusCode = 403;
+      throw err;
+    }
 
     const { rows: orderRows } = await client.query(
       'SELECT status FROM orders WHERE id = $1 FOR UPDATE',
       [orderId]
     );
     const currentStatus = orderRows[0]?.status;
-    if (!canTransition(currentStatus, status)) {
-      throw new Error(`Invalid transition from ${currentStatus} to ${status}`);
+    if (!canTransition(DELIVERY_STATUS_TRANSITIONS, currentStatus, status)) {
+      const err = new Error(`Invalid transition from ${currentStatus} to ${status}`);
+      err.statusCode = 400;
+      throw err;
     }
 
-    const assignmentStatus = status === 'OUT_FOR_DELIVERY' ? 'PICKED' : status;
+    const assignmentStatusByOrderStatus = {
+      OUT_FOR_DELIVERY: 'ACCEPTED',
+      PICKED_UP: 'PICKED',
+      ON_THE_WAY: 'PICKED',
+      DELIVERED: 'DELIVERED',
+    };
+    const assignmentStatus = assignmentStatusByOrderStatus[status] ?? status;
     await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', [
       assignmentStatus,
       orderId,
@@ -301,48 +360,132 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
       updatedAt: new Date().toISOString()
     });
   }
+
+  if (status === 'DELIVERED' && rows[0]) {
+    try {
+      const { rows: assignmentRows } = await query(
+        `SELECT oa.delivery_partner_id, oa.assigned_at, oa.updated_at,
+                o.total_amount, o.created_at, o.address,
+                dp.user_id AS rider_user_id
+         FROM order_assignments oa
+         JOIN orders o ON o.id = oa.order_id
+         JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+         WHERE oa.order_id = $1`,
+        [orderId]
+      );
+
+      if (assignmentRows[0]) {
+        const assignment = assignmentRows[0];
+        let distanceKm = 2;
+        const address =
+          typeof assignment.address === 'string'
+            ? JSON.parse(assignment.address)
+            : assignment.address;
+        if (address?.lat && address?.lng) {
+          const { rows: storeRows } = await query(
+            `SELECT center_lat, center_lng FROM store_settings ORDER BY updated_at DESC LIMIT 1`
+          );
+          if (storeRows[0]?.center_lat && storeRows[0]?.center_lng) {
+            const { haversineDistanceKm } = require('../../utils/distance.util');
+            distanceKm = haversineDistanceKm(
+              Number(storeRows[0].center_lat),
+              Number(storeRows[0].center_lng),
+              Number(address.lat),
+              Number(address.lng)
+            );
+          }
+        }
+
+        const earnings = await calculateDeliveryEarnings(
+          {
+            total_amount: Number(assignment.total_amount || 0),
+            created_at: assignment.created_at,
+          },
+          {
+            delivery_partner_id: assignment.rider_user_id,
+            assigned_at: assignment.assigned_at,
+            updated_at: assignment.updated_at || new Date(),
+            distance_km: distanceKm,
+          }
+        );
+
+        await recordEarningsHistory(orderId, assignment.rider_user_id, earnings);
+        await updateRiderEarnings(assignment.rider_user_id, earnings.total);
+      }
+    } catch (earningsErr) {
+      // Non-blocking — delivery status already committed
+      console.error('delivery_earnings_update_failed', earningsErr.message);
+    }
+  }
   
   return ok(res, { order: rows[0] }, 'Order updated');
 });
 
 const updateLocation = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
-  const { lat, lng } = req.validated.body;
+  const { lat, lng, orderId } = req.validated.body;
+  const io = req.app.get('io');
 
-  const { rows } = await query(
-    `UPDATE delivery_partners
-     SET current_lat = $1, current_lng = $2
-     WHERE user_id = $3
-     RETURNING id, user_id, is_online, current_lat, current_lng, vehicle_type`,
-    [lat, lng, userId]
-  );
-  if (!rows[0]) return fail(res, 400, 'Delivery partner profile not found');
+  // Use enhanced tracking service with ETA calculation and nearby detection
+  try {
+    const result = await updateRiderLocationEnhanced({
+      riderUserId: userId,
+      lat,
+      lng,
+      orderId: orderId ? Number(orderId) : null,
+      io,
+    });
 
-  // Emit to customers who are tracking active assigned orders.
-  const dpId = Number(rows[0].id);
-  const { rows: assigned } = await query(
-    `SELECT o.id AS order_id, o.customer_id
-     FROM order_assignments oa
-     JOIN orders o ON o.id = oa.order_id
-     WHERE oa.delivery_partner_id = $1 AND o.status NOT IN ('DELIVERED','CANCELLED')`,
-    [dpId]
-  );
-  for (const a of assigned) {
-    emitToUser(Number(a.customer_id), 'delivery:location', {
-      orderId: Number(a.order_id),
-      deliveryPartnerId: dpId,
-      lat: Number(rows[0].current_lat),
-      lng: Number(rows[0].current_lng),
-    });
-    emitToUser(Number(a.customer_id), 'partner:location_update', {
-      orderId: Number(a.order_id),
-      lat: Number(rows[0].current_lat),
-      lng: Number(rows[0].current_lng),
-      timestamp: new Date().toISOString(),
-    });
+    // Backward compatibility - emit old events
+    const { rows } = await query(
+      `SELECT id, user_id, is_online, current_lat, current_lng, vehicle_type
+       FROM delivery_partners WHERE user_id = $1`,
+      [userId]
+    );
+
+    if (rows[0]) {
+      const dpId = Number(rows[0].id);
+      const { rows: assigned } = await query(
+        `SELECT o.id AS order_id, o.customer_id
+         FROM order_assignments oa
+         JOIN orders o ON o.id = oa.order_id
+         WHERE oa.delivery_partner_id = $1 AND o.status NOT IN ('DELIVERED','CANCELLED')`,
+        [dpId]
+      );
+      
+      for (const a of assigned) {
+        emitToUser(Number(a.customer_id), 'delivery:location', {
+          orderId: Number(a.order_id),
+          deliveryPartnerId: dpId,
+          lat: Number(rows[0].current_lat),
+          lng: Number(rows[0].current_lng),
+        });
+        emitToUser(Number(a.customer_id), 'partner:location_update', {
+          orderId: Number(a.order_id),
+          lat: Number(rows[0].current_lat),
+          lng: Number(rows[0].current_lng),
+          timestamp: new Date().toISOString(),
+        });
+      }
+    }
+
+    return ok(res, { 
+      deliveryPartner: rows[0],
+      tracking: result,
+    }, 'Location updated with ETA calculation');
+  } catch (error) {
+    // Fallback to basic location update if enhanced service fails
+    const { rows } = await query(
+      `UPDATE delivery_partners
+       SET current_lat = $1, current_lng = $2
+       WHERE user_id = $3
+       RETURNING id, user_id, is_online, current_lat, current_lng, vehicle_type`,
+      [lat, lng, userId]
+    );
+    
+    if (!rows[0]) return fail(res, 400, 'Delivery partner profile not found');
+    return ok(res, { deliveryPartner: rows[0] }, 'Location updated');
   }
-
-  return ok(res, { deliveryPartner: rows[0] }, 'Location updated');
 });
 
 const rejectOrder = asyncHandler(async (req, res) => {
@@ -360,7 +503,11 @@ const rejectOrder = asyncHandler(async (req, res) => {
        FOR UPDATE`,
       [orderId, deliveryPartnerId]
     );
-    if (!assignmentRows[0]) throw new Error('Order not assigned to you');
+    if (!assignmentRows[0]) {
+      const err = new Error('Order not assigned to you');
+      err.statusCode = 403;
+      throw err;
+    }
 
     await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['CANCELLED', orderId]);
     await client.query(
@@ -370,6 +517,15 @@ const rejectOrder = asyncHandler(async (req, res) => {
       [orderId]
     );
   });
+
+  clearAssignmentTimeout(orderId);
+
+  emitAssignmentCancelled(
+    req.app.get('io'),
+    orderId,
+    userId,
+    'partner_rejected'
+  );
 
   const reassignment = await assignOrderToPartner({
     orderId,
@@ -386,9 +542,7 @@ const getEarnings = asyncHandler(async (req, res) => {
   const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
 
-  let interval = "INTERVAL '1 day'";
-  if (period === 'week') interval = "INTERVAL '7 days'";
-  if (period === 'month') interval = "INTERVAL '30 days'";
+  const intervalDays = period === 'week' ? 7 : period === 'month' ? 30 : 1;
 
   const { rows } = await query(
     `SELECT o.id AS order_id, o.total_amount, o.created_at
@@ -396,9 +550,9 @@ const getEarnings = asyncHandler(async (req, res) => {
      JOIN orders o ON o.id = oa.order_id
      WHERE oa.delivery_partner_id = $1
        AND o.status = 'DELIVERED'
-       AND o.created_at >= NOW() - ${interval}
+       AND o.created_at >= NOW() - ($2 || ' days')::interval
      ORDER BY o.created_at DESC`,
-    [deliveryPartnerId]
+    [deliveryPartnerId, String(intervalDays)]
   );
 
   const breakdown = rows.map((r) => ({
@@ -421,16 +575,42 @@ const toggleOnline = asyncHandler(async (req, res) => {
   const body = req.validated.body || {};
   const desired =
     typeof body.is_online === 'boolean' ? body.is_online : typeof body.online === 'boolean' ? body.online : undefined;
+  const lat = body.lat != null ? Number(body.lat) : null;
+  const lng = body.lng != null ? Number(body.lng) : null;
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+
+  let onlineState;
+  if (typeof desired === 'boolean') {
+    onlineState = desired;
+  } else {
+    const { rows: current } = await query('SELECT is_online FROM delivery_partners WHERE user_id = $1', [userId]);
+    if (!current[0]) return fail(res, 400, 'Delivery partner profile not found');
+    onlineState = !current[0].is_online;
+  }
+
+  let finalLat = hasCoords ? lat : null;
+  let finalLng = hasCoords ? lng : null;
+
+  if (onlineState && !hasCoords) {
+    const settings = await getStoreSettings();
+    finalLat = settings.center_lat;
+    finalLng = settings.center_lng;
+    const riderId = await getDeliveryPartnerIdForUser(userId);
+    logger.warn('rider_online_no_gps', { riderId, fallback: 'store_location' });
+  }
+
+  const willSetCoords = Number.isFinite(finalLat) && Number.isFinite(finalLng);
 
   let sql;
   const params = [];
-  if (typeof desired === 'boolean') {
-    sql = 'UPDATE delivery_partners SET is_online = $1 WHERE user_id = $2 RETURNING id, user_id, is_online';
-    params.push(desired, userId);
+  if (willSetCoords) {
+    sql =
+      'UPDATE delivery_partners SET is_online = $1, current_lat = $2, current_lng = $3, updated_at = NOW() WHERE user_id = $4 RETURNING id, user_id, is_online, current_lat, current_lng';
+    params.push(onlineState, finalLat, finalLng, userId);
   } else {
     sql =
-      'UPDATE delivery_partners SET is_online = NOT is_online WHERE user_id = $1 RETURNING id, user_id, is_online';
-    params.push(userId);
+      'UPDATE delivery_partners SET is_online = $1, updated_at = NOW() WHERE user_id = $2 RETURNING id, user_id, is_online, current_lat, current_lng';
+    params.push(onlineState, userId);
   }
 
   const { rows } = await query(sql, params);
@@ -447,28 +627,31 @@ const updateProfile = asyncHandler(async (req, res) => {
       await client.query('UPDATE users SET name = $1 WHERE id = $2', [patch.name || null, userId]);
     }
 
-    const sets = [];
-    const params = [];
-    if (Object.prototype.hasOwnProperty.call(patch, 'vehicle')) {
-      params.push(patch.vehicle || null);
-      sets.push(`vehicle_type = $${params.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'vehicleNumber')) {
-      params.push(patch.vehicleNumber || null);
-      sets.push(`vehicle_number = $${params.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'licenceNumber')) {
-      params.push(patch.licenceNumber || null);
-      sets.push(`licence_number = $${params.length}`);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, 'bankDetails')) {
-      params.push(patch.bankDetails || null);
-      sets.push(`bank_details = $${params.length}`);
-    }
+    const hasVehicle = Object.prototype.hasOwnProperty.call(patch, 'vehicle');
+    const hasVehicleNumber = Object.prototype.hasOwnProperty.call(patch, 'vehicleNumber');
+    const hasLicenceNumber = Object.prototype.hasOwnProperty.call(patch, 'licenceNumber');
+    const hasBankDetails = Object.prototype.hasOwnProperty.call(patch, 'bankDetails');
 
-    if (sets.length) {
-      params.push(userId);
-      await client.query(`UPDATE delivery_partners SET ${sets.join(', ')} WHERE user_id = $${params.length}`, params);
+    if (hasVehicle || hasVehicleNumber || hasLicenceNumber || hasBankDetails) {
+      await client.query(
+        `UPDATE delivery_partners
+         SET vehicle_type = CASE WHEN $1 THEN $2 ELSE vehicle_type END,
+             vehicle_number = CASE WHEN $3 THEN $4 ELSE vehicle_number END,
+             licence_number = CASE WHEN $5 THEN $6 ELSE licence_number END,
+             bank_details = CASE WHEN $7 THEN $8 ELSE bank_details END
+         WHERE user_id = $9`,
+        [
+          hasVehicle,
+          patch.vehicle || null,
+          hasVehicleNumber,
+          patch.vehicleNumber || null,
+          hasLicenceNumber,
+          patch.licenceNumber || null,
+          hasBankDetails,
+          patch.bankDetails || null,
+          userId,
+        ]
+      );
     }
   });
 
@@ -494,6 +677,399 @@ const updateProfile = asyncHandler(async (req, res) => {
   );
 });
 
+// ─── Route Optimization Endpoints ────────────────────────────────────────────
+
+const getMyOptimizedRoute = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.id);
+  const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
+  if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
+
+  const storeSettings = await getStoreSettings();
+  const storeLat = Number(storeSettings.center_lat || 23.6583);
+  const storeLng = Number(storeSettings.center_lng || 86.1764);
+
+  const { rows } = await query(
+    `SELECT 
+       o.id AS order_id,
+       (o.address->>'lat')::numeric AS lat,
+       (o.address->>'lng')::numeric AS lng,
+       COALESCE(o.address->>'text', o.address->>'raw') AS address,
+       u.name AS customer_name,
+       u.phone AS customer_phone
+     FROM orders o
+     JOIN users u ON u.id = o.customer_id
+     JOIN order_assignments oa ON oa.order_id = o.id
+     WHERE oa.delivery_partner_id = $1
+       AND o.status IN ('CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY')
+     ORDER BY o.created_at ASC`,
+    [deliveryPartnerId]
+  );
+
+  const deliveryPoints = rows.map(row => ({
+    orderId: Number(row.order_id),
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    address: row.address || 'Address not available',
+    customerName: row.customer_name || 'Customer',
+    customerPhone: row.customer_phone || null,
+  }));
+
+  const optimizedRoute = optimizeRoute(storeLat, storeLng, deliveryPoints);
+
+  return ok(res, optimizedRoute, 'Optimized route');
+});
+
+const getOptimizedRouteForRider = asyncHandler(async (req, res) => {
+  const riderId = Number(req.query.riderId);
+  if (!riderId) return fail(res, 400, 'riderId query parameter required');
+
+  const { rows: dpRows } = await query(
+    'SELECT id FROM delivery_partners WHERE id = $1',
+    [riderId]
+  );
+  if (!dpRows[0]) return fail(res, 404, 'Delivery partner not found');
+
+  const storeSettings = await getStoreSettings();
+  const storeLat = Number(storeSettings.center_lat || 23.6583);
+  const storeLng = Number(storeSettings.center_lng || 86.1764);
+
+  const { rows } = await query(
+    `SELECT 
+       o.id AS order_id,
+       (o.address->>'lat')::numeric AS lat,
+       (o.address->>'lng')::numeric AS lng,
+       COALESCE(o.address->>'text', o.address->>'raw') AS address,
+       u.name AS customer_name,
+       u.phone AS customer_phone
+     FROM orders o
+     JOIN users u ON u.id = o.customer_id
+     JOIN order_assignments oa ON oa.order_id = o.id
+     WHERE oa.delivery_partner_id = $1
+       AND o.status IN ('CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY')
+     ORDER BY o.created_at ASC`,
+    [riderId]
+  );
+
+  const deliveryPoints = rows.map(row => ({
+    orderId: Number(row.order_id),
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    address: row.address || 'Address not available',
+    customerName: row.customer_name || 'Customer',
+    customerPhone: row.customer_phone || null,
+  }));
+
+  const optimizedRoute = optimizeRoute(storeLat, storeLng, deliveryPoints);
+
+  return ok(res, optimizedRoute, 'Optimized route for rider');
+});
+
+const getAdminOptimizedRoute = asyncHandler(async (req, res) => {
+  const dateParam = req.query.date || 'today';
+  
+  let dateCondition = 'o.created_at::date = CURRENT_DATE';
+  if (dateParam !== 'today') {
+    dateCondition = `o.created_at::date = $1::date`;
+  }
+
+  const storeSettings = await getStoreSettings();
+  const storeLat = Number(storeSettings.center_lat || 23.6583);
+  const storeLng = Number(storeSettings.center_lng || 86.1764);
+
+  const params = dateParam !== 'today' ? [dateParam] : [];
+  const { rows } = await query(
+    `SELECT 
+       o.id AS order_id,
+       (o.address->>'lat')::numeric AS lat,
+       (o.address->>'lng')::numeric AS lng,
+       COALESCE(o.address->>'text', o.address->>'raw') AS address,
+       u.name AS customer_name,
+       u.phone AS customer_phone,
+       o.status
+     FROM orders o
+     JOIN users u ON u.id = o.customer_id
+     LEFT JOIN order_assignments oa ON oa.order_id = o.id
+     WHERE ${dateCondition}
+       AND o.status IN ('CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY')
+     ORDER BY o.created_at ASC`,
+    params
+  );
+
+  const deliveryPoints = rows.map(row => ({
+    orderId: Number(row.order_id),
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    address: row.address || 'Address not available',
+    customerName: row.customer_name || 'Customer',
+    customerPhone: row.customer_phone || null,
+    status: row.status,
+  }));
+
+  const optimizedRoute = optimizeRoute(storeLat, storeLng, deliveryPoints);
+
+  return ok(res, {
+    ...optimizedRoute,
+    date: dateParam,
+    totalOrders: rows.length,
+  }, 'Admin optimized route');
+});
+
+const assignMultiRiderRoutes = asyncHandler(async (req, res) => {
+  const dateParam = req.body.date || 'today';
+  const numRiders = Number(req.body.numRiders || 3);
+
+  if (!Number.isInteger(numRiders) || numRiders < 1 || numRiders > 50) {
+    return fail(res, 400, 'numRiders must be between 1 and 50');
+  }
+
+  let dateCondition = 'o.created_at::date = CURRENT_DATE';
+  if (dateParam !== 'today') {
+    dateCondition = `o.created_at::date = $1::date`;
+  }
+
+  const storeSettings = await getStoreSettings();
+  const storeLat = Number(storeSettings.center_lat || 23.6583);
+  const storeLng = Number(storeSettings.center_lng || 86.1764);
+
+  const params = dateParam !== 'today' ? [dateParam] : [];
+  const { rows } = await query(
+    `SELECT 
+       o.id AS order_id,
+       (o.address->>'lat')::numeric AS lat,
+       (o.address->>'lng')::numeric AS lng,
+       COALESCE(o.address->>'text', o.address->>'raw') AS address,
+       u.name AS customer_name,
+       u.phone AS customer_phone,
+       o.status,
+       o.total_amount
+     FROM orders o
+     JOIN users u ON u.id = o.customer_id
+     LEFT JOIN order_assignments oa ON oa.order_id = o.id
+     WHERE ${dateCondition}
+       AND o.status IN ('CONFIRMED', 'PACKED')
+       AND oa.id IS NULL
+     ORDER BY o.created_at ASC`,
+    params
+  );
+
+  if (rows.length === 0) {
+    return ok(res, {
+      zones: [],
+      totalOrders: 0,
+      totalRiders: 0,
+      message: 'No unassigned orders found for the specified date',
+    }, 'No orders to assign');
+  }
+
+  const orders = rows.map(row => ({
+    orderId: Number(row.order_id),
+    lat: Number(row.lat),
+    lng: Number(row.lng),
+    address: row.address || 'Address not available',
+    customerName: row.customer_name || 'Customer',
+    customerPhone: row.customer_phone || null,
+    status: row.status,
+    totalAmount: Number(row.total_amount || 0),
+  }));
+
+  const multiRiderPlan = optimizeMultiRiderRoute(orders, numRiders, storeLat, storeLng);
+
+  return ok(res, {
+    ...multiRiderPlan,
+    date: dateParam,
+    assignmentReady: true,
+  }, 'Multi-rider routes optimized');
+});
+
+const bulkAssignZones = asyncHandler(async (req, res) => {
+  const body = req.validated.body || req.body || {};
+  const zones = Array.isArray(body.zones) ? body.zones : [];
+  const riderIds = Array.isArray(body.riderIds) ? body.riderIds : [];
+
+  if (!zones.length) {
+    return fail(res, 400, 'zones array is required');
+  }
+
+  const assignmentResults = await withTransaction(async (client) => {
+    const results = [];
+
+    for (const zone of zones) {
+      const zoneId = Number(zone.zoneId ?? zone.zone_id);
+      const riderId = Number(
+        zone.riderId ?? zone.rider_id ?? riderIds[0]
+      );
+      const orderIds = (zone.orderIds ?? zone.order_ids ?? [])
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && id > 0);
+      const routeOrder = (zone.routeOrder ?? zone.route_order ?? orderIds)
+        .map(Number)
+        .filter((id) => Number.isFinite(id) && id > 0);
+
+      if (!Number.isFinite(zoneId) || zoneId <= 0) {
+        const err = new Error('Each zone must include a valid zoneId');
+        err.statusCode = 400;
+        throw err;
+      }
+      if (!Number.isFinite(riderId) || riderId <= 0) {
+        const err = new Error(`Zone ${zoneId} requires a valid riderId`);
+        err.statusCode = 400;
+        throw err;
+      }
+      if (!orderIds.length) {
+        const err = new Error(`Zone ${zoneId} has no orders to assign`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const { rows: partnerRows } = await client.query(
+        `SELECT dp.id, dp.user_id, dp.is_online, dp.approved, dp.current_lat, dp.current_lng,
+                u.name, u.phone
+         FROM delivery_partners dp
+         JOIN users u ON u.id = dp.user_id
+         WHERE dp.id = $1`,
+        [riderId]
+      );
+      if (!partnerRows[0]) {
+        const err = new Error(`Delivery partner ${riderId} not found`);
+        err.statusCode = 404;
+        throw err;
+      }
+      if (!partnerRows[0].approved) {
+        const err = new Error(`Delivery partner ${riderId} is not approved`);
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const partner = partnerRows[0];
+      const assignedOrders = [];
+      const assignedOrderIds = [];
+
+      for (const orderId of routeOrder) {
+        if (!orderIds.includes(orderId)) continue;
+
+        const { rows: orderRows } = await client.query(
+          `SELECT o.id, o.customer_id, o.status, o.address, o.total_amount, o.payment_mode
+           FROM orders o
+           WHERE o.id = $1
+           FOR UPDATE`,
+          [orderId]
+        );
+        const order = orderRows[0];
+        if (!order) {
+          const err = new Error(`Order ${orderId} not found`);
+          err.statusCode = 404;
+          throw err;
+        }
+        if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
+          const err = new Error(
+            `Order ${orderId} is not assignable (status: ${order.status})`
+          );
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const { rows: existing } = await client.query(
+          `SELECT delivery_partner_id
+           FROM order_assignments
+           WHERE order_id = $1
+           FOR UPDATE`,
+          [orderId]
+        );
+        if (
+          existing[0] &&
+          Number(existing[0].delivery_partner_id) !== riderId
+        ) {
+          const err = new Error(
+            `Order ${orderId} is already assigned to another rider`
+          );
+          err.statusCode = 409;
+          throw err;
+        }
+
+        await client.query(
+          `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at)
+           VALUES ($1, $2, 'ASSIGNED', NOW())
+           ON CONFLICT (order_id)
+           DO UPDATE SET
+             delivery_partner_id = EXCLUDED.delivery_partner_id,
+             status = 'ASSIGNED',
+             assigned_at = NOW()`,
+          [orderId, riderId]
+        );
+
+        assignedOrders.push(order);
+        assignedOrderIds.push(Number(order.id));
+      }
+
+      results.push({
+        zoneId,
+        riderId,
+        partnerUserId: Number(partner.user_id),
+        orderIds: assignedOrderIds,
+        routeOrder: routeOrder.filter((id) => assignedOrderIds.includes(id)),
+        orders: assignedOrders,
+        partner,
+      });
+    }
+
+    return results;
+  });
+
+  const io = req.app.get('io');
+  if (io) {
+    for (const result of assignmentResults) {
+      const partnerPayload = {
+        id: Number(result.partner.id),
+        userId: Number(result.partner.user_id),
+        user_id: Number(result.partner.user_id),
+        name: result.partner.name,
+        phone: result.partner.phone,
+        current_lat: result.partner.current_lat,
+        current_lng: result.partner.current_lng,
+      };
+
+      emitRouteZoneAssigned(io, {
+        zoneId: result.zoneId,
+        riderUserId: result.partnerUserId,
+        riderId: result.riderId,
+        orderIds: result.orderIds,
+        routeOrder: result.routeOrder,
+      });
+
+      for (const order of result.orders) {
+        emitCustomerPartnerAssigned(io, order, partnerPayload);
+      }
+
+      io.to('admin_room').emit('order:updated', {
+        zoneId: result.zoneId,
+        riderId: result.riderId,
+        orderIds: result.orderIds,
+        status: 'ASSIGNED',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  return ok(
+    res,
+    {
+      assignedZones: assignmentResults.map((result) => ({
+        zoneId: result.zoneId,
+        riderId: result.riderId,
+        orderIds: result.orderIds,
+        routeOrder: result.routeOrder,
+        orderCount: result.orderIds.length,
+      })),
+      totalOrders: assignmentResults.reduce(
+        (sum, result) => sum + result.orderIds.length,
+        0
+      ),
+      date: body.date || null,
+    },
+    'Zones assigned to riders'
+  );
+});
+
 module.exports = {
   getMe,
   listAvailableOrders,
@@ -505,4 +1081,9 @@ module.exports = {
   getEarnings,
   toggleOnline,
   updateProfile,
+  getMyOptimizedRoute,
+  getOptimizedRouteForRider,
+  getAdminOptimizedRoute,
+  assignMultiRiderRoutes,
+  bulkAssignZones,
 };

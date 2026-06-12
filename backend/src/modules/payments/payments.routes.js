@@ -5,52 +5,52 @@ const router = express.Router();
 const { protect } = require('../../middlewares/auth.middleware');
 const { validate } = require('../../middlewares/validate.middleware');
 const { initiatePayment, getPaymentStatus, handlePhonePeWebhook } = require('./payments.controller');
-const { initiatePaymentSchema, getPaymentStatusSchema } = require('./payments.validation');
+const { verifyPayment } = require('./phonepe.controller');
+const {
+  initiatePaymentSchema,
+  getPaymentStatusSchema,
+  verifyPaymentSchema,
+} = require('./payments.validation');
+
+const { fail } = require('../../utils/response');
 
 // Rate limiting for payment initiation (per user)
 const paymentRateLimit = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // limit each user to 10 payment initiations per minute
-  keyGenerator: (req) => req.user?.id || 'anonymous',
-  message: {
-    error: 'Too many payment attempts',
-    retryAfter: '1 minute'
-  },
-  standardHeaders: true,
+  windowMs: 60 * 1000,
+  max: 10,
+  // Protected route — req.user.id is always set by protect middleware
+  keyGenerator: (req) => String(req.user?.id || 'anonymous'),
+  standardHeaders: 'draft-7',
   legacyHeaders: false,
   handler: (req, res) => {
     const { paymentLogger } = require('./payments.controller');
-    const logger = require('../../utils/logger');
-    
+    const { logger } = require('../../utils/logger');
     paymentLogger.security.rateLimitExceeded(logger, {
       clientIP: req.ip,
       userAgent: req.headers['user-agent'],
-      endpoint: '/api/payments/phonepe/initiate'
+      endpoint: '/api/payments/phonepe/initiate',
     });
-    
-    res.status(429).json({
-      error: 'Too many payment attempts',
-      retryAfter: '1 minute'
-    });
-  }
+    return fail(res, 429, 'Too many payment attempts', { code: 'RATE_LIMITED', retryAfter: '1 minute' });
+  },
 });
 
-// Rate limiting for webhook endpoint (production optimized)
+// Rate limiting for webhook endpoint
 const webhookRateLimit = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: {
-    error: 'Too many webhook requests',
-    retryAfter: '15 minutes'
-  },
-  standardHeaders: true,
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: 'draft-7',
   legacyHeaders: false,
-  skipSuccessfulRequests: true // Only count failed requests
+  skipSuccessfulRequests: true,
+  handler: (req, res) => {
+    return fail(res, 429, 'Too many webhook requests', { code: 'RATE_LIMITED' });
+  },
 });
 
 // Protected payment routes
 router.post('/phonepe/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
 router.post('/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
+router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
+router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
 router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), getPaymentStatus);
 
 // Public webhook route with rate limiting

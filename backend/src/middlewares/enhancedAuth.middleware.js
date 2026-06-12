@@ -1,8 +1,10 @@
 const jwt = require('jsonwebtoken');
 const speakeasy = require('speakeasy');
 const mfaService = require('../modules/auth/mfa.service');
+const { query } = require('../db/postgres');
 const { logger } = require('../utils/logger');
 const { sentry } = require('../utils/sentry');
+const { fail } = require('../utils/response');
 
 class EnhancedAuthMiddleware {
   constructor() {
@@ -27,10 +29,9 @@ class EnhancedAuthMiddleware {
         ip: req.ip
       });
 
-      return res.status(429).json({
-        success: false,
-        message: `Too many failed attempts. Try again in ${remainingTime} seconds.`,
-        retryAfter: remainingTime
+      return fail(res, 429, `Too many failed attempts. Try again in ${remainingTime} seconds.`, {
+        code: 'RATE_LIMITED',
+        retryAfter: remainingTime,
       });
     }
 
@@ -101,10 +102,7 @@ class EnhancedAuthMiddleware {
       const authHeader = req.headers.authorization;
       
       if (!authHeader) {
-        return res.status(401).json({
-          success: false,
-          message: 'Access token is required'
-        });
+        return fail(res, 401, 'Access token is required', { code: 'TOKEN_MISSING' });
       }
 
       const token = authHeader.startsWith('Bearer ') 
@@ -112,25 +110,37 @@ class EnhancedAuthMiddleware {
         : authHeader;
 
       if (!token) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid token format'
-        });
+        return fail(res, 401, 'Invalid token format', { code: 'TOKEN_MISSING' });
       }
 
       // Verify JWT token
-      const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+      const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET, {
+        issuer: 'meatvo-app',
+        audience: 'meatvo-users',
+        algorithms: ['HS256']
+      });
       
       // Check if token is blacklisted
       if (await this.isTokenBlacklisted(token)) {
-        return res.status(401).json({
-          success: false,
-          message: 'Token has been revoked'
-        });
+        return fail(res, 401, 'Token has been revoked', { code: 'TOKEN_REVOKED' });
+      }
+
+      const userId = Number(decoded.id || decoded.sub);
+      const { rows } = await query(
+        `SELECT id, phone, name, role,
+                mfa_enabled AS "mfaEnabled",
+                mfa_secret AS "mfaSecret"
+         FROM users
+         WHERE id = $1`,
+        [userId]
+      );
+
+      if (!rows[0]) {
+        return fail(res, 401, 'User not found', { code: 'USER_NOT_FOUND' });
       }
 
       // Add user to request object
-      req.user = decoded;
+      req.user = rows[0];
       req.token = token;
 
       // Add authentication breadcrumb
@@ -139,32 +149,20 @@ class EnhancedAuthMiddleware {
           message: 'JWT token verified',
           category: 'auth',
           level: 'info',
-          data: { userId: decoded.id, role: decoded.role }
+          data: { userId: rows[0].id, role: rows[0].role }
         });
       }
 
       next();
     } catch (error) {
       if (error.name === 'TokenExpiredError') {
-        return res.status(401).json({
-          success: false,
-          message: 'Token has expired',
-          code: 'TOKEN_EXPIRED'
-        });
+        return fail(res, 401, 'Token has expired', { code: 'TOKEN_EXPIRED' });
       } else if (error.name === 'JsonWebTokenError') {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid token',
-          code: 'TOKEN_INVALID'
-        });
+        return fail(res, 401, 'Invalid token', { code: 'TOKEN_INVALID' });
       } else {
         logger.error('jwt_verification_error', { error: error.message });
         sentry.captureException(error);
-        
-        return res.status(500).json({
-          success: false,
-          message: 'Authentication error'
-        });
+        return fail(res, 500, 'Authentication error', { code: 'AUTH_ERROR' });
       }
     }
   }
@@ -172,10 +170,7 @@ class EnhancedAuthMiddleware {
   // MFA verification middleware
   requireMFA(req, res, next) {
     if (!req.user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
+      return fail(res, 401, 'Authentication required', { code: 'AUTH_REQUIRED' });
     }
 
     // Check if MFA is enabled for the user
@@ -183,11 +178,7 @@ class EnhancedAuthMiddleware {
       const mfaToken = req.headers['x-mfa-token'];
       
       if (!mfaToken) {
-        return res.status(401).json({
-          success: false,
-          message: 'MFA token is required',
-          code: 'MFA_REQUIRED'
-        });
+        return fail(res, 401, 'MFA token is required', { code: 'MFA_REQUIRED' });
       }
 
       // Verify MFA token
@@ -206,11 +197,7 @@ class EnhancedAuthMiddleware {
           data: { userId: req.user.id, ip: req.ip }
         });
 
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid MFA token',
-          code: 'MFA_INVALID'
-        });
+        return fail(res, 401, 'Invalid MFA token', { code: 'MFA_INVALID' });
       }
     }
 
@@ -221,10 +208,7 @@ class EnhancedAuthMiddleware {
   requireRole(roles, requireMFA = false) {
     return (req, res, next) => {
       if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          message: 'Authentication required'
-        });
+        return fail(res, 401, 'Authentication required', { code: 'AUTH_REQUIRED' });
       }
 
       const userRole = req.user.role;
@@ -254,11 +238,7 @@ class EnhancedAuthMiddleware {
           }
         });
 
-        return res.status(403).json({
-          success: false,
-          message: 'Insufficient permissions',
-          code: 'INSUFFICIENT_PERMISSIONS'
-        });
+        return fail(res, 403, 'Insufficient permissions', { code: 'INSUFFICIENT_PERMISSIONS' });
       }
 
       // Check MFA requirement for sensitive operations
@@ -266,21 +246,13 @@ class EnhancedAuthMiddleware {
         const mfaToken = req.headers['x-mfa-token'];
         
         if (!mfaToken) {
-          return res.status(401).json({
-            success: false,
-            message: 'MFA token is required for this operation',
-            code: 'MFA_REQUIRED'
-          });
+          return fail(res, 401, 'MFA token is required for this operation', { code: 'MFA_REQUIRED' });
         }
 
         const isValid = mfaService.verifyToken(mfaToken, req.user.mfaSecret);
         
         if (!isValid) {
-          return res.status(401).json({
-            success: false,
-            message: 'Invalid MFA token',
-            code: 'MFA_INVALID'
-          });
+          return fail(res, 401, 'Invalid MFA token', { code: 'MFA_INVALID' });
         }
       }
 
@@ -292,26 +264,22 @@ class EnhancedAuthMiddleware {
   async isTokenBlacklisted(token) {
     const redisClient = require('../db/redis');
     try {
-      const isBlacklisted = await redisClient.get(`blacklist:${token}`);
-      return !!isBlacklisted;
-    } catch (error) {
-      logger.error('token_blacklist_check_error', { error: error.message });
-      return false;
+      const blacklisted = await redisClient.get(`blacklist:${token}`);
+      return blacklisted === '1';
+    } catch (err) {
+      logger.error('Redis blacklist check failed:', err);
+      return true; // fail-closed: treat as blacklisted if Redis down
     }
   }
 
   // Blacklist a token (for logout)
-  blacklistToken(token) {
+  async blacklistToken(token) {
     const redisClient = require('../db/redis');
-    try {
-      const decoded = jwt.decode(token);
-      if (decoded && decoded.exp) {
-        const ttl = Math.max(1, Math.floor(decoded.exp - Date.now() / 1000));
-        redisClient.setex(`blacklist:${token}`, ttl, '1');
-        logger.info('token_blacklisted', { token: token.substring(0, 10) + '...' });
-      }
-    } catch (error) {
-      logger.error('token_blacklist_error', { error: error.message });
+    const decoded = jwt.decode(token);
+    if (decoded && decoded.exp) {
+      const ttl = Math.max(1, Math.floor(decoded.exp - Date.now() / 1000));
+      await redisClient.set(`blacklist:${token}`, '1', 'EX', ttl);
+      logger.info('token_blacklisted', { token: token.substring(0, 10) + '...' });
     }
   }
 
@@ -343,10 +311,7 @@ class EnhancedAuthMiddleware {
     const user = req.user;
 
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Authentication required'
-      });
+      return fail(res, 401, 'Authentication required', { code: 'AUTH_REQUIRED' });
     }
 
     // In production, check against stored device fingerprints
@@ -375,12 +340,11 @@ class EnhancedAuthMiddleware {
       const requests = this.getApiRequests(key, now, window);
       
       if (requests >= limits.requests) {
-        return res.status(429).json({
-          success: false,
-          message: 'API rate limit exceeded',
+        return fail(res, 429, 'API rate limit exceeded', {
+          code: 'RATE_LIMITED',
           retryAfter: Math.ceil(window / 1000),
           limit: limits.requests,
-          remaining: 0
+          remaining: 0,
         });
       }
 

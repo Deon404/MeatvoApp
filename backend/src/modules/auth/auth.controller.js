@@ -9,19 +9,33 @@ const { fail, ok } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { sentry } = require('../../utils/sentry');
 const mfaService = require('./mfa.service');
+const { normalizePhone, normalizeOtp } = require('./auth.validation');
+
+/** Single canonical phone for Redis keys + HMAC (must match between send & verify). */
+const otpPhoneKey = (raw) => normalizePhone(raw);
 
 const OTP_TTL_SECONDS = Number(process.env.OTP_TTL_SECONDS || 600);
 const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 3);
 const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 const logOtpToConsole =
-  !isProd && String(process.env.OTP_LOG_TO_CONSOLE || '').toLowerCase() !== 'false';
+  process.env.OTP_LOG_TO_CONSOLE === 'true' && process.env.NODE_ENV !== 'production';
 
-const generateOtpCode = () => String(crypto.randomInt(0, 10000)).padStart(4, '0');
+const OTP_LENGTH = Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 6);
+
+const generateOtpCode = () => {
+  const max = 10 ** OTP_LENGTH;
+  return String(crypto.randomInt(0, max)).padStart(OTP_LENGTH, '0');
+};
 
 const hashOtp = (phone, otp) => {
   const secret = process.env.OTP_HASH_SECRET;
   if (!secret) throw new Error('OTP_HASH_SECRET is required');
-  return crypto.createHmac('sha256', secret).update(`${phone}:${otp}`).digest('hex');
+  return crypto
+    .createHmac('sha256', secret)
+    .update(String(phone))
+    .update(':')
+    .update(String(otp))
+    .digest('hex');
 };
 
 const roleForNewUser = (phone) => {
@@ -48,34 +62,36 @@ const timingSafeEqualStr = (a, b) => {
   return crypto.timingSafeEqual(ba, bb);
 };
 
+const maskPhone = (phone) => {
+  const value = String(phone || '');
+  return value.length > 4 ? `${value.substring(0, 2)}******${value.substring(value.length - 2)}` : '****';
+};
+
 const ensureUserForPhone = async (phone) => {
-  const existing = await query('SELECT id, phone, name, role FROM users WHERE phone = $1', [phone]);
+  const existing = await query(
+    `SELECT id, phone, name, role,
+            mfa_enabled AS "mfaEnabled",
+            mfa_secret AS "mfaSecret"
+     FROM users
+     WHERE phone = $1`,
+    [phone]
+  );
   let user = existing.rows[0];
 
   if (!user) {
     const role = roleForNewUser(phone);
     const created = await query(
-      'INSERT INTO users (phone, role) VALUES ($1, $2) RETURNING id, phone, name, role',
+      `INSERT INTO users (phone, role)
+       VALUES ($1, $2)
+       RETURNING id, phone, name, role,
+                 mfa_enabled AS "mfaEnabled",
+                 mfa_secret AS "mfaSecret"`,
       [phone, role]
     );
     user = created.rows[0];
-  } else {
-    // Bootstrap roles via env allowlist without ever demoting an existing privileged user.
-    const desiredRole = roleForNewUser(phone);
-    const currentRole = user.role;
-    const shouldPromoteToAdmin = desiredRole === ROLES.ADMIN && currentRole !== ROLES.ADMIN;
-    const shouldPromoteToDelivery =
-      desiredRole === ROLES.DELIVERY && currentRole !== ROLES.DELIVERY && currentRole !== ROLES.ADMIN;
-
-    if (shouldPromoteToAdmin || shouldPromoteToDelivery) {
-      const nextRole = shouldPromoteToAdmin ? ROLES.ADMIN : ROLES.DELIVERY;
-      const updated = await query(
-        'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, phone, name, role',
-        [nextRole, user.id]
-      );
-      user = updated.rows[0] || user;
-    }
   }
+  // Existing users: role comes from DB only (pgAdmin / admin panel).
+  // ADMIN_PHONES / DELIVERY_PHONES apply only when the account is first created.
 
   if (user.role === ROLES.DELIVERY) {
     await query(
@@ -90,17 +106,14 @@ const ensureUserForPhone = async (phone) => {
 // POST /api/auth/send-otp
 const sendOtp = asyncHandler(async (req, res) => {
   try {
-    console.log('🔍 SEND OTP START');
-    console.log('📋 Request body:', req.body);
-    console.log('📋 Validated data:', req.validated);
-    
-    const phone = req.validated?.body?.phone;
-    console.log('📱 Phone extracted:', phone);
+    const phone = otpPhoneKey(req.validated?.body?.phone);
 
     if (!phone) {
-      console.error('❌ Phone is missing from validated data');
+      logger.warn('otp_send_missing_phone', { ip: req.ip });
       return fail(res, 400, 'Phone number is required');
     }
+
+    const maskedPhone = maskPhone(phone);
 
     // Check blocked phones
     const blockedPhones = (process.env.BLOCKED_PHONES || '')
@@ -109,6 +122,7 @@ const sendOtp = asyncHandler(async (req, res) => {
       .filter(Boolean);
     
     if (blockedPhones.includes(phone)) {
+      logger.warn('otp_send_blocked_phone', { phone: maskedPhone, ip: req.ip });
       return fail(res, 403, 'This phone number is not allowed.');
     }
 
@@ -121,7 +135,7 @@ const sendOtp = asyncHandler(async (req, res) => {
     const uniqueIps = await redis.scard(ipTrackKey);
     if (uniqueIps > 5) {
       logger.warn('suspicious_activity_multiple_ips', { 
-        phone: phone.substring(0, 3) + '****',
+        phone: maskedPhone,
         uniqueIpCount: uniqueIps,
         currentIp 
       });
@@ -137,14 +151,26 @@ const sendOtp = asyncHandler(async (req, res) => {
       lockoutCount = 0; // ignore errors
     }
     if (lockoutCount >= 10) {
+      logger.warn('otp_send_lockout_active', { phone: maskedPhone, lockoutCount });
       return fail(res, 429, 'Account locked due to too many failed attempts. Try again later.');
     }
 
+    const sendLockKey = `otp:send-lock:${phone}`;
+    if (await redis.get(sendLockKey)) {
+      return fail(res, 429, 'OTP request already in progress. Please wait a moment.');
+    }
+    await redis.set(sendLockKey, '1', 'EX', 20);
+
     // CHECK: Is there already a valid unexpired OTP for this number?
     const existingKey = `otp:${phone}`;
+    const forceResend = req.validated?.body?.resend === true;
+    if (forceResend) {
+      await redis.del(existingKey);
+    }
     const existingData = await redis.get(existingKey);
     
     if (existingData) {
+      await redis.del(sendLockKey);
       let remainingSeconds = OTP_TTL_SECONDS; // default fallback
       try {
         const parsed = JSON.parse(existingData);
@@ -154,81 +180,88 @@ const sendOtp = asyncHandler(async (req, res) => {
         }
       } catch (e) {}
       
-      return res.status(429).json({
-        success: false,
-        message: 'OTP already sent. Use existing OTP.',
-        data: {
-          remainingSeconds,
-          canResendAt: Date.now() + (remainingSeconds * 1000)
-        }
+      return fail(res, 429, 'OTP already sent. Use existing OTP.', {
+        remainingSeconds,
+        canResendAt: Date.now() + (remainingSeconds * 1000),
       });
     }
     
     // No existing OTP → proceed to generate new one
     const otp = generateOtpCode();
-    if (logOtpToConsole) {
-      if (isProd) {
-        console.log(`[OTP][${phone}] ${otp.substring(0, 2)}****`); // Masked in production
-      } else {
-        console.log(`[OTP][${phone}] ${otp}`); // Full OTP in development only
-      }
-    }
     const otpHash = hashOtp(phone, otp);
     const redisKey = `otp:${phone}`;
-    
-    console.log('🔐 OTP generated and hashed');
 
-    console.log('💾 Storing OTP in Redis...');
     await redis.set(
       redisKey,
       JSON.stringify({ otpHash, attempts: 0, sentAt: Date.now() }),
       'EX',
       OTP_TTL_SECONDS
     );
-    console.log('✅ OTP stored in Redis');
 
-    console.log('📝 Inserting OTP log in database...');
-    await query(
-      'INSERT INTO otp_logs (phone, otp, expires_at, verified) VALUES ($1, $2, NOW() + ($3 || \' seconds\')::interval, FALSE)',
-      [phone, otpHash, String(OTP_TTL_SECONDS)]
-    );
-    console.log('✅ OTP log inserted in database');
+    const phoneHash = sha256(phone);
+    const templateId = process.env.MSG91_OTP_TEMPLATE_ID || process.env.MSG91_TEMPLATE_ID || null;
 
-    console.log('📨 Sending SMS...');
-    await sendOtpSms({ phone, otp });
-    console.log('✅ SMS sent successfully');
-
-    // STRUCTURED LOGGING (Low) - Log OTP send event with masked phone
-    const maskedPhone = phone.length > 4 ? 
-      phone.substring(0, 2) + '******' + phone.substring(phone.length - 2) : 
-      '****';
-    console.log(JSON.stringify({
-      event: 'otp_sent',
-      phone: maskedPhone,
-      timestamp: new Date().toISOString(),
-      success: true
-    }));
-
-    const responseData = {};
-    if (logOtpToConsole) {
-      responseData.devOTP = otp;
+    const { sendSMS: sendOTPViaMSG91 } = require('../../utils/msg91');
+    let msg91Response;
+    try {
+      msg91Response = await sendOTPViaMSG91(phone, otp);
+    } catch (smsError) {
+      await redis.del(sendLockKey);
+      await redis.del(redisKey);
+      const isZeroBalance = /wallet balance is zero|balance too low/i.test(smsError.message || '');
+      logger.error('otp_send_sms_failed', {
+        phone: maskedPhone,
+        error: smsError.message,
+        httpStatus: smsError.httpStatus,
+        msg91: smsError.msg91,
+        zeroBalance: isZeroBalance,
+      });
+      const isTemplateError = /template|dlt|211|400/i.test(smsError.message || '');
+      if (isZeroBalance) {
+        return fail(res, 503, 'SMS service is temporarily unavailable. Please try again later.');
+      }
+      if (isTemplateError) {
+        return fail(res, 503, 'SMS template not configured. Contact support.');
+      }
+      return fail(res, 503, 'Failed to send OTP. Please try again.');
     }
-    
-    console.log('🎉 SEND OTP SUCCESS');
-    return ok(res, responseData, 'OTP sent successfully');
-    
+
+    const msg91Payload = { provider: 'msg91', ...(msg91Response || {}) };
+
+    try {
+      await query(
+        `INSERT INTO otp_logs (phone, otp, template_id, msg91_response, expires_at, verified)
+         VALUES ($1, $2, $3, $4::jsonb, NOW() + ($5 || ' seconds')::interval, FALSE)`,
+        [phoneHash, otpHash, templateId, JSON.stringify(msg91Payload), String(OTP_TTL_SECONDS)]
+      );
+    } catch (logError) {
+      logger.warn('otp_log_insert_failed', { phone: maskedPhone, error: logError.message });
+    }
+
+    logger.info('otp_sent', {
+      phone: maskedPhone,
+      provider: 'msg91',
+      success: true,
+    });
+
+    if (logOtpToConsole) {
+      console.log('OTP:', otp);
+    }
+
+    await redis.del(sendLockKey);
+    return ok(res, {}, 'OTP sent successfully');
   } catch (error) {
-    console.error('❌ SEND OTP ERROR:', error);
-    console.error('❌ Error stack:', error.stack);
-    throw error; // Re-throw to let error handler catch it
+    logger.error('otp_send_error', { error: error.message });
+    throw error;
   }
 });
 
 // POST /api/auth/verify-otp
 const verifyOtp = asyncHandler(async (req, res) => {
-  const phone = req.validated?.body?.phone;
-  const otp = req.validated?.body?.otp;
+  const phone = otpPhoneKey(req.validated?.body?.phone);
+  const otp = normalizeOtp(req.validated?.body?.otp);
   const mfaToken = req.validated?.body?.mfaToken;
+  const maskedPhone = maskPhone(phone);
 
   // Proceed with normal OTP verification
   const redisKey = `otp:${phone}`;
@@ -245,12 +278,11 @@ const verifyOtp = asyncHandler(async (req, res) => {
     } else if (typeof data === 'object') {
       parsed = data;
     } else {
-      console.error('Invalid data type from Redis:', typeof data, data);
+      logger.warn('otp_verify_invalid_redis_data_type', { dataType: typeof data, phone: maskedPhone });
       return fail(res, 500, 'Invalid OTP data format');
     }
   } catch (error) {
-    console.error('JSON parse error in verifyOtp:', error);
-    console.error('Data received:', data);
+    logger.warn('otp_verify_parse_error', { error: error.message, phone: maskedPhone });
     return fail(res, 500, 'Invalid OTP data format');
   }
   
@@ -260,23 +292,17 @@ const verifyOtp = asyncHandler(async (req, res) => {
   if (attempts >= OTP_MAX_ATTEMPTS) {
     await redis.del(redisKey);
     
-    // STRUCTURED LOGGING (Low) - Log max attempts reached
-    const maskedPhone = phone.length > 4 ? 
-      phone.substring(0, 2) + '******' + phone.substring(phone.length - 2) : 
-      '****';
-    console.log(JSON.stringify({
-      event: 'otp_verify_failed',
+    logger.warn('otp_verify_failed', {
       phone: maskedPhone,
-      timestamp: new Date().toISOString(),
       reason: 'max_attempts_reached',
       attempts: attempts
-    }));
+    });
     
     return fail(res, 400, 'Max attempts reached. Request a new OTP.');
   }
 
   const incomingHash = hashOtp(phone, otp);
-  if (incomingHash !== storedHash) {
+  if (!timingSafeEqualStr(incomingHash, storedHash)) {
     // Track failed attempts per phone (account lockout)
     const lockoutKey = `lockout:${phone}`;
     let lockoutCount = 0;
@@ -293,34 +319,46 @@ const verifyOtp = asyncHandler(async (req, res) => {
       return fail(res, 429, 'Account temporarily locked for 1 hour due to too many failed attempts. Contact support.');
     }
     
-    // Calculate remaining TTL before updating
-    const remainingTtl = OTP_TTL_SECONDS; // use full TTL as safe fallback
+    let remainingTtl = OTP_TTL_SECONDS;
+    if (parsed.sentAt) {
+      const elapsedSeconds = Math.floor((Date.now() - parsed.sentAt) / 1000);
+      remainingTtl = Math.max(1, OTP_TTL_SECONDS - elapsedSeconds);
+    }
     await redis.set(
-      redisKey, 
+      redisKey,
       JSON.stringify({ otpHash: storedHash, attempts: attempts + 1, sentAt: parsed.sentAt }),
       'EX',
       remainingTtl
     );
-    
-    // STRUCTURED LOGGING (Low) - Log invalid OTP attempt
-    const maskedPhone = phone.length > 4 ? 
-      phone.substring(0, 2) + '******' + phone.substring(phone.length - 2) : 
-      '****';
-    console.log(JSON.stringify({
-      event: 'otp_verify_failed',
+
+    logger.warn('otp_verify_failed', {
       phone: maskedPhone,
-      timestamp: new Date().toISOString(),
+      redisKey,
       reason: 'invalid_otp',
-      attempts: attempts + 1
-    }));
-    
-    return fail(res, 400, `Invalid OTP. Please try again. (${lockoutCount}/10 attempts)`);
+      attempts: attempts + 1,
+      hint: logOtpToConsole
+        ? 'Check otp_dev_console log from send-otp; SMS must match that OTP exactly.'
+        : undefined,
+    });
+
+    return fail(
+      res,
+      400,
+      'Invalid OTP. Use the code from your latest SMS, or request a new OTP after the timer ends.',
+      { attemptsLeft: Math.max(0, OTP_MAX_ATTEMPTS - (attempts + 1)) }
+    );
   }
 
   await redis.del(redisKey);
   await query(
-    'UPDATE otp_logs SET verified = TRUE WHERE id = (SELECT id FROM otp_logs WHERE phone = $1 AND otp = $2 ORDER BY created_at DESC LIMIT 1)',
-    [phone, storedHash]
+    `UPDATE otp_logs SET verified = TRUE
+     WHERE id = (
+       SELECT id FROM otp_logs
+       WHERE phone = $1 AND otp = $2
+       ORDER BY created_at DESC
+       LIMIT 1
+     )`,
+    [sha256(phone), storedHash]
   );
 
   const user = await ensureUserForPhone(phone);
@@ -338,7 +376,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
           message: 'MFA verification failed during login',
           category: 'auth',
           level: 'warning',
-          data: { userId: user.id, phone: phone.substring(0, 3) + '******' }
+          data: { userId: user.id, phone: maskedPhone }
         });
       }
       return fail(res, 401, 'Invalid MFA token');
@@ -368,28 +406,24 @@ const verifyOtp = asyncHandler(async (req, res) => {
 
   logger.info('user_login_success', {
     userId: user.id,
-    phone: phone.substring(0, 3) + '******',
+    phone: maskedPhone,
     role: user.role,
     hasMFA: mfaService.isMFAEnabled(user)
   });
 
-  // STRUCTURED LOGGING (Low) - Log successful OTP verification
-  const maskedPhone = phone.length > 4 ? 
-    phone.substring(0, 2) + '******' + phone.substring(phone.length - 2) : 
-    '****';
-  console.log(JSON.stringify({
-    event: 'otp_verify_success',
+  logger.info('otp_verify_success', {
     phone: maskedPhone,
-    timestamp: new Date().toISOString(),
     userId: user.id,
     role: user.role
-  }));
+  });
+
+  const { mfaSecret, ...safeUser } = user;
 
   return ok(
     res,
     {
       user: {
-        ...user,
+        ...safeUser,
         mfaEnabled: mfaService.isMFAEnabled(user)
       },
       accessToken: tokens.accessToken,
@@ -442,7 +476,9 @@ const refreshToken = asyncHandler(async (req, res) => {
 
 // POST /api/auth/dev-login
 const devLogin = asyncHandler(async (req, res) => {
-  const enabled = String(process.env.DEV_AUTH_BYPASS_ENABLED || '').toLowerCase() === 'true';
+  const enabled =
+    process.env.NODE_ENV !== 'production' &&
+    String(process.env.DEV_AUTH_BYPASS_ENABLED || '').toLowerCase() === 'true';
   const secret = process.env.DEV_AUTH_BYPASS_SECRET;
 
   if (!enabled || !secret) {
@@ -487,12 +523,14 @@ const devLogin = asyncHandler(async (req, res) => {
     sentry.setUser(user);
   }
 
-  sentry.addBreadcrumb({
-    message: 'User logged in via dev bypass',
-    category: 'auth',
-    level: 'info',
-    data: { userId: user.id, role: user.role }
-  });
+  if (sentry && sentry.addBreadcrumb) {
+    sentry.addBreadcrumb({
+      message: 'User logged in via dev bypass',
+      category: 'auth',
+      level: 'info',
+      data: { userId: user.id, role: user.role },
+    });
+  }
 
   return ok(
     res,
@@ -529,7 +567,12 @@ const logout = asyncHandler(async (req, res) => {
 
   if (token) {
     const { blacklistToken } = require('../../middlewares/enhancedAuth.middleware');
-    blacklistToken(token);
+    try {
+      await blacklistToken(token);
+    } catch (err) {
+      logger.error('Logout blacklist failed:', err);
+      return fail(res, 503, 'Logout service temporarily unavailable');
+    }
   }
 
   return ok(res, {}, 'Logged out');

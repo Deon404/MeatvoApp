@@ -23,9 +23,13 @@ const {
 router.get('/', protect, validate(getCartSchema), getCart);
 router.get('/count', protect, validate(getCartCountSchema), getCartCount);
 
+router.post('/', protect, validate(addToCartSchema), addToCart);
 router.post('/add', protect, validate(addToCartSchema), addToCart);
+router.put('/:itemId', protect, validate(updateCartItemSchema), updateCartItem);
 router.put('/update', protect, validate(updateCartItemSchema), updateCartItem);
+router.delete('/:itemId', protect, validate(removeFromCartSchema), removeFromCart);
 router.delete('/remove/:productId', protect, validate(removeFromCartSchema), removeFromCart);
+router.delete('/', protect, validate(clearCartSchema), clearCart);
 router.delete('/clear', protect, validate(clearCartSchema), clearCart);
 
 module.exports = router;

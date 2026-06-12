@@ -18,7 +18,8 @@ const getAdminFirebaseConfig = asyncHandler(async (req, res) => {
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
       messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
       appId: process.env.FIREBASE_APP_ID,
-      measurementId: process.env.FIREBASE_MEASUREMENT_ID
+      measurementId: process.env.FIREBASE_MEASUREMENT_ID,
+      vapidKey: process.env.FIREBASE_VAPID_KEY,
     };
 
     // Validate config
@@ -31,10 +32,10 @@ const getAdminFirebaseConfig = asyncHandler(async (req, res) => {
       return fail(res, 500, 'Firebase configuration incomplete');
     }
 
-    ok(res, 200, 'Firebase configuration retrieved', config);
+    return ok(res, config, 'Firebase configuration retrieved');
   } catch (error) {
     logger.error('Error getting admin Firebase config', { error: error.message });
-    fail(res, 500, 'Internal server error');
+    return fail(res, 500, 'Internal server error');
   }
 });
 
@@ -54,7 +55,8 @@ const getDeliveryFirebaseConfig = asyncHandler(async (req, res) => {
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
       messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
       appId: process.env.FIREBASE_APP_ID,
-      measurementId: process.env.FIREBASE_MEASUREMENT_ID
+      measurementId: process.env.FIREBASE_MEASUREMENT_ID,
+      vapidKey: process.env.FIREBASE_VAPID_KEY,
     };
 
     // Validate config
@@ -67,10 +69,10 @@ const getDeliveryFirebaseConfig = asyncHandler(async (req, res) => {
       return fail(res, 500, 'Firebase configuration incomplete');
     }
 
-    ok(res, 200, 'Firebase configuration retrieved', config);
+    return ok(res, config, 'Firebase configuration retrieved');
   } catch (error) {
     logger.error('Error getting delivery Firebase config', { error: error.message });
-    fail(res, 500, 'Internal server error');
+    return fail(res, 500, 'Internal server error');
   }
 });
 
@@ -90,7 +92,8 @@ const getCustomerFirebaseConfig = asyncHandler(async (req, res) => {
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
       messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
       appId: process.env.FIREBASE_APP_ID,
-      measurementId: process.env.FIREBASE_MEASUREMENT_ID
+      measurementId: process.env.FIREBASE_MEASUREMENT_ID,
+      vapidKey: process.env.FIREBASE_VAPID_KEY,
     };
 
     // Validate config
@@ -103,10 +106,10 @@ const getCustomerFirebaseConfig = asyncHandler(async (req, res) => {
       return fail(res, 500, 'Firebase configuration incomplete');
     }
 
-    ok(res, 200, 'Firebase configuration retrieved', config);
+    return ok(res, config, 'Firebase configuration retrieved');
   } catch (error) {
     logger.error('Error getting customer Firebase config', { error: error.message });
-    fail(res, 500, 'Internal server error');
+    return fail(res, 500, 'Internal server error');
   }
 });
 

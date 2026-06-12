@@ -3,7 +3,17 @@ const asyncHandler = require('express-async-handler');
 const { ok, fail } = require('../utils/response');
 const { logger } = require('../utils/logger');
 const { sentry } = require('../utils/sentry');
-const security = require('./index');
+const {
+  getSecurityStats,
+  deviceService,
+  sessionService,
+  mfaService,
+  otpSecurity,
+  accountLockoutService,
+  apiAbuseService,
+  socketSecurity,
+  jwtSecurity,
+} = require('./services');
 
 const router = express.Router();
 
@@ -12,7 +22,7 @@ const router = express.Router();
  */
 router.get('/stats', asyncHandler(async (req, res) => {
   try {
-    const stats = security.getSecurityStats();
+    const stats = getSecurityStats();
     
     logger.info('security_stats_requested', {
       userId: req.user?.id,
@@ -36,7 +46,7 @@ router.get('/devices', asyncHandler(async (req, res) => {
       return fail(res, 401, 'Authentication required');
     }
 
-    const devices = await security.deviceService.getUserDevices(req.user.id);
+    const devices = await deviceService.getUserDevices(req.user.id);
     
     logger.info('user_devices_retrieved', {
       userId: req.user.id,
@@ -61,7 +71,7 @@ router.post('/devices/:deviceId/trust', asyncHandler(async (req, res) => {
     }
 
     const { deviceId } = req.params;
-    const device = await security.deviceService.trustDevice(req.user.id, deviceId, req);
+    const device = await deviceService.trustDevice(req.user.id, deviceId, req);
     
     logger.info('device_trusted', {
       userId: req.user.id,
@@ -87,7 +97,7 @@ router.delete('/devices/:deviceId', asyncHandler(async (req, res) => {
     }
 
     const { deviceId } = req.params;
-    const device = await security.deviceService.revokeDevice(req.user.id, deviceId);
+    const device = await deviceService.revokeDevice(req.user.id, deviceId);
     
     logger.info('device_revoked', {
       userId: req.user.id,
@@ -112,7 +122,7 @@ router.get('/sessions', asyncHandler(async (req, res) => {
       return fail(res, 401, 'Authentication required');
     }
 
-    const sessions = await security.sessionService.getUserSessions(req.user.id);
+    const sessions = await sessionService.getUserSessions(req.user.id);
     
     logger.info('user_sessions_retrieved', {
       userId: req.user.id,
@@ -136,7 +146,7 @@ router.post('/sessions/invalidate-all', asyncHandler(async (req, res) => {
       return fail(res, 401, 'Authentication required');
     }
 
-    const invalidatedCount = await security.sessionService.invalidateAllUserSessions(req.user.id);
+    const invalidatedCount = await sessionService.invalidateAllUserSessions(req.user.id);
     
     logger.info('all_user_sessions_invalidated', {
       userId: req.user.id,
@@ -161,7 +171,6 @@ router.get('/mfa/status', asyncHandler(async (req, res) => {
       return fail(res, 401, 'Authentication required');
     }
 
-    const mfaService = security.mfaService;
     const status = mfaService.getMFAStatus(req.user);
     
     logger.info('mfa_status_retrieved', {
@@ -186,7 +195,6 @@ router.post('/mfa/backup-codes', asyncHandler(async (req, res) => {
       return fail(res, 401, 'Authentication required');
     }
 
-    const mfaService = security.mfaService;
     const backupCodes = mfaService.generateBackupCodes(req.user.id);
     
     logger.info('mfa_backup_codes_generated', {
@@ -208,8 +216,6 @@ router.post('/mfa/backup-codes', asyncHandler(async (req, res) => {
 router.get('/otp/block-status/:phone', asyncHandler(async (req, res) => {
   try {
     const { phone } = req.params;
-    const otpSecurity = security.otpSecurity;
-    
     const isBlocked = otpSecurity.isPhoneBlocked(phone);
     const remainingTime = otpSecurity.getPhoneBlockRemainingTime(phone);
     
@@ -237,13 +243,11 @@ router.get('/otp/block-status/:phone', asyncHandler(async (req, res) => {
 router.get('/account-lockout/status/:identifier/:type', asyncHandler(async (req, res) => {
   try {
     const { identifier, type } = req.params;
-    const accountLockout = security.accountLockoutService;
-    
-    const lockoutStatus = accountLockout.isAccountLocked(identifier, type);
+    const lockoutStatus = accountLockoutService.isAccountLocked(identifier, type);
     
     logger.info('account_lockout_status_checked', {
       type,
-      identifier: accountLockout.maskIdentifier(identifier, type),
+      identifier: accountLockoutService.maskIdentifier(identifier, type),
       locked: lockoutStatus.locked
     });
 
@@ -266,13 +270,11 @@ router.post('/account-lockout/lock/:identifier/:type', asyncHandler(async (req, 
 
     const { identifier, type } = req.params;
     const { reason, duration } = req.body;
-    const accountLockout = security.accountLockoutService;
-    
-    const result = accountLockout.manualLockAccount(identifier, type, reason, duration);
+    const result = accountLockoutService.manualLockAccount(identifier, type, reason, duration);
     
     logger.warn('account_manually_locked', {
       type,
-      identifier: accountLockout.maskIdentifier(identifier, type),
+      identifier: accountLockoutService.maskIdentifier(identifier, type),
       reason,
       duration,
       adminId: req.user.id
@@ -297,13 +299,11 @@ router.post('/account-lockout/unlock/:identifier/:type', asyncHandler(async (req
 
     const { identifier, type } = req.params;
     const { reason } = req.body;
-    const accountLockout = security.accountLockoutService;
-    
-    const result = accountLockout.unlockAccount(identifier, type, reason);
+    const result = accountLockoutService.unlockAccount(identifier, type, reason);
     
     logger.info('account_manually_unlocked', {
       type,
-      identifier: accountLockout.maskIdentifier(identifier, type),
+      identifier: accountLockoutService.maskIdentifier(identifier, type),
       reason,
       adminId: req.user.id
     });
@@ -325,8 +325,7 @@ router.get('/api-abuse/stats', asyncHandler(async (req, res) => {
       return fail(res, 403, 'Admin access required');
     }
 
-    const apiAbuse = security.apiAbuseService;
-    const stats = apiAbuse.getAbuseStats();
+    const stats = apiAbuseService.getAbuseStats();
     
     logger.info('api_abuse_stats_requested', {
       adminId: req.user.id,
@@ -352,9 +351,7 @@ router.post('/api-abuse/block-ip/:ip', asyncHandler(async (req, res) => {
 
     const { ip } = req.params;
     const { reason, abuseScore } = req.body;
-    const apiAbuse = security.apiAbuseService;
-    
-    const result = apiAbuse.blockIP(ip, reason, abuseScore);
+    const result = apiAbuseService.blockIP(ip, reason, abuseScore);
     
     logger.warn('ip_manually_blocked', {
       ip,
@@ -382,9 +379,7 @@ router.post('/api-abuse/unblock-ip/:ip', asyncHandler(async (req, res) => {
 
     const { ip } = req.params;
     const { reason } = req.body;
-    const apiAbuse = security.apiAbuseService;
-    
-    const result = apiAbuse.unblockIP(ip, reason);
+    const result = apiAbuseService.unblockIP(ip, reason);
     
     logger.info('ip_manually_unblocked', {
       ip,
@@ -410,9 +405,7 @@ router.post('/api-abuse/analyze', asyncHandler(async (req, res) => {
     }
 
     const { request } = req.body;
-    const apiAbuse = security.apiAbuseService;
-    
-    const analysis = apiAbuse.analyzeRequest(request);
+    const analysis = apiAbuseService.analyzeRequest(request);
     
     logger.info('request_abuse_analysis', {
       adminId: req.user.id,
@@ -438,7 +431,6 @@ router.get('/socket/stats', asyncHandler(async (req, res) => {
       return fail(res, 403, 'Admin access required');
     }
 
-    const socketSecurity = security.socketSecurity;
     const stats = socketSecurity.getSecurityStats();
     
     logger.info('socket_security_stats_requested', {
@@ -465,8 +457,6 @@ router.post('/socket/disconnect-user/:userId', asyncHandler(async (req, res) => 
 
     const { userId } = req.params;
     const { reason } = req.body;
-    const socketSecurity = security.socketSecurity;
-    
     const result = socketSecurity.forceDisconnectUser(userId, reason);
     
     logger.warn('user_force_disconnected_from_sockets', {
@@ -493,8 +483,6 @@ router.post('/jwt/revoke-all/:userId', asyncHandler(async (req, res) => {
     }
 
     const { userId } = req.params;
-    const jwtSecurity = security.jwtSecurity;
-    
     const revokedCount = jwtSecurity.revokeAllUserTokens(userId);
     
     logger.warn('all_user_tokens_revoked', {

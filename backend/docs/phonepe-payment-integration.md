@@ -1,23 +1,29 @@
 # PhonePe Payment Integration
 
+> **See also:** [Checkout Pipeline Architecture](./checkout-pipeline-architecture.md) — full end-to-end checkout flow including cart, slots, atomic order creation, and how payment fits into the pipeline.
+
 ## Overview
+
 Secure PhonePe payment integration for Node.js backend with PostgreSQL database.
 
 ## Features
 
 ### 🔐 Security
+
 - **Checksum Verification**: SHA256-based signature validation
 - **Amount Validation**: Prevents payment amount manipulation
 - **Webhook Authentication**: Verifies PhonePe webhook signatures
 - **Duplicate Prevention**: Handles duplicate webhook calls
 
 ### 📊 Payment Flow
+
 1. **Initiation**: Create payment request and get payment URL
 2. **Redirect**: User redirected to PhonePe payment page
 3. **Webhook**: PhonePe sends payment confirmation
 4. **Status Check**: Manual status verification option
 
 ### 🛡️ Fraud Prevention
+
 - Order amount validation against webhook amount
 - Transaction ID tracking
 - Payment status consistency checks
@@ -26,6 +32,7 @@ Secure PhonePe payment integration for Node.js backend with PostgreSQL database.
 ## API Endpoints
 
 ### Initiate Payment
+
 ```http
 POST /api/payments/phonepe/initiate
 Authorization: Bearer <token>
@@ -37,6 +44,7 @@ Content-Type: application/json
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -51,12 +59,14 @@ Content-Type: application/json
 ```
 
 ### Check Payment Status
+
 ```http
 GET /api/payments/:orderId/status
 Authorization: Bearer <token>
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -75,6 +85,7 @@ Authorization: Bearer <token>
 ```
 
 ### PhonePe Webhook
+
 ```http
 POST /api/payments/phonepe/webhook
 X-VERIFY: <checksum>
@@ -95,6 +106,7 @@ Content-Type: application/json
 ## Database Schema
 
 ### Payment Transactions Table
+
 ```sql
 CREATE TABLE payment_transactions (
   id BIGSERIAL PRIMARY KEY,
@@ -113,6 +125,7 @@ CREATE TABLE payment_transactions (
 ```
 
 ### Orders Table Addition
+
 ```sql
 ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50) 
   DEFAULT 'PENDING' CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED'));
@@ -121,6 +134,7 @@ ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50)
 ## Payment States
 
 ### Transaction Status
+
 - **INITIATED**: Payment request created
 - **PENDING**: User redirected to payment page
 - **SUCCESS**: Payment completed successfully
@@ -128,6 +142,7 @@ ALTER TABLE orders ADD COLUMN payment_status VARCHAR(50)
 - **REFUNDED**: Payment refunded
 
 ### Order Status Updates
+
 - **PLACED** → **CONFIRMED** (when payment successful)
 - **payment_status**: **PENDING** → **PAID**
 
@@ -148,6 +163,7 @@ PHONEPE_WEBHOOK_URL=http://localhost:8080/api/payments/phonepe/webhook
 ## Security Measures
 
 ### 1. Checksum Verification
+
 ```javascript
 const generateChecksum = (payload) => {
   const stringToHash = payload + PHONEPE_SALT_KEY;
@@ -156,6 +172,7 @@ const generateChecksum = (payload) => {
 ```
 
 ### 2. Amount Validation
+
 ```javascript
 // Verify webhook amount matches order amount
 const expectedAmount = payment.amount * 100; // Convert to paise
@@ -165,6 +182,7 @@ if (webhookAmount !== expectedAmount) {
 ```
 
 ### 3. Webhook Signature
+
 ```javascript
 const verifyWebhookSignature = (payload, signature) => {
   const expectedChecksum = generateChecksum(payload);
@@ -175,12 +193,14 @@ const verifyWebhookSignature = (payload, signature) => {
 ## Error Handling
 
 ### Payment Initiation Errors
+
 - **Order not found**: 404
 - **Invalid order status**: 400
 - **Payment already initiated**: 400
 - **PhonePe API error**: 500
 
 ### Webhook Errors
+
 - **Missing signature**: 400
 - **Invalid signature**: 401
 - **Amount mismatch**: 400
@@ -189,13 +209,16 @@ const verifyWebhookSignature = (payload, signature) => {
 ## Testing
 
 ### Development Mode
+
 Use test credentials and amounts:
+
 ```javascript
 // Test amounts (in paise)
 const testAmounts = [100, 200, 500]; // ₹1, ₹2, ₹5
 ```
 
 ### Webhook Testing
+
 ```bash
 # Test webhook locally
 curl -X POST http://localhost:8080/api/payments/phonepe/webhook \
@@ -207,12 +230,14 @@ curl -X POST http://localhost:8080/api/payments/phonepe/webhook \
 ## Integration Steps
 
 ### 1. Database Setup
+
 ```bash
 # Run migration
 psql -d meatvo -f migrations/002_create_payment_tables.sql
 ```
 
 ### 2. Environment Configuration
+
 ```bash
 # Set environment variables
 export PHONEPE_MERCHANT_ID="your_merchant_id"
@@ -222,6 +247,7 @@ export PHONEPE_WEBHOOK_URL="https://yourdomain.com/api/payments/phonepe/webhook"
 ```
 
 ### 3. Frontend Integration
+
 ```javascript
 // Initiate payment
 const response = await fetch('/api/payments/phonepe/initiate', {
@@ -240,6 +266,7 @@ window.location.href = paymentUrl;
 ## Monitoring & Logging
 
 ### Payment Events
+
 - Payment initiation
 - Payment success/failure
 - Webhook processing
@@ -247,6 +274,7 @@ window.location.href = paymentUrl;
 - Duplicate webhooks
 
 ### Metrics to Track
+
 - Payment success rate
 - Average payment time
 - Webhook response time
@@ -257,22 +285,20 @@ window.location.href = paymentUrl;
 ### Common Issues
 
 1. **Checksum Mismatch**
-   - Verify salt key and index
-   - Check payload encoding
-
+  - Verify salt key and index
+  - Check payload encoding
 2. **Amount Mismatch**
-   - Ensure paise conversion
-   - Check decimal handling
-
+  - Ensure paise conversion
+  - Check decimal handling
 3. **Webhook Not Received**
-   - Verify webhook URL accessibility
-   - Check PhonePe dashboard configuration
-
+  - Verify webhook URL accessibility
+  - Check PhonePe dashboard configuration
 4. **Payment Status Stuck**
-   - Implement status polling
-   - Check timeout handling
+  - Implement status polling
+  - Check timeout handling
 
 ### Debug Mode
+
 ```javascript
 // Enable debug logging
 localStorage.setItem('payment_debug', 'true');
@@ -289,10 +315,12 @@ localStorage.setItem('payment_debug', 'true');
 ## Support
 
 ### PhonePe Documentation
+
 - [PhonePe Developer Portal](https://developer.phonepe.com/)
 - [Payment Gateway Integration](https://developer.phonepe.com/v1/docs/payment-gateway)
 
 ### Error Codes
+
 - **BAD_REQUEST**: Invalid request parameters
 - **AUTHORIZATION_FAILED**: Invalid credentials
 - **INTERNAL_SERVER_ERROR**: PhonePe server error

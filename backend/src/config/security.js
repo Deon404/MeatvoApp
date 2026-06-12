@@ -44,8 +44,8 @@ const securityConfig = {
     validate: (phone, otp) => {
       // Phone: 10 digits, starting with 6-9
       const phoneRegex = /^[6-9]\d{9}$/;
-      // OTP: 6 digits
-      const otpRegex = /^\d{6}$/;
+      // OTP: 4 digits (MSG91 production template)
+      const otpRegex = /^\d{4}$/;
       
       return phoneRegex.test(phone) && otpRegex.test(otp);
     }
@@ -86,7 +86,7 @@ const securityConfig = {
     
     otp: (otp) => {
       // Remove all non-digit characters
-      return otp.replace(/\D/g, '').slice(0, 6);
+      return otp.replace(/\D/g, '').slice(0, 4);
     }
   }
 };

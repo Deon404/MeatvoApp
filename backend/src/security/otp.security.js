@@ -19,7 +19,9 @@ class OTPSecurity {
    */
   generateSecureOTP(phone, options = {}) {
     try {
-      const length = options.length || 6;
+      const length =
+        options.length ||
+        Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 4);
       const otp = crypto.randomInt(0, Math.pow(10, length)).toString().padStart(length, '0');
       
       // Create OTP hash for secure storage
@@ -182,7 +184,7 @@ class OTPSecurity {
         count: 0,
         windowStart: now,
         blockedUntil: null
-      });
+      };
 
       // Check if user is blocked
       if (rateData.blockedUntil && now < rateData.blockedUntil) {

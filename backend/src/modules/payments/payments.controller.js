@@ -1,74 +1,46 @@
 const asyncHandler = require('express-async-handler');
-const crypto = require('crypto');
 const axios = require('axios');
+const {
+  generateChecksum,
+  verifyChecksum,
+  parsePhonePeWebhookBody,
+} = require('../../utils/phonepeChecksum');
 const { query, getClient } = require('../../db/postgres');
 const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { paymentLogger } = require('./secure-logger');
 const { assignOrderToPartner } = require('../../services/assignment.service');
+const { reserveStockForPaidOrder } = require('./payment-stock');
 
 // PhonePe configuration
 const PHONEPE_API_BASE = process.env.PHONEPE_API_BASE || 'https://api.phonepe.com/v1';
 const PHONEPE_MERCHANT_ID = process.env.PHONEPE_MERCHANT_ID;
 const PHONEPE_SALT_KEY = process.env.PHONEPE_SALT_KEY;
 const PHONEPE_SALT_INDEX = process.env.PHONEPE_SALT_INDEX || '1';
-const PHONEPE_REDIRECT_URL = process.env.PHONEPE_REDIRECT_URL || 'http://localhost:3000/payment/return';
-const PHONEPE_WEBHOOK_URL = process.env.PHONEPE_WEBHOOK_URL || 'http://localhost:8080/api/payments/phonepe/webhook';
+const PHONEPE_REDIRECT_URL = process.env.PHONEPE_REDIRECT_URL;
+const PHONEPE_WEBHOOK_URL = process.env.PHONEPE_WEBHOOK_URL;
 
-// Verify required environment variables
+const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+
 if (!PHONEPE_MERCHANT_ID || !PHONEPE_SALT_KEY) {
-  logger.error('PhonePe configuration missing', {
+  logger.error('phonepe_config_missing', {
     merchantId: PHONEPE_MERCHANT_ID ? 'configured' : 'missing',
-    saltKey: PHONEPE_SALT_KEY ? 'configured' : 'missing'
+    saltKey: PHONEPE_SALT_KEY ? 'configured' : 'missing',
   });
-  throw new Error('PhonePe configuration missing. Please set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY');
+  if (isProd) {
+    throw new Error('PhonePe configuration missing. Set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY.');
+  }
 }
 
-/**
- * Generate checksum for PhonePe API
- */
-const generateChecksum = (payload) => {
-  const stringToHash = payload + PHONEPE_SALT_KEY;
-  return crypto.createHash('sha256').update(stringToHash).digest('hex') + '###' + PHONEPE_SALT_INDEX;
-};
+if (isProd && (!PHONEPE_REDIRECT_URL || !PHONEPE_WEBHOOK_URL)) {
+  throw new Error('PHONEPE_REDIRECT_URL and PHONEPE_WEBHOOK_URL must be set in production.');
+}
 
-/**
- * Verify PhonePe webhook signature
- */
-const verifyWebhookSignature = (payload, signature) => {
-  // Use canonical JSON to prevent whitespace issues
-  const canonicalPayload = typeof payload === 'string' 
-    ? payload 
-    : JSON.stringify(payload, Object.keys(payload).sort());
-  const expectedChecksum = generateChecksum(canonicalPayload);
-  return signature === expectedChecksum;
-};
+const buildChecksum = (payload) =>
+  generateChecksum(payload, PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX);
 
-const reserveStockForPaidOrder = async (client, orderId) => {
-  const { rows: items } = await client.query(
-    `SELECT oi.product_id, oi.quantity, p.stock
-     FROM order_items oi
-     JOIN products p ON p.id = oi.product_id
-     WHERE oi.order_id = $1
-     FOR UPDATE`,
-    [orderId]
-  );
-
-  for (const item of items) {
-    const available = Number(item.stock || 0);
-    const required = Number(item.quantity || 0);
-    if (available < required) {
-      throw new Error(`Insufficient stock for product ${item.product_id}`);
-    }
-  }
-
-  for (const item of items) {
-    await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [
-      Number(item.quantity || 0),
-      Number(item.product_id),
-    ]);
-  }
-};
+const verifyWebhookSignature = (payload, signature) =>
+  verifyChecksum(payload, signature, PHONEPE_SALT_KEY, PHONEPE_SALT_INDEX);
 
 /**
  * Create PhonePe payment request
@@ -94,7 +66,7 @@ const createPhonePePayment = async (orderId, amount, customerPhone, customerEmai
   };
 
   const payload = Buffer.from(JSON.stringify(paymentPayload)).toString('base64');
-  const checksum = generateChecksum(payload);
+  const checksum = buildChecksum(payload);
 
   try {
     const response = await axios.post(`${PHONEPE_API_BASE}/pg/v1/pay`, {
@@ -141,7 +113,7 @@ const createPhonePePayment = async (orderId, amount, customerPhone, customerEmai
  */
 const checkPaymentStatus = async (merchantTransactionId) => {
   const payload = `/pg/v1/status/${PHONEPE_MERCHANT_ID}/${merchantTransactionId}`;
-  const checksum = generateChecksum(payload);
+  const checksum = buildChecksum(payload);
 
   try {
     const response = await axios.get(`${PHONEPE_API_BASE}${payload}`, {
@@ -285,7 +257,8 @@ const initiatePayment = asyncHandler(async (req, res) => {
           error: paymentResponse.error
         });
         
-        return fail(res, 500, paymentResponse.error);
+        logger.error('Payment initiation gateway error:', paymentResponse.error);
+        return fail(res, 500, 'Payment initiation failed');
       }
 
       // Update payment transaction with gateway details
@@ -347,16 +320,18 @@ const getPaymentStatus = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Fetch payment transaction
+    const isAdmin = req.user.role === 'admin';
+
+    // Fetch payment transaction (scoped to owner unless admin)
     const paymentResult = await query(
       `SELECT pt.id, pt.order_id, pt.status, pt.gateway_transaction_id, pt.gateway_response, pt.created_at,
               o.customer_id, o.total_amount, o.status as order_status
        FROM payment_transactions pt
        JOIN orders o ON pt.order_id = o.id
-       WHERE pt.order_id = $1
+       WHERE pt.order_id = $1${isAdmin ? '' : ' AND o.customer_id = $2'}
        ORDER BY pt.created_at DESC
        LIMIT 1`,
-      [orderId]
+      isAdmin ? [orderId] : [orderId, req.user.id]
     );
 
     if (paymentResult.rows.length === 0) {
@@ -416,7 +391,28 @@ const getPaymentStatus = asyncHandler(async (req, res) => {
               transactionId: payment.gateway_transaction_id,
               amount: payment.total_amount
             });
-            await assignOrderToPartner({ orderId, io: req.app.get('io') });
+
+            // Check for existing assignment to prevent double-assignment
+            const existingAssignment = await query(
+              `SELECT id FROM order_assignments 
+               WHERE order_id = $1 
+               AND status NOT IN ('cancelled', 'expired', 'rejected')
+               LIMIT 1`,
+              [orderId]
+            );
+
+            if (!existingAssignment.rows.length) {
+              const io = req.app.get('io');
+              if (io) {
+                io.to(`customer_${payment.customer_id}`).emit('order:status_updated', {
+                  orderId,
+                  status: 'CONFIRMED',
+                  message: 'Payment confirmed! Finding delivery partner...',
+                });
+              }
+              assignOrderToPartner({ orderId, io }).catch(err =>
+                logger.error('Post-payment auto-assign failed (status-check):', err));
+            }
           }
 
           payment.status = newStatus;
@@ -450,34 +446,34 @@ const getPaymentStatus = asyncHandler(async (req, res) => {
  */
 const handlePhonePeWebhook = asyncHandler(async (req, res) => {
   const signature = req.headers['x-verify'];
-  const webhookBody = req.body;
+  const rawBody = req.body;
   const clientIP = req.ip || req.connection.remoteAddress;
   const userAgent = req.headers['user-agent'];
+
+  const { payloadForSignature, webhookBody } = parsePhonePeWebhookBody(rawBody);
 
   // Log incoming webhook for security monitoring
   paymentLogger.webhook.received(logger, {
     clientIP,
     hasSignature: !!signature,
     merchantTransactionId: webhookBody?.data?.merchantTransactionId,
-    code: webhookBody?.code
+    code: webhookBody?.code,
   });
 
   if (!signature) {
     paymentLogger.webhook.signatureInvalid(logger, {
       clientIP,
       userAgent,
-      merchantTransactionId: webhookBody?.data?.merchantTransactionId
+      merchantTransactionId: webhookBody?.data?.merchantTransactionId,
     });
     return fail(res, 400, 'Signature missing');
   }
 
-  // Verify webhook signature with canonical JSON
-  const payload = JSON.stringify(webhookBody, Object.keys(webhookBody).sort());
-  if (!verifyWebhookSignature(payload, signature)) {
+  if (!payloadForSignature || !verifyWebhookSignature(payloadForSignature, signature)) {
     paymentLogger.webhook.signatureInvalid(logger, {
       clientIP,
       userAgent,
-      merchantTransactionId: webhookBody?.data?.merchantTransactionId
+      merchantTransactionId: webhookBody?.data?.merchantTransactionId,
     });
     return fail(res, 401, 'Invalid signature');
   }
@@ -683,7 +679,28 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
             createdAt: new Date().toISOString(),
           });
         }
-        await assignOrderToPartner({ orderId: payment.order_id, io });
+
+        // Check for existing assignment to prevent double-assignment
+        const existingAssignment = await query(
+          `SELECT id FROM order_assignments 
+           WHERE order_id = $1 
+           AND status NOT IN ('cancelled', 'expired', 'rejected')
+           LIMIT 1`,
+          [payment.order_id]
+        );
+
+        if (!existingAssignment.rows.length) {
+          if (io) {
+            io.to(`customer_${payment.customer_id}`).emit('order:status_updated', {
+              orderId: payment.order_id,
+              status: 'CONFIRMED',
+              message: 'Payment confirmed! Finding delivery partner...',
+            });
+          }
+          // Trigger assignment after payment confirmed
+          assignOrderToPartner({ orderId: payment.order_id, io }).catch(err =>
+            logger.error('Post-payment auto-assign failed (webhook):', err));
+        }
       }
 
       paymentLogger.webhook.processed(logger, {

@@ -3,6 +3,19 @@ const { query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 
+const ALLOWED_CATEGORY_COLUMNS = ['name', 'image_url', 'active'];
+
+function buildCategoryUpdateClause(updates) {
+  const sets = [];
+  const params = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (!ALLOWED_CATEGORY_COLUMNS.includes(key)) continue;
+    params.push(value);
+    sets.push(`${key} = $${params.length}`);
+  }
+  return { sets, params };
+}
+
 const listCategories = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
   const includeInactive = req.user?.role === ROLES.ADMIN ? includeInactiveRequested : false;
@@ -33,16 +46,7 @@ const createCategory = asyncHandler(async (req, res) => {
 const updateCategory = asyncHandler(async (req, res) => {
   const id = Number(req.validated.params.id);
   const patch = req.validated.body;
-
-  const allowed = ['name', 'image_url', 'active'];
-  const sets = [];
-  const params = [];
-  for (const key of allowed) {
-    if (Object.prototype.hasOwnProperty.call(patch, key)) {
-      params.push(patch[key]);
-      sets.push(`${key} = $${params.length}`);
-    }
-  }
+  const { sets, params } = buildCategoryUpdateClause(patch || {});
   if (!sets.length) return fail(res, 400, 'No fields to update');
 
   params.push(id);

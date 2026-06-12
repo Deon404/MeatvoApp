@@ -28593,7 +28593,7 @@
           "isTopLevel": true,
           "type": "arrow",
           "callers": [],
-          "code": "const requireAdmin = (req) => {\n  if (req.user?.role !== ROLES.ADMIN) throw fail(null, 403, 'Admin required');\n};"
+          "code": "const requireAdmin = (req, res) => {\n  if (req.user?.role !== ROLES.ADMIN) {\n    res.status(403);\n    throw new Error('Admin required');\n  }\n};"
         },
         {
           "name": "formatProduct",
@@ -76490,7 +76490,7 @@
       "isTopLevel": true,
       "type": "arrow",
       "callers": [],
-      "code": "const requireAdmin = (req) => {\n  if (req.user?.role !== ROLES.ADMIN) throw fail(null, 403, 'Admin required');\n};"
+      "code": "const requireAdmin = (req, res) => {\n  if (req.user?.role !== ROLES.ADMIN) {\n    res.status(403);\n    throw new Error('Admin required');\n  }\n};"
     },
     {
       "name": "formatProduct",

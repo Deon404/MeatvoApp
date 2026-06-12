@@ -2,12 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
-
-const computeDiscount = ({ discount_type, discount_value }, amount) => {
-  if (discount_type === 'FLAT') return Math.min(amount, Number(discount_value));
-  const pct = Number(discount_value);
-  return Math.min(amount, (amount * pct) / 100);
-};
+const { validateCouponForOrder } = require('./coupons.service');
 
 const listCoupons = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
@@ -49,26 +44,21 @@ const createCoupon = asyncHandler(async (req, res) => {
 });
 
 const validateCoupon = asyncHandler(async (req, res) => {
-  const code = req.validated.body.code.toUpperCase();
-  const amount = Number(req.validated.body.amount);
+  const { code, orderAmount, userId } = req.validated.body;
 
-  const { rows } = await query(
-    `SELECT id, code, discount_type, discount_value, min_order_value, max_uses, used_count, active
-     FROM coupons WHERE code = $1`,
-    [code]
-  );
-  const coupon = rows[0];
-  if (!coupon || !coupon.active) return fail(res, 400, 'Invalid coupon');
-  if (amount < Number(coupon.min_order_value || 0)) return fail(res, 400, 'Order amount too low for this coupon');
-  if (coupon.max_uses !== null && Number(coupon.used_count) >= Number(coupon.max_uses)) {
-    return fail(res, 400, 'Coupon usage limit reached');
+  const result = await validateCouponForOrder({ code, orderAmount, userId });
+  if (!result.valid) {
+    return fail(res, 400, result.reason);
   }
 
-  const discount = computeDiscount(coupon, amount);
-  const finalAmount = Math.max(0, amount - discount);
   return ok(
     res,
-    { valid: true, coupon: { id: coupon.id, code: coupon.code }, discount, finalAmount },
+    {
+      valid: true,
+      discountType: result.discountType,
+      discountValue: result.discountValue,
+      discountAmount: result.discountAmount,
+    },
     'Coupon valid'
   );
 });
@@ -78,4 +68,3 @@ module.exports = {
   createCoupon,
   validateCoupon,
 };
-

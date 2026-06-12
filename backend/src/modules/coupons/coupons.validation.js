@@ -28,10 +28,21 @@ const createCouponSchema = z.object({
 });
 
 const validateCouponSchema = z.object({
-  body: z.object({
-    code: z.string().trim().min(1),
-    amount: z.coerce.number().nonnegative(),
-  }),
+  body: z
+    .object({
+      code: z.string().trim().min(1),
+      orderAmount: z.coerce.number().nonnegative().optional(),
+      amount: z.coerce.number().nonnegative().optional(),
+      userId: z.string().trim().min(1).optional(),
+    })
+    .refine((body) => body.orderAmount !== undefined || body.amount !== undefined, {
+      message: 'orderAmount or amount is required',
+    })
+    .transform((body) => ({
+      code: body.code,
+      orderAmount: body.orderAmount ?? body.amount,
+      userId: body.userId,
+    })),
   params: z.object({}).optional(),
   query: z.object({}).optional(),
 });
@@ -41,4 +52,3 @@ module.exports = {
   createCouponSchema,
   validateCouponSchema,
 };
-

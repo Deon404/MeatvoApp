@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const { sendOtp, verifyOtp, refreshToken, getMe, logout } = require('./auth.controller');
+const { query } = require('../../db/postgres');
 const { otpRateLimiter, authRoutesIpRateLimiter } = require('../../middlewares/rateLimiter');
 const { verifyOtpRateLimiter } = require('../../middlewares/verifyOtpRateLimiter');
 const { validate } = require('../../middlewares/validate.middleware');
@@ -15,6 +16,15 @@ const asyncMiddleware = (fn) => (req, res, next) => Promise.resolve(fn(req, res,
 router.post('/send-otp', authRoutesIpRateLimiter, validate(sendOtpSchema), otpRateLimiter, sendOtp);
 router.post('/verify-otp', authRoutesIpRateLimiter, validate(verifyOtpSchema), verifyOtpRateLimiter, verifyOtp);
 router.post('/refresh-token', validate(refreshTokenSchema), refreshToken);
+router.post('/refresh', validate(refreshTokenSchema), refreshToken);
+router.get('/health', async (req, res) => {
+  try {
+    await query('SELECT 1');
+    return res.status(200).json({ status: 'OK', db: 'connected' });
+  } catch (_error) {
+    return res.status(503).json({ status: 'ERROR', db: 'disconnected' });
+  }
+});
 
 // Authenticated user/session endpoints
 router.get('/me', asyncMiddleware(authenticateToken), getMe);

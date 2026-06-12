@@ -1,9 +1,10 @@
 const express = require('express');
-const { authenticateToken, requireRole } = require('../../middlewares/auth.middleware');
+const { authenticateToken, requireRole } = require('../../middlewares/enhancedAuth.middleware');
 const { body, validationResult } = require('express-validator');
 const mfaService = require('./mfa.service');
 const { logger } = require('../../utils/logger');
 const { sentry } = require('../../utils/sentry');
+const { ok, fail } = require('../../utils/response');
 
 const router = express.Router();
 
@@ -11,11 +12,7 @@ const router = express.Router();
 const validateRequest = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Validation failed',
-      errors: errors.array()
-    });
+    return fail(res, 400, 'Validation failed', { issues: errors.array() });
   }
   next();
 };
@@ -30,10 +27,7 @@ router.post('/setup',
       
       // Check if MFA is already enabled
       if (mfaService.isMFAEnabled(user)) {
-        return res.status(400).json({
-          success: false,
-          message: 'MFA is already enabled for this account'
-        });
+        return fail(res, 400, 'MFA is already enabled for this account', { code: 'MFA_ALREADY_ENABLED' });
       }
 
       const mfaData = await mfaService.generateMFAResponse(user);
@@ -45,22 +39,14 @@ router.post('/setup',
         data: { userId: user.id }
       });
 
-      res.json({
-        success: true,
-        message: 'MFA setup data generated',
-        data: mfaData
-      });
+      return ok(res, mfaData, 'MFA setup data generated');
     } catch (error) {
       logger.error('mfa_setup_route_error', { 
         error: error.message,
         userId: req.user?.id 
       });
       sentry.captureException(error, { userId: req.user?.id });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to generate MFA setup data'
-      });
+      return fail(res, 500, 'Failed to generate MFA setup data');
     }
   }
 );
@@ -93,10 +79,7 @@ router.post('/enable',
       const isValid = mfaService.validateSetup(secret, token);
       
       if (!isValid) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid verification code. Please try again.'
-        });
+        return fail(res, 400, 'Invalid verification code. Please try again.', { code: 'MFA_INVALID' });
       }
 
       // Generate backup codes
@@ -112,25 +95,17 @@ router.post('/enable',
         data: { userId: user.id }
       });
 
-      res.json({
-        success: true,
-        message: 'MFA enabled successfully',
-        data: {
-          backupCodes,
-          instructions: 'Save these backup codes in a secure location. Each code can only be used once.'
-        }
-      });
+      return ok(res, {
+        backupCodes,
+        instructions: 'Save these backup codes in a secure location. Each code can only be used once.',
+      }, 'MFA enabled successfully');
     } catch (error) {
       logger.error('mfa_enable_route_error', { 
         error: error.message,
         userId: req.user?.id 
       });
       sentry.captureException(error, { userId: req.user?.id });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to enable MFA'
-      });
+      return fail(res, 500, 'Failed to enable MFA');
     }
   }
 );
@@ -148,7 +123,7 @@ router.post('/verify',
     body('userId')
       .notEmpty()
       .withMessage('User ID is required')
-      .isUUID()
+      .isInt({ min: 1 })
       .withMessage('Invalid user ID')
   ],
   validateRequest,
@@ -156,16 +131,10 @@ router.post('/verify',
     try {
       const { token, userId } = req.body;
 
-      // In production, get user from database
-      // const user = await User.findById(userId);
-      // For now, we'll simulate this
-      const user = { id: userId, mfaSecret: 'demo', mfaEnabled: true };
+      const user = await mfaService.getUserMFA(Number(userId));
 
       if (!user || !mfaService.isMFAEnabled(user)) {
-        return res.status(400).json({
-          success: false,
-          message: 'MFA is not enabled for this account'
-        });
+        return fail(res, 400, 'MFA is not enabled for this account', { code: 'MFA_NOT_ENABLED' });
       }
 
       // Verify the token
@@ -179,10 +148,7 @@ router.post('/verify',
           data: { userId }
         });
 
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid verification code'
-        });
+        return fail(res, 400, 'Invalid verification code', { code: 'MFA_INVALID' });
       }
 
       sentry.addBreadcrumb({
@@ -192,21 +158,14 @@ router.post('/verify',
         data: { userId }
       });
 
-      res.json({
-        success: true,
-        message: 'MFA verification successful'
-      });
+      return ok(res, {}, 'MFA verification successful');
     } catch (error) {
       logger.error('mfa_verify_route_error', { 
         error: error.message,
         userId: req.body.userId 
       });
       sentry.captureException(error, { userId: req.body.userId });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to verify MFA token'
-      });
+      return fail(res, 500, 'Failed to verify MFA token');
     }
   }
 );
@@ -240,10 +199,7 @@ router.post('/verify-backup-code',
           data: { userId }
         });
 
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid backup code'
-        });
+        return fail(res, 400, 'Invalid backup code', { code: 'MFA_BACKUP_INVALID' });
       }
 
       const remainingCodes = mfaService.getRemainingBackupCodes(userId);
@@ -255,25 +211,17 @@ router.post('/verify-backup-code',
         data: { userId, remainingCodes }
       });
 
-      res.json({
-        success: true,
-        message: 'Backup code verified successfully',
-        data: {
-          remainingCodes,
-          warning: remainingCodes <= 2 ? 'You have few backup codes remaining. Consider regenerating them.' : null
-        }
-      });
+      return ok(res, {
+        remainingCodes,
+        warning: remainingCodes <= 2 ? 'You have few backup codes remaining. Consider regenerating them.' : null,
+      }, 'Backup code verified successfully');
     } catch (error) {
       logger.error('mfa_backup_code_verify_route_error', { 
         error: error.message,
         userId: req.body.userId 
       });
       sentry.captureException(error, { userId: req.body.userId });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to verify backup code'
-      });
+      return fail(res, 500, 'Failed to verify backup code');
     }
   }
 );
@@ -316,10 +264,7 @@ router.post('/disable',
         const isValid = mfaService.verifyToken(token, user.mfaSecret);
         
         if (!isValid) {
-          return res.status(400).json({
-            success: false,
-            message: 'Invalid MFA token'
-          });
+          return fail(res, 400, 'Invalid MFA token', { code: 'MFA_INVALID' });
         }
       }
 
@@ -333,21 +278,14 @@ router.post('/disable',
         data: { userId: user.id }
       });
 
-      res.json({
-        success: true,
-        message: 'MFA disabled successfully'
-      });
+      return ok(res, {}, 'MFA disabled successfully');
     } catch (error) {
       logger.error('mfa_disable_route_error', { 
         error: error.message,
         userId: req.user?.id 
       });
       sentry.captureException(error, { userId: req.user?.id });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to disable MFA'
-      });
+      return fail(res, 500, 'Failed to disable MFA');
     }
   }
 );
@@ -361,21 +299,14 @@ router.get('/status',
       const user = req.user;
       const status = mfaService.getMFAStatus(user);
 
-      res.json({
-        success: true,
-        data: status
-      });
+      return ok(res, status);
     } catch (error) {
       logger.error('mfa_status_route_error', { 
         error: error.message,
         userId: req.user?.id 
       });
       sentry.captureException(error, { userId: req.user?.id });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get MFA status'
-      });
+      return fail(res, 500, 'Failed to get MFA status');
     }
   }
 );
@@ -400,20 +331,14 @@ router.post('/regenerate-backup-codes',
       const user = req.user;
 
       if (!mfaService.isMFAEnabled(user)) {
-        return res.status(400).json({
-          success: false,
-          message: 'MFA is not enabled for this account'
-        });
+        return fail(res, 400, 'MFA is not enabled for this account', { code: 'MFA_NOT_ENABLED' });
       }
 
       // Verify current MFA token
       const isValid = mfaService.verifyToken(token, user.mfaSecret);
       
       if (!isValid) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid verification code'
-        });
+        return fail(res, 400, 'Invalid verification code', { code: 'MFA_INVALID' });
       }
 
       // Generate new backup codes
@@ -426,25 +351,17 @@ router.post('/regenerate-backup-codes',
         data: { userId: user.id, codeCount: backupCodes.length }
       });
 
-      res.json({
-        success: true,
-        message: 'Backup codes regenerated successfully',
-        data: {
-          backupCodes,
-          warning: 'Save these new backup codes in a secure location. Old codes have been invalidated.'
-        }
-      });
+      return ok(res, {
+        backupCodes,
+        warning: 'Save these new backup codes in a secure location. Old codes have been invalidated.',
+      }, 'Backup codes regenerated successfully');
     } catch (error) {
       logger.error('mfa_regenerate_backup_codes_route_error', { 
         error: error.message,
         userId: req.user?.id 
       });
       sentry.captureException(error, { userId: req.user?.id });
-      
-      res.status(500).json({
-        success: false,
-        message: 'Failed to regenerate backup codes'
-      });
+      return fail(res, 500, 'Failed to regenerate backup codes');
     }
   }
 );

@@ -25,7 +25,6 @@ class PasswordUtils {
       
       return hash;
     } catch (error) {
-      console.error('Password hashing error:', error);
       throw new Error('Failed to hash password');
     }
   }
@@ -36,7 +35,6 @@ class PasswordUtils {
       const isValid = await bcrypt.compare(password, hash);
       return isValid;
     } catch (error) {
-      console.error('Password verification error:', error);
       return false;
     }
   }

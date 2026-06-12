@@ -1,9 +1,7 @@
-// JWT Utilities
-// Secure JWT token generation, validation, and management
-
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { passwordUtils } = require('./password');
+const { fail } = require('./response');
 
 class JWTUtils {
   constructor() {
@@ -256,7 +254,6 @@ class JWTUtils {
 
       return true;
     } catch (error) {
-      console.error('Error invalidating tokens:', error);
       return false;
     }
   }
@@ -306,7 +303,6 @@ class JWTUtils {
         expiresIn: newTokens.expiresIn
       };
     } catch (error) {
-      console.error('Token refresh error:', error);
       throw error;
     }
   }
@@ -330,19 +326,13 @@ class JWTUtils {
         const token = this.extractTokenFromHeader(req.headers.authorization);
         
         if (!token) {
-          return res.status(401).json({
-            error: 'Access token required',
-            code: 'TOKEN_MISSING'
-          });
+          return fail(res, 401, 'Access token required', { code: 'TOKEN_MISSING' });
         }
 
         // Verify token
         const verification = this.verifyAccessToken(token);
         if (!verification.valid) {
-          return res.status(401).json({
-            error: 'Invalid or expired token',
-            code: 'TOKEN_INVALID'
-          });
+          return fail(res, 401, 'Invalid or expired token', { code: 'TOKEN_INVALID' });
         }
 
         // Get user from database
@@ -352,28 +342,19 @@ class JWTUtils {
         );
 
         if (userQuery.rows.length === 0) {
-          return res.status(401).json({
-            error: 'User not found',
-            code: 'USER_NOT_FOUND'
-          });
+          return fail(res, 401, 'User not found', { code: 'USER_NOT_FOUND' });
         }
 
         const user = userQuery.rows[0];
 
         // Check if user is active
         if (!user.is_active) {
-          return res.status(401).json({
-            error: 'User account is inactive',
-            code: 'USER_INACTIVE'
-          });
+          return fail(res, 401, 'User account is inactive', { code: 'USER_INACTIVE' });
         }
 
         // Check token version
         if (verification.payload.tokenVersion !== user.token_version) {
-          return res.status(401).json({
-            error: 'Token has been invalidated',
-            code: 'TOKEN_INVALIDATED'
-          });
+          return fail(res, 401, 'Token has been invalidated', { code: 'TOKEN_INVALIDATED' });
         }
 
         // Attach user to request
@@ -382,11 +363,7 @@ class JWTUtils {
         
         next();
       } catch (error) {
-        console.error('Auth middleware error:', error);
-        return res.status(500).json({
-          error: 'Authentication error',
-          code: 'AUTH_ERROR'
-        });
+        return fail(res, 500, 'Authentication error', { code: 'AUTH_ERROR' });
       }
     };
   }
@@ -395,17 +372,11 @@ class JWTUtils {
   createRoleMiddleware(requiredRole) {
     return (req, res, next) => {
       if (!req.user) {
-        return res.status(401).json({
-          error: 'Authentication required',
-          code: 'AUTH_REQUIRED'
-        });
+        return fail(res, 401, 'Authentication required', { code: 'AUTH_REQUIRED' });
       }
 
       if (req.user.role !== requiredRole) {
-        return res.status(403).json({
-          error: 'Insufficient permissions',
-          code: 'INSUFFICIENT_PERMISSIONS'
-        });
+        return fail(res, 403, 'Insufficient permissions', { code: 'INSUFFICIENT_PERMISSIONS' });
       }
 
       next();
@@ -416,18 +387,12 @@ class JWTUtils {
   createPermissionMiddleware(requiredPermission) {
     return (req, res, next) => {
       if (!req.user) {
-        return res.status(401).json({
-          error: 'Authentication required',
-          code: 'AUTH_REQUIRED'
-        });
+        return fail(res, 401, 'Authentication required', { code: 'AUTH_REQUIRED' });
       }
 
       const permissions = req.user.permissions || [];
       if (!permissions.includes(requiredPermission)) {
-        return res.status(403).json({
-          error: 'Insufficient permissions',
-          code: 'INSUFFICIENT_PERMISSIONS'
-        });
+        return fail(res, 403, 'Insufficient permissions', { code: 'INSUFFICIENT_PERMISSIONS' });
       }
 
       next();

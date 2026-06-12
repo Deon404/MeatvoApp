@@ -1,0 +1,17 @@
+{
+  "name": "meatvo-monorepo",
+  "version": "1.0.0",
+  "description": "Monorepo for Meatvo Hyperlocal Delivery App",
+  "private": true,
+  "scripts": {
+    "start": "cd backend && npm start",
+    "dev": "cd backend && npm run dev",
+    "start:all": "concurrently \"cd backend && npm start\" \"live-server --port=3000 --no-browser --entry-file=index.html\"",
+    "start:admin": "live-server --port=3000 --open=admin/admin.html",
+    "install:all": "npm install && cd backend && npm install"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2",
+    "live-server": "^1.2.2"
+  }
+}

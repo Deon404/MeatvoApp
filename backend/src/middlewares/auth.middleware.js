@@ -3,21 +3,31 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../db/postgres');
 const { logger } = require('../utils/logger');
 
+const isTokenBlacklisted = async (token) => {
+  const redisClient = require('../db/redis');
+  try {
+    const blacklisted = await redisClient.get(`blacklist:${token}`);
+    return blacklisted === '1';
+  } catch (err) {
+    logger.error('auth_blacklist_check_failed', { message: err?.message });
+    return true;
+  }
+};
+
 const protect = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
 
-  // DEBUG: Log authorization header and token extraction
-  logger.info('AUTH_DEBUG', {
-    authorizationHeader: header ? 'Bearer [REDACTED]' : 'MISSING',
+  logger.debug('auth_token_extract', {
+    headerPresent: !!header,
     tokenExtracted: !!token,
     clientIP: req.ip,
-    userAgent: req.headers['user-agent']
   });
 
   if (!token) {
-    res.status(401);
-    throw new Error('Not authorized');
+    const err = new Error('Not authorized');
+    err.statusCode = 401;
+    throw err;
   }
 
   let decoded;
@@ -29,82 +39,67 @@ const protect = asyncHandler(async (req, res, next) => {
       algorithms: ['HS256']
     });
     
-    // DEBUG: Log decoded token
-    logger.info('AUTH_DEBUG', {
-      decodedToken: {
-        sub: decoded.sub,
-        role: decoded.role,
-        type: decoded.type,
-        iat: decoded.iat,
-        exp: decoded.exp
-      },
-      clientIP: req.ip
+    logger.debug('auth_token_decoded', {
+      type: decoded.type,
+      exp: decoded.exp,
+      clientIP: req.ip,
     });
     
   } catch (error) {
-    // DEBUG: Log verification error
-    logger.warn('AUTH_DEBUG', {
-      verificationError: error.message,
+    logger.warn('auth_token_invalid', {
+      reason: error.message,
       clientIP: req.ip,
-      userAgent: req.headers['user-agent']
     });
     
-    res.status(401);
-    throw new Error('Not authorized');
+    const err = new Error('Not authorized');
+    err.statusCode = 401;
+    throw err;
   }
 
   // FIXED: Verify it's an access token
   if (decoded.type !== 'access') {
-    logger.warn('AUTH_DEBUG', {
-      tokenType: decoded.type,
-      expectedType: 'access',
-      clientIP: req.ip
-    });
-    
-    res.status(401);
-    throw new Error('Not authorized');
+    logger.warn('auth_wrong_token_type', { tokenType: decoded.type, clientIP: req.ip });
+    const err = new Error('Not authorized');
+    err.statusCode = 401;
+    throw err;
+  }
+
+  if (await isTokenBlacklisted(token)) {
+    logger.warn('auth_token_revoked', { clientIP: req.ip });
+    const err = new Error('Not authorized');
+    err.statusCode = 401;
+    throw err;
   }
 
   const userId = Number(decoded?.id);
   if (!userId) {
-    logger.warn('AUTH_DEBUG', {
-      userId: decoded?.id,
-      clientIP: req.ip
-    });
-    
-    res.status(401);
-    throw new Error('Not authorized');
+    logger.warn('auth_invalid_user_id', { clientIP: req.ip });
+    const err = new Error('Not authorized');
+    err.statusCode = 401;
+    throw err;
   }
 
   const { rows } = await query(
-    'SELECT id, phone, name, role, created_at FROM users WHERE id = $1',
+    `SELECT id, phone, name, role, created_at,
+            mfa_enabled AS "mfaEnabled",
+            mfa_secret AS "mfaSecret"
+     FROM users
+     WHERE id = $1`,
     [userId]
   );
   const user = rows[0];
 
   if (!user) {
-    logger.warn('AUTH_DEBUG', {
-      userId,
-      userFound: false,
-      clientIP: req.ip
-    });
-    
-    res.status(401);
-    throw new Error('Not authorized');
+    logger.warn('auth_user_not_found', { userId, clientIP: req.ip });
+    const err = new Error('Not authorized');
+    err.statusCode = 401;
+    throw err;
   }
 
-  // DEBUG: Log successful authentication
-  logger.info('AUTH_DEBUG', {
-    authenticated: true,
-    user: {
-      id: user.id,
-      role: user.role,
-      phone: user.phone ? '******' + user.phone.slice(-4) : null
-    },
-    clientIP: req.ip
-  });
-  
-  req.user = user;
+  logger.debug('auth_success', { userId: user.id, role: user.role, clientIP: req.ip });
+
+  const { mfaSecret, ...safeReqUser } = user;
+  req.user = safeReqUser;
   next();
 });
 
@@ -123,21 +118,26 @@ const optionalAuth = asyncHandler(async (req, res, next) => {
     
     // Verify it's an access token
     if (decoded.type !== 'access') return next();
+
+    if (await isTokenBlacklisted(token)) return next();
     
     const userId = Number(decoded?.id);
     if (!userId) return next();
 
     const { rows } = await query(
-      'SELECT id, phone, name, role, created_at FROM users WHERE id = $1',
+      `SELECT id, phone, name, role, created_at,
+              mfa_enabled AS "mfaEnabled",
+              mfa_secret AS "mfaSecret"
+       FROM users
+       WHERE id = $1`,
       [userId]
     );
-    if (rows[0]) req.user = rows[0];
+    if (rows[0]) {
+      const { mfaSecret, ...safeReqUser } = rows[0];
+      req.user = safeReqUser;
+    }
   } catch (error) {
-    // Ignore invalid tokens for public endpoints.
-    logger.warn('AUTH_DEBUG', {
-      optionalAuthError: error.message,
-      clientIP: req.ip
-    });
+    logger.debug('optional_auth_token_invalid', { reason: error.message, clientIP: req.ip });
   }
 
   return next();

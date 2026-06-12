@@ -1,5 +1,6 @@
 const redis = require('../db/redis');
 const rateLimit = require('express-rate-limit');
+const { fail } = require('../utils/response');
 
 // Max 10 requests per phone per 10 minutes (development-friendly)
 const otpRateLimiter = async (req, res, next) => {
@@ -13,20 +14,14 @@ const otpRateLimiter = async (req, res, next) => {
   }
 
   if (count > 10) {
-    return res.status(429).json({
-      ok: false,
-      success: false,
-      error: { message: 'Too many OTP requests. Try again later.' },
-      data: {},
-      message: 'Too many OTP requests. Try again later.',
-    });
+    return fail(res, 429, 'Too many OTP requests. Try again later.');
   }
 
   return next();
 };
 
 const jsonRateLimitHandler = (message) => (req, res) =>
-  res.status(429).json({ ok: false, success: false, error: { message }, data: {}, message });
+  fail(res, 429, message);
 
 const apiRateLimiter = rateLimit({
   windowMs: Number(process.env.API_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),

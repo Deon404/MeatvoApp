@@ -1,5 +1,7 @@
 # PhonePe Webhook Security Fixes - Implementation Summary
 
+> **See also:** [Checkout Pipeline Architecture](./checkout-pipeline-architecture.md) — webhook handling in context of the full checkout pipeline (section 6).
+
 ## 🔒 Security Enhancements Implemented
 
 ### 1. **Strict Webhook Validation** ✅

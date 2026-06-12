@@ -1,4 +1,5 @@
 const { logger } = require('../utils/logger');
+const { fail } = require('../utils/response');
 
 const errorHandler = (err, req, res, next) => {
   const statusCode =
@@ -21,13 +22,7 @@ const errorHandler = (err, req, res, next) => {
     userId: req.user?.id || null,
   });
 
-  res.status(statusCode).json({
-    ok: false,
-    success: false,
-    error: { message },
-    data: { requestId: req.id || null },
-    message,
-  });
+  return fail(res, statusCode, message, { requestId: req.id || null });
 };
 
 module.exports = { errorHandler };

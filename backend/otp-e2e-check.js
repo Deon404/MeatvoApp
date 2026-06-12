@@ -1,7 +1,8 @@
 require('dotenv').config();
+const { logger } = require('./src/utils/logger');
 
 const BASE_URL = process.env.OTP_TEST_BASE_URL || 'http://localhost:8080';
-const TEST_PHONE = process.env.OTP_TEST_PHONE || '+917061036957';
+const TEST_PHONE = process.env.OTP_TEST_PHONE;
 
 const maskPhone = (phone) => {
   if (!phone || phone.length < 6) return '****';
@@ -32,13 +33,13 @@ async function getJson(path, headers = {}) {
 }
 
 async function run() {
-  console.log(`OTP E2E started for ${maskPhone(TEST_PHONE)} on ${BASE_URL}`);
+  logger.info(`OTP E2E started for ${maskPhone(TEST_PHONE)} on ${BASE_URL}`);
 
   const health = await getJson('/health');
   if (!health.response.ok) {
     throw new Error(`Health check failed (${health.response.status})`);
   }
-  console.log('Health check passed.');
+  logger.info('Health check passed.');
 
   const send = await postJson('/api/auth/send-otp', { phone: TEST_PHONE });
   if (!send.response.ok || !send.json?.success) {
@@ -53,7 +54,7 @@ async function run() {
       'devOTP missing in response. Enable development mode and OTP_LOG_TO_CONSOLE for automated check.'
     );
   }
-  console.log('OTP send passed.');
+  logger.info('OTP send passed.');
 
   const verify = await postJson('/api/auth/verify-otp', {
     phone: TEST_PHONE,
@@ -69,7 +70,7 @@ async function run() {
   if (!accessToken) {
     throw new Error('verify-otp succeeded but accessToken missing.');
   }
-  console.log('OTP verify passed, token issued.');
+  logger.info('OTP verify passed, token issued.');
 
   const me = await getJson('/api/auth/me', {
     Authorization: `Bearer ${accessToken}`,
@@ -79,11 +80,11 @@ async function run() {
   }
 
   const role = me.json?.data?.user?.role || 'unknown';
-  console.log(`Auth me passed. User role: ${role}`);
-  console.log('OTP E2E completed successfully.');
+  logger.info(`Auth me passed. User role: ${role}`);
+  logger.info('OTP E2E completed successfully.');
 }
 
 run().catch((error) => {
-  console.error(`OTP E2E failed: ${error.message}`);
+  logger.error(`OTP E2E failed: ${error.message}`);
   process.exit(1);
 });

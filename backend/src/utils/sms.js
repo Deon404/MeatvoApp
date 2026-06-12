@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { sendSMS: sendMsg91Otp } = require('./msg91');
+const { logger } = require('./logger');
 
 const sendTwilioSms = async ({ to, body }) => {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -22,53 +23,63 @@ const sendTwilioSms = async ({ to, body }) => {
   });
 };
 
+/**
+ * @returns {Promise<{ provider: string, response?: object }>}
+ */
 const sendOtpSms = async ({ phone, otp }) => {
   const provider = (process.env.SMS_PROVIDER || '').trim().toLowerCase();
   const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
   const allowFallbackToConsole =
-    String(process.env.SMS_FALLBACK_TO_CONSOLE !== undefined ? process.env.SMS_FALLBACK_TO_CONSOLE : (!isProd).toString()).toLowerCase() === 'true';
+    String(
+      process.env.SMS_FALLBACK_TO_CONSOLE !== undefined
+        ? process.env.SMS_FALLBACK_TO_CONSOLE
+        : (!isProd).toString()
+    ).toLowerCase() === 'true';
   const message = `Your Meatvo OTP is ${otp}. It expires in ${Math.round(
     Number(process.env.OTP_TTL_SECONDS || 300) / 60
   )} minutes.`;
 
   if (provider === 'console' || provider === 'log') {
-    console.log(`[OTP][${phone}] ${otp}`);
-    return;
+    logger.info('otp_console_provider', { phone: phone.slice(0, 2) + '****' });
+    return { provider: 'console' };
   }
 
   if (provider === 'twilio') {
     await sendTwilioSms({ to: phone, body: message });
-    return;
+    return { provider: 'twilio' };
   }
 
   if (provider === 'msg91' || provider === '') {
-    // MSG91 OTP API expects mobile without the leading "+"
-    const msg91Phone = phone.startsWith('+') ? phone.slice(1) : phone;
-    
-    // MSG91 RETRY LOGIC (Critical) - Retry mechanism with max 3 attempts
-    let retries = 3;
+    // Avoid MSG91 Error 311 (duplicate request within 10 seconds)
+    const maxAttempts = Number(process.env.SMS_MSG91_MAX_ATTEMPTS || 1);
     let lastError;
-    
-    while (retries > 0) {
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        await sendMsg91Otp(msg91Phone, otp);
-        return; // Success - exit function
+        const response = await sendMsg91Otp(phone, otp);
+        return { provider: 'msg91', response };
       } catch (err) {
         lastError = err;
-        retries--;
-        
-        if (retries > 0) {
-          // Wait 1 second before retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        if (attempt < maxAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
     }
-    
-    // All retries failed
-    if (!allowFallbackToConsole) throw lastError;
-    console.warn('MSG91 unavailable after 3 retries; falling back to console OTP for dev.');
-    console.log(`[OTP][${phone}] ${otp}`);
-    return;
+
+    const isBalanceError = /wallet balance|balance too low/i.test(lastError?.message || '');
+    const devOtpMode =
+      process.env.OTP_LOG_TO_CONSOLE === 'true' && process.env.NODE_ENV !== 'production';
+
+    if (!allowFallbackToConsole && !(devOtpMode && isBalanceError)) {
+      throw lastError;
+    }
+
+    logger.warn('sms_msg91_fallback_to_console', {
+      phone: phone.slice(0, 4) + '****',
+      attempts: maxAttempts,
+      reason: lastError?.message,
+    });
+    return { provider: 'console', fallback: true, reason: lastError?.message };
   }
 
   throw new Error(`Unsupported SMS_PROVIDER: ${provider}`);

@@ -16,6 +16,8 @@ DO $$ BEGIN
     'CONFIRMED',
     'PACKED',
     'OUT_FOR_DELIVERY',
+    'PICKED_UP',
+    'ON_THE_WAY',
     'DELIVERED',
     'CANCELLED'
   );
@@ -48,6 +50,9 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT,
   role user_role NOT NULL DEFAULT 'customer',
   refresh_token_hash TEXT,
+  mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  mfa_secret TEXT,
+  mfa_backup_codes JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -103,7 +108,8 @@ CREATE TABLE IF NOT EXISTS orders (
   coupon_id BIGINT REFERENCES coupons(id) ON DELETE SET NULL,
   address JSONB NOT NULL,
   payment_mode payment_mode NOT NULL DEFAULT 'COD',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
@@ -132,7 +138,8 @@ CREATE TABLE IF NOT EXISTS delivery_partners (
   vehicle_number TEXT,
   licence_number TEXT,
   bank_details TEXT,
-  earnings NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (earnings >= 0)
+  earnings NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (earnings >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_delivery_partners_online ON delivery_partners(is_online);
@@ -144,6 +151,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS value JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- Backward-compatible column additions (safe for existing DBs)
 DO $$ BEGIN
@@ -165,7 +175,8 @@ CREATE TABLE IF NOT EXISTS order_assignments (
   order_id BIGINT NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
   delivery_partner_id BIGINT NOT NULL REFERENCES delivery_partners(id) ON DELETE RESTRICT,
   assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  status assignment_status NOT NULL DEFAULT 'ASSIGNED'
+  status assignment_status NOT NULL DEFAULT 'ASSIGNED',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_order_assignments_partner ON order_assignments(delivery_partner_id);
@@ -184,11 +195,49 @@ CREATE TABLE IF NOT EXISTS otp_logs (
   id BIGSERIAL PRIMARY KEY,
   phone TEXT NOT NULL,
   otp TEXT NOT NULL,
+  template_id TEXT,
+  msg91_response JSONB,
   expires_at TIMESTAMPTZ NOT NULL,
   verified BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_otp_logs_phone_created_at ON otp_logs(phone, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS delivery_slots (
+  id BIGSERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL,
+  start_time TIME NOT NULL,
+  end_time TIME NOT NULL,
+  slot_date DATE NOT NULL,
+  capacity INT NOT NULL DEFAULT 20,
+  booked INT NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_slots_slot_date_name ON delivery_slots(slot_date, name);
+CREATE INDEX IF NOT EXISTS idx_delivery_slots_slot_date ON delivery_slots(slot_date);
+CREATE INDEX IF NOT EXISTS idx_delivery_slots_active_date ON delivery_slots(is_active, slot_date);
+
+CREATE OR REPLACE FUNCTION auto_generate_delivery_slots()
+RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  d DATE;
+  horizon DATE := CURRENT_DATE + INTERVAL '13 days';
+BEGIN
+  d := CURRENT_DATE;
+  WHILE d <= horizon LOOP
+    INSERT INTO delivery_slots (name, start_time, end_time, slot_date, capacity, booked, is_active)
+    VALUES
+      ('Morning', '07:00:00', '11:00:00', d, 20, 0, true),
+      ('Evening', '16:00:00', '20:00:00', d, 20, 0, true)
+    ON CONFLICT (slot_date, name) DO NOTHING;
+    d := d + 1;
+  END LOOP;
+END;
+$$;
 
 COMMIT;

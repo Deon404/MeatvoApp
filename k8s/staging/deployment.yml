@@ -61,11 +61,18 @@ spec:
               name: meatvo-secrets
               key: otp-hash-secret
         # External services
-        - name: MSG91_API_KEY
+        - name: MSG91_AUTH_KEY
           valueFrom:
             secretKeyRef:
               name: meatvo-secrets
               key: msg91-api-key
+        - name: MSG91_TEMPLATE_ID
+          valueFrom:
+            secretKeyRef:
+              name: meatvo-secrets
+              key: msg91-template-id
+        - name: MSG91_SENDER_ID
+          value: MEATVO
         - name: PHONEPE_MERCHANT_ID
           valueFrom:
             secretKeyRef:

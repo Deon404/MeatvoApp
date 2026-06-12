@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs').promises;
 const { logger } = require('../utils/logger');
 const { sentry } = require('../utils/sentry');
+const { fail } = require('../utils/response');
 
 class FileSecurity {
   constructor() {
@@ -57,37 +58,21 @@ class FileSecurity {
   validateFile(req, res, next) {
     try {
       if (!req.file) {
-        return res.status(400).json({
-          success: false,
-          message: 'No file uploaded',
-          code: 'NO_FILE'
-        });
+        return fail(res, 400, 'No file uploaded', { code: 'NO_FILE' });
       }
 
       const file = req.file;
       
       // Check file size
       if (file.size > this.maxFileSize) {
-        // Clean up the file
         this.cleanupFile(file.path);
-        
-        return res.status(400).json({
-          success: false,
-          message: 'File too large. Maximum size is 5MB',
-          code: 'FILE_TOO_LARGE'
-        });
+        return fail(res, 400, 'File too large. Maximum size is 5MB', { code: 'FILE_TOO_LARGE' });
       }
 
       // Check MIME type
       if (!this.allowedMimeTypes.has(file.mimetype)) {
-        // Clean up the file
         this.cleanupFile(file.path);
-        
-        return res.status(400).json({
-          success: false,
-          message: 'File type not allowed',
-          code: 'INVALID_FILE_TYPE'
-        });
+        return fail(res, 400, 'File type not allowed', { code: 'INVALID_FILE_TYPE' });
       }
 
       // Check filename for suspicious patterns
@@ -109,11 +94,7 @@ class FileSecurity {
           ip: req.ip
         });
 
-        return res.status(400).json({
-          success: false,
-          message: 'Suspicious file name',
-          code: 'SUSPICIOUS_FILENAME'
-        });
+        return fail(res, 400, 'Suspicious file name', { code: 'SUSPICIOUS_FILENAME' });
       }
 
       // Generate secure filename
@@ -133,10 +114,7 @@ class FileSecurity {
         this.cleanupFile(req.file.path);
       }
       
-      res.status(500).json({
-        success: false,
-        message: 'File validation failed'
-      });
+      return fail(res, 500, 'File validation failed');
     }
   }
 
@@ -175,11 +153,7 @@ class FileSecurity {
           }
         });
 
-        return res.status(400).json({
-          success: false,
-          message: 'File contains malicious content',
-          code: 'MALICIOUS_FILE'
-        });
+        return fail(res, 400, 'File contains malicious content', { code: 'MALICIOUS_FILE' });
       }
 
       logger.info('file_scan_completed', {
@@ -198,10 +172,7 @@ class FileSecurity {
         this.cleanupFile(req.file.path);
       }
       
-      res.status(500).json({
-        success: false,
-        message: 'File scan failed'
-      });
+      return fail(res, 500, 'File scan failed');
     }
   }
 

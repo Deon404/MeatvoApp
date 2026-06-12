@@ -6,6 +6,18 @@ const createOrderSchema = z.object({
   body: z.object({
     deliveryAddress: z.string().trim().min(10).max(500),
     paymentMethod: z.enum(['COD', 'ONLINE']),
+    lat: z.coerce.number().finite().optional(),
+    lng: z.coerce.number().finite().optional(),
+    addressId: z.coerce.number().int().positive().optional(),
+    deliverySlotId: z.coerce.number().int().positive().optional(),
+    deliverySlot: z
+      .object({
+        name: z.string().trim().min(1).max(40),
+        date: z.string().trim().min(8).max(20),
+        time: z.string().trim().min(3).max(40),
+      })
+      .optional(),
+    couponCode: z.string().trim().min(2).max(40).optional(),
   }),
   params: z.object({}).optional(),
   query: z.object({}).optional(),

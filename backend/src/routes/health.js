@@ -1,37 +1,43 @@
+// NOTE:
+// This route intentionally does NOT always use the standard API envelope.
+// GET /ready and GET /live are consumed by Kubernetes liveness/readiness probes
+// which depend on raw HTTP status codes and a simple JSON shape — not our app envelope.
+// All other endpoints use ok() / fail() from response.js.
+
 const express = require('express');
 const { query } = require('../db/postgres');
 const { logger } = require('../utils/logger');
-const { elasticsearchLogger } = require('../utils/elasticsearchLogger');
+const { ok, fail } = require('../utils/response');
+const { HEALTH_STATUS } = require('../constants/health.constants');
+const { adminOnly } = require('../middlewares/adminOnlyIp.middleware');
 const router = express.Router();
 
-// Basic health check
+router.use(adminOnly);
+
+// Basic health check — consumed by dashboards / general uptime monitors
 router.get('/', async (req, res) => {
   try {
     const timestamp = new Date().toISOString();
     const uptime = process.uptime();
     const memory = process.memoryUsage();
-    
-    res.json({
-      status: 'healthy',
+
+    return ok(res, {
+      status: HEALTH_STATUS.HEALTHY,
       timestamp,
       uptime: Math.floor(uptime),
       uptimeHuman: formatUptime(uptime),
       memory: {
-        rss: Math.round(memory.rss / 1024 / 1024), // MB
-        heapTotal: Math.round(memory.heapTotal / 1024 / 1024), // MB
-        heapUsed: Math.round(memory.heapUsed / 1024 / 1024), // MB
-        external: Math.round(memory.external / 1024 / 1024) // MB
+        rss: Math.round(memory.rss / 1024 / 1024),
+        heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+        heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+        external: Math.round(memory.external / 1024 / 1024),
       },
       version: process.env.npm_package_version || '1.0.0',
-      environment: process.env.NODE_ENV || 'development'
-    });
+      environment: process.env.NODE_ENV || 'development',
+    }, 'Service healthy');
   } catch (error) {
     logger.error('health_check_failed', { error: error.message });
-    res.status(500).json({
-      status: 'unhealthy',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    return fail(res, 500, 'Health check failed', { status: HEALTH_STATUS.UNHEALTHY });
   }
 });
 
@@ -39,39 +45,36 @@ router.get('/', async (req, res) => {
 router.get('/db', async (req, res) => {
   try {
     const start = Date.now();
-    const result = await query('SELECT 1 as health_check, NOW() as timestamp');
+    const result = await query('SELECT 1 AS health_check, NOW() AS ts');
     const responseTime = Date.now() - start;
-    
-    // Check connection pool stats if available
+
     let poolStats = null;
     try {
       const poolResult = await query(`
-        SELECT 
-          count(*) as total_connections,
-          count(*) FILTER (WHERE state = 'active') as active_connections,
-          count(*) FILTER (WHERE state = 'idle') as idle_connections
-        FROM pg_stat_activity 
+        SELECT
+          count(*)                                              AS total_connections,
+          count(*) FILTER (WHERE state = 'active')             AS active_connections,
+          count(*) FILTER (WHERE state = 'idle')               AS idle_connections
+        FROM pg_stat_activity
         WHERE datname = current_database()
       `);
-      poolStats = poolResult[0];
+      poolStats = poolResult.rows[0] || null;
     } catch (poolError) {
       logger.warn('pool_stats_failed', { error: poolError.message });
     }
-    
-    res.json({
-      status: 'healthy',
+
+    return ok(res, {
+      status: HEALTH_STATUS.HEALTHY,
       database: 'postgresql',
       responseTime: `${responseTime}ms`,
-      timestamp: result[0].timestamp,
-      poolStats
-    });
+      timestamp: result.rows[0]?.ts,
+      poolStats,
+    }, 'Database healthy');
   } catch (error) {
     logger.error('database_health_check_failed', { error: error.message });
-    res.status(503).json({
-      status: 'unhealthy',
+    return fail(res, 503, 'Database unhealthy', {
+      status: HEALTH_STATUS.UNHEALTHY,
       database: 'postgresql',
-      error: error.message,
-      timestamp: new Date().toISOString()
     });
   }
 });
@@ -81,34 +84,25 @@ router.get('/redis', async (req, res) => {
   try {
     const redis = require('../db/redis');
     const start = Date.now();
-    
-    // Test Redis connection
-    const pong = await redis.ping();
+
+    // Use a safe probe that works on both real Redis and the in-memory fallback
+    await redis.set('__health_ping__', '1', 'EX', 5);
+    const val = await redis.get('__health_ping__');
     const responseTime = Date.now() - start;
-    
-    // Get Redis info
-    const info = await redis.info('memory');
-    const memoryInfo = parseRedisInfo(info);
-    
-    res.json({
-      status: 'healthy',
+
+    if (val !== '1') throw new Error('Redis round-trip check failed');
+
+    return ok(res, {
+      status: HEALTH_STATUS.HEALTHY,
       redis: 'connected',
       responseTime: `${responseTime}ms`,
-      pong,
-      memory: {
-        used: Math.round(memoryInfo.used_memory / 1024 / 1024), // MB
-        peak: Math.round(memoryInfo.used_memory_peak / 1024 / 1024), // MB
-        rss: Math.round(memoryInfo.used_memory_rss / 1024 / 1024) // MB
-      },
-      timestamp: new Date().toISOString()
-    });
+      timestamp: new Date().toISOString(),
+    }, 'Redis healthy');
   } catch (error) {
     logger.error('redis_health_check_failed', { error: error.message });
-    res.status(503).json({
-      status: 'unhealthy',
+    return fail(res, 503, 'Redis unhealthy', {
+      status: HEALTH_STATUS.UNHEALTHY,
       redis: 'disconnected',
-      error: error.message,
-      timestamp: new Date().toISOString()
     });
   }
 });
@@ -116,14 +110,13 @@ router.get('/redis', async (req, res) => {
 // Elasticsearch health check
 router.get('/elasticsearch', async (req, res) => {
   try {
+    const { elasticsearchLogger } = require('../utils/elasticsearchLogger');
     const start = Date.now();
-    
-    // Check Elasticsearch cluster health
     const health = await elasticsearchLogger.client.cluster.health();
     const responseTime = Date.now() - start;
-    
-    res.json({
-      status: health.status === 'green' ? 'healthy' : 'degraded',
+
+    return ok(res, {
+      status: health.status === 'green' ? HEALTH_STATUS.HEALTHY : HEALTH_STATUS.DEGRADED,
       elasticsearch: 'connected',
       responseTime: `${responseTime}ms`,
       cluster: {
@@ -133,214 +126,157 @@ router.get('/elasticsearch', async (req, res) => {
         active_shards: health.active_shards,
         relocating_shards: health.relocating_shards,
         initializing_shards: health.initializing_shards,
-        unassigned_shards: health.unassigned_shards
+        unassigned_shards: health.unassigned_shards,
       },
-      timestamp: new Date().toISOString()
-    });
+      timestamp: new Date().toISOString(),
+    }, 'Elasticsearch reachable');
   } catch (error) {
     logger.error('elasticsearch_health_check_failed', { error: error.message });
-    res.status(503).json({
-      status: 'unhealthy',
+    return fail(res, 503, 'Elasticsearch unhealthy', {
+      status: HEALTH_STATUS.UNHEALTHY,
       elasticsearch: 'disconnected',
-      error: error.message,
-      timestamp: new Date().toISOString()
     });
   }
 });
 
 // External services health check
 router.get('/external', async (req, res) => {
+  const axios = require('axios');
   const services = {};
   const start = Date.now();
-  
-  // Check MSG91
+
+  // MSG91
   try {
-    const axios = require('axios');
-    const msg91Response = await axios.get('https://api.msg91.com/api/v5/health', {
+    const msg91HealthUrl =
+      process.env.MSG91_HEALTH_URL || 'https://control.msg91.com/api/v5/health';
+    await axios.get(msg91HealthUrl, {
       timeout: 5000,
-      headers: {
-        'authkey': process.env.MSG91_API_KEY
-      }
+      headers: { authkey: process.env.MSG91_AUTH_KEY },
     });
-    services.msg91 = {
-      status: 'healthy',
-      responseTime: `${Date.now() - start}ms`
-    };
+    services.msg91 = { status: HEALTH_STATUS.HEALTHY, responseTime: `${Date.now() - start}ms` };
   } catch (error) {
-    services.msg91 = {
-      status: 'unhealthy',
-      error: error.message
-    };
+    services.msg91 = { status: HEALTH_STATUS.UNHEALTHY, error: error.message };
   }
-  
-  // Check PhonePe
+
+  // PhonePe
   try {
-    const phonePeResponse = await axios.get('https://api.phonepe.com/health', {
-      timeout: 5000
-    });
-    services.phonepe = {
-      status: 'healthy',
-      responseTime: `${Date.now() - start}ms`
-    };
+    await axios.get('https://api.phonepe.com/health', { timeout: 5000 });
+    services.phonepe = { status: HEALTH_STATUS.HEALTHY, responseTime: `${Date.now() - start}ms` };
   } catch (error) {
-    services.phonepe = {
-      status: 'unhealthy',
-      error: error.message
-    };
+    services.phonepe = { status: HEALTH_STATUS.UNHEALTHY, error: error.message };
   }
-  
-  // Check Google Maps API
+
+  // Google Maps
   try {
-    const mapsResponse = await axios.get(
+    const mapsRes = await axios.get(
       `https://maps.googleapis.com/maps/api/distancematrix/json?origins=0,0&destinations=0,0&key=${process.env.GOOGLE_MAPS_API_KEY}`,
       { timeout: 5000 }
     );
     services.googleMaps = {
-      status: mapsResponse.data.status === 'OK' ? 'healthy' : 'degraded',
-      responseTime: `${Date.now() - start}ms`
+      status: mapsRes.data.status === 'OK' ? HEALTH_STATUS.HEALTHY : HEALTH_STATUS.DEGRADED,
+      responseTime: `${Date.now() - start}ms`,
     };
   } catch (error) {
-    services.googleMaps = {
-      status: 'unhealthy',
-      error: error.message
-    };
+    services.googleMaps = { status: HEALTH_STATUS.UNHEALTHY, error: error.message };
   }
-  
-  const allHealthy = Object.values(services).every(service => service.status === 'healthy');
-  
-  res.status(allHealthy ? 200 : 503).json({
-    status: allHealthy ? 'healthy' : 'degraded',
-    services,
-    timestamp: new Date().toISOString()
-  });
+
+  const allHealthy = Object.values(services).every(s => s.status === HEALTH_STATUS.HEALTHY);
+  const anyUnhealthy = Object.values(services).some(s => s.status === HEALTH_STATUS.UNHEALTHY);
+
+  if (anyUnhealthy) {
+    return fail(res, 503, 'One or more external services are unhealthy', { services });
+  }
+  return ok(res, { services }, allHealthy ? 'All external services healthy' : 'Some services degraded');
 });
 
 // Comprehensive health check (all services)
 router.get('/comprehensive', async (req, res) => {
-  const health = {
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    services: {}
-  };
-  
-  const checks = [
-    { name: 'database', path: '/health/db' },
-    { name: 'redis', path: '/health/redis' },
-    { name: 'elasticsearch', path: '/health/elasticsearch' },
-    { name: 'external', path: '/health/external' }
-  ];
-  
-  for (const check of checks) {
-    try {
-      const response = await req.app.locals.request(check.path);
-      health.services[check.name] = {
-        status: response.body.status,
-        ...response.body
-      };
-    } catch (error) {
-      health.services[check.name] = {
-        status: 'unhealthy',
-        error: error.message
-      };
-    }
+  const checks = ['database', 'redis', 'elasticsearch', 'external'];
+  const services = {};
+
+  await Promise.allSettled(
+    checks.map(async (name) => {
+      try {
+        const innerRes = await internalFetch(req, `/health/${name === 'database' ? 'db' : name}`);
+        services[name] = innerRes;
+      } catch (error) {
+        services[name] = { status: HEALTH_STATUS.UNHEALTHY, error: error.message };
+      }
+    })
+  );
+
+  const unhealthyList = Object.entries(services)
+    .filter(([, s]) => s.status === HEALTH_STATUS.UNHEALTHY)
+    .map(([name, s]) => ({ service: name, error: s.error }));
+
+  const degradedList = Object.entries(services)
+    .filter(([, s]) => s.status === HEALTH_STATUS.DEGRADED)
+    .map(([name]) => ({ service: name, warning: 'Service is degraded' }));
+
+  if (unhealthyList.length > 0) {
+    return fail(res, 503, 'One or more services unhealthy', {
+      status: HEALTH_STATUS.UNHEALTHY,
+      services,
+      issues: unhealthyList,
+    });
   }
-  
-  // Determine overall status
-  const unhealthyServices = Object.entries(health.services)
-    .filter(([_, service]) => service.status === 'unhealthy');
-  
-  if (unhealthyServices.length > 0) {
-    health.status = 'unhealthy';
-    health.issues = unhealthyServices.map(([name, service]) => ({
-      service: name,
-      error: service.error
-    }));
-  } else {
-    const degradedServices = Object.entries(health.services)
-      .filter(([_, service]) => service.status === 'degraded');
-    
-    if (degradedServices.length > 0) {
-      health.status = 'degraded';
-      health.warnings = degradedServices.map(([name, service]) => ({
-        service: name,
-        warning: service.warning || 'Service is degraded'
-      }));
-    }
-  }
-  
-  const statusCode = health.status === 'healthy' ? 200 : 
-                    health.status === 'degraded' ? 200 : 503;
-  
-  res.status(statusCode).json(health);
+
+  return ok(res, {
+    status: degradedList.length > 0 ? HEALTH_STATUS.DEGRADED : HEALTH_STATUS.HEALTHY,
+    services,
+    ...(degradedList.length > 0 ? { warnings: degradedList } : {}),
+  }, degradedList.length > 0 ? 'Some services degraded' : 'All services healthy');
 });
 
-// Readiness probe (for Kubernetes)
+// ─── Kubernetes probes ────────────────────────────────────────────────────────
+// NOTE: /ready and /live intentionally return raw JSON (no standard envelope).
+// Kubernetes kubelet evaluates HTTP status codes only; third-party uptime monitors
+// may also key on the raw `status` field. Wrapping these in ok()/fail() would add
+// extra nesting that could confuse such tooling without any benefit.
+
 router.get('/ready', async (req, res) => {
   try {
-    // Check critical dependencies
     await query('SELECT 1');
-    const redis = require('../db/redis');
-    await redis.ping();
-    
-    res.json({
-      status: 'ready',
-      timestamp: new Date().toISOString()
-    });
+    return res.status(200).json({ status: HEALTH_STATUS.READY, timestamp: new Date().toISOString() });
   } catch (error) {
     logger.error('readiness_probe_failed', { error: error.message });
-    res.status(503).json({
-      status: 'not ready',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    return res.status(503).json({ status: 'not ready', error: error.message, timestamp: new Date().toISOString() });
   }
 });
 
-// Liveness probe (for Kubernetes)
-router.get('/live', async (req, res) => {
-  try {
-    // Simple check if the process is responsive
-    const uptime = process.uptime();
-    
-    res.json({
-      status: 'alive',
-      uptime: Math.floor(uptime),
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    logger.error('liveness_probe_failed', { error: error.message });
-    res.status(503).json({
-      status: 'not alive',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
+router.get('/live', (req, res) => {
+  return res.status(200).json({
+    status: HEALTH_STATUS.ALIVE,
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
 });
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Utility functions
+// Utility helpers
 function formatUptime(seconds) {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-  
-  return `${days}d ${hours}h ${minutes}m ${secs}s`;
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${d}d ${h}h ${m}m ${s}s`;
 }
 
-function parseRedisInfo(info) {
-  const lines = info.split('\r\n');
-  const result = {};
-  
-  for (const line of lines) {
-    if (line && !line.startsWith('#')) {
-      const [key, value] = line.split(':');
-      if (key && value) {
-        result[key] = isNaN(value) ? value : Number(value);
-      }
-    }
-  }
-  
-  return result;
+// Minimal internal route fetch for /comprehensive (avoids a real HTTP round-trip)
+async function internalFetch(req, path) {
+  return new Promise((resolve) => {
+    const mockRes = {
+      _body: null,
+      _status: 200,
+      status(code) { this._status = code; return this; },
+      json(body) { this._body = body; resolve(body?.data ?? body); },
+    };
+    req.app._router.handle(
+      Object.assign(Object.create(req), { url: path, path, method: 'GET' }),
+      mockRes,
+      () => resolve({ status: 'unknown' })
+    );
+  });
 }
 
 module.exports = router;

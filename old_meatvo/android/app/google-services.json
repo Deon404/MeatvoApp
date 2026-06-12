@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "666934912223",
+    "project_id": "meatvo-4c1e5",
+    "storage_bucket": "meatvo-4c1e5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666934912223:android:1d46ae140f815fdc21b56a",
+        "android_client_info": {
+          "package_name": "com.meatvo.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLKIHwhFbG3cZ_qkmh8LJJBBvC4pcf-gA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

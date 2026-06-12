@@ -42,6 +42,12 @@ const cartMapToArray = async (map) => {
     .filter(Boolean);
 };
 
+const resolveCartProductId = (validated = {}) => {
+  const bodyId = validated.body?.productId;
+  const paramId = validated.params?.itemId || validated.params?.productId;
+  return String(bodyId ?? paramId ?? '').trim();
+};
+
 const getCart = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
   const map = await readCartMap(userId);
@@ -54,14 +60,7 @@ const getCart = asyncHandler(async (req, res) => {
     itemCount += 1;
   }
 
-  return res.json({
-    success: true,
-    data: {
-      items,
-      total: Number(total.toFixed(2)),
-      itemCount
-    }
-  });
+  return ok(res, { items, total: Number(total.toFixed(2)), itemCount });
 });
 
 // Helper for stock check
@@ -102,19 +101,14 @@ const addToCart = asyncHandler(async (req, res) => {
     total += Number(item.product.price) * item.quantity;
   }
 
-  return res.json({
-    success: true,
-    data: {
-      cart: { items, total: Number(total.toFixed(2)), itemCount: items.length },
-      message: 'Added to cart'
-    }
-  });
+  return ok(res, { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } }, 'Added to cart');
 });
 
 // PUT /api/cart/update
 const updateCartItem = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
-  const { productId, quantity } = req.validated.body;
+  const { quantity } = req.validated.body;
+  const productId = resolveCartProductId(req.validated);
   const pid = Number(productId);
   const qty = Number(quantity);
 
@@ -137,16 +131,13 @@ const updateCartItem = asyncHandler(async (req, res) => {
     total += Number(item.product.price) * item.quantity;
   }
 
-  return res.json({
-    success: true,
-    data: { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } }
-  });
+  return ok(res, { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } });
 });
 
 // DELETE /api/cart/remove/:productId
 const removeFromCart = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
-  const productId = String(req.params.productId || '').trim();
+  const productId = resolveCartProductId(req.validated);
   const pid = Number(productId);
 
   if (!pid || Number.isNaN(pid) || pid <= 0) return fail(res, 400, 'Invalid productId');
@@ -161,17 +152,14 @@ const removeFromCart = asyncHandler(async (req, res) => {
     total += Number(item.product.price) * item.quantity;
   }
 
-  return res.json({
-    success: true,
-    data: { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } }
-  });
+  return ok(res, { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } });
 });
 
 // DELETE /api/cart/clear
 const clearCart = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
   await clearCartService(userId);
-  return res.json({ success: true, data: { message: 'Cart cleared' } });
+  return ok(res, {}, 'Cart cleared');
 });
 
 // GET /api/cart/count
@@ -179,7 +167,7 @@ const getCartCount = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
   const map = await readCartMap(userId);
   const entries = Object.entries(map || {}).filter(([_, q]) => Number(q) > 0);
-  return res.json({ success: true, data: { count: entries.length } });
+  return ok(res, { count: entries.length });
 });
 
 module.exports = { getCart, addToCart, updateCartItem, removeFromCart, clearCart, getCartCount };

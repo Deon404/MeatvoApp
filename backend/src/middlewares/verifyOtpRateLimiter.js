@@ -1,4 +1,6 @@
 const redis = require('../db/redis');
+const { logger } = require('../utils/logger');
+const { fail } = require('../utils/response');
 
 // VERIFY-OTP RATE LIMITING (High) - Redis-based middleware for OTP verify attempts
 const verifyOtpRateLimiter = async (req, res, next) => {
@@ -17,20 +19,14 @@ const verifyOtpRateLimiter = async (req, res, next) => {
 
     // Check if limit exceeded (5 attempts per 60 seconds)
     if (count > 5) {
-      return res.status(429).json({
-        ok: false,
-        success: false,
-        error: { message: 'Too many OTP verification attempts. Please wait before trying again.' },
-        data: {},
-        message: 'Too many OTP verification attempts. Please wait before trying again.'
-      });
+      return fail(res, 429, 'Too many OTP verification attempts. Please wait before trying again.');
     }
 
-    next();
-  } catch (redisError) {
-    // If Redis is down, allow request but log the error
-    console.error('Redis error in verifyOtpRateLimiter:', redisError);
-    next();
+    return next();
+  } catch (err) {
+    logger.error('Rate limit Redis error:', err);
+    next(new Error('Service temporarily unavailable'));
+    return;
   }
 };
 

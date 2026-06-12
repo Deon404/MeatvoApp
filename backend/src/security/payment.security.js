@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { logger } = require('../utils/logger');
 const { sentry } = require('../utils/sentry');
+const { fail } = require('../utils/response');
 
 class PaymentSecurity {
   constructor() {
@@ -106,11 +107,7 @@ class PaymentSecurity {
             data: { userId, orderId, ip }
           });
 
-          return res.status(429).json({
-            success: false,
-            message: 'Too many payment attempts. Please try again later.',
-            code: 'PAYMENT_RATE_LIMIT'
-          });
+          return fail(res, 429, 'Too many payment attempts. Please try again later.', { code: 'PAYMENT_RATE_LIMIT' });
         }
 
         attempts.count++;
@@ -145,11 +142,7 @@ class PaymentSecurity {
 
         // Block if too many suspicious patterns
         if (attempts.suspicious.length >= 3) {
-          return res.status(403).json({
-            success: false,
-            message: 'Payment blocked due to suspicious activity',
-            code: 'PAYMENT_BLOCKED'
-          });
+          return fail(res, 403, 'Payment blocked due to suspicious activity', { code: 'PAYMENT_BLOCKED' });
         }
       }
 
@@ -218,48 +211,28 @@ class PaymentSecurity {
 
       // Validate required fields
       if (!orderId || !amount || !currency) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required payment fields',
-          code: 'MISSING_FIELDS'
-        });
+        return fail(res, 400, 'Missing required payment fields', { code: 'MISSING_FIELDS' });
       }
 
       // Validate amount
       if (typeof amount !== 'number' || amount <= 0 || amount > 100000) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid amount',
-          code: 'INVALID_AMOUNT'
-        });
+        return fail(res, 400, 'Invalid amount', { code: 'INVALID_AMOUNT' });
       }
 
       // Validate currency
       if (currency !== 'INR') {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid currency',
-          code: 'INVALID_CURRENCY'
-        });
+        return fail(res, 400, 'Invalid currency', { code: 'INVALID_CURRENCY' });
       }
 
       // Validate order ID format
       if (!/^[A-Za-z0-9_-]{8,32}$/.test(orderId)) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid order ID format',
-          code: 'INVALID_ORDER_ID'
-        });
+        return fail(res, 400, 'Invalid order ID format', { code: 'INVALID_ORDER_ID' });
       }
 
       // Validate payment method
       const validMethods = ['UPI', 'CARD', 'NETBANKING', 'WALLET'];
       if (paymentMethod && !validMethods.includes(paymentMethod.toUpperCase())) {
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid payment method',
-          code: 'INVALID_PAYMENT_METHOD'
-        });
+        return fail(res, 400, 'Invalid payment method', { code: 'INVALID_PAYMENT_METHOD' });
       }
 
       // Add timestamp for signature generation
@@ -269,10 +242,7 @@ class PaymentSecurity {
     } catch (error) {
       logger.error('payment_validation_error', { error: error.message });
       sentry.captureException(error);
-      res.status(500).json({
-        success: false,
-        message: 'Payment validation failed'
-      });
+      return fail(res, 500, 'Payment validation failed');
     }
   }
 
@@ -282,7 +252,9 @@ class PaymentSecurity {
   encryptPaymentData(data) {
     try {
       const algorithm = 'aes-256-gcm';
-      const key = crypto.scryptSync(process.env.PAYMENT_ENCRYPTION_KEY || 'default-key', 'salt', 32);
+      const encKey = process.env.PAYMENT_ENCRYPTION_KEY;
+      if (!encKey) throw new Error('PAYMENT_ENCRYPTION_KEY environment variable is required');
+      const key = crypto.scryptSync(encKey, 'salt', 32);
       const iv = crypto.randomBytes(16);
       
       const cipher = crypto.createCipher(algorithm, key, iv);
@@ -310,7 +282,9 @@ class PaymentSecurity {
     try {
       const { encrypted, iv, authTag } = encryptedData;
       const algorithm = 'aes-256-gcm';
-      const key = crypto.scryptSync(process.env.PAYMENT_ENCRYPTION_KEY || 'default-key', 'salt', 32);
+      const encKey = process.env.PAYMENT_ENCRYPTION_KEY;
+      if (!encKey) throw new Error('PAYMENT_ENCRYPTION_KEY environment variable is required');
+      const key = crypto.scryptSync(encKey, 'salt', 32);
       
       const decipher = crypto.createDecipher(algorithm, key, Buffer.from(iv, 'hex'));
       decipher.setAuthTag(Buffer.from(authTag, 'hex'));

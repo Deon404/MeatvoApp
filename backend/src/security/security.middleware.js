@@ -2,6 +2,7 @@ const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const { logger } = require('../utils/logger');
 const { sentry } = require('../utils/sentry');
+const { fail } = require('../utils/response');
 const csrfService = require('./csrf.service');
 const cspService = require('./csp.service');
 const deviceService = require('./device.service');
@@ -45,10 +46,7 @@ class SecurityMiddleware {
       const providedToken = req.headers['x-csrf-token'] || req.body._csrf;
       
       if (!providedToken) {
-        return res.status(403).json({
-          success: false,
-          message: 'CSRF token required'
-        });
+        return fail(res, 403, 'CSRF token required', { code: 'CSRF_MISSING' });
       }
 
       const isValid = csrfService.verifyToken(sessionId, providedToken);
@@ -61,20 +59,14 @@ class SecurityMiddleware {
           ip: req.ip
         });
 
-        return res.status(403).json({
-          success: false,
-          message: 'Invalid CSRF token'
-        });
+        return fail(res, 403, 'Invalid CSRF token', { code: 'CSRF_INVALID' });
       }
 
       next();
     } catch (error) {
       logger.error('csrf_protection_error', { error: error.message });
       sentry.captureException(error);
-      res.status(500).json({
-        success: false,
-        message: 'Security verification failed'
-      });
+      return fail(res, 500, 'Security verification failed');
     }
   }
 
@@ -134,11 +126,7 @@ class SecurityMiddleware {
         // For new devices, require additional verification
         if (deviceService.hasTooManyDevices(user.id)) {
           logger.warn('too_many_devices', { userId: user.id });
-          return res.status(403).json({
-            success: false,
-            message: 'Too many devices registered. Please revoke some devices.',
-            code: 'TOO_MANY_DEVICES'
-          });
+          return fail(res, 403, 'Too many devices registered. Please revoke some devices.', { code: 'TOO_MANY_DEVICES' });
         }
       } else {
         req.device = device;
@@ -151,12 +139,12 @@ class SecurityMiddleware {
         level: 'info',
         data: {
           userId: user.id,
-          deviceId: device.id,
-          trusted: device.trusted
+          deviceId: req.device?.id,
+          trusted: req.device?.trusted
         }
       });
 
-      next();
+      return next();
     } catch (error) {
       logger.error('device_tracking_error', { error: error.message });
       sentry.captureException(error);

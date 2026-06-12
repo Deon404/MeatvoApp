@@ -10,13 +10,33 @@ const CACHE_TTL_PRODUCTS = 300; // 5min
 const CACHE_TTL_PRODUCT = 600; // 10min
 const CACHE_TTL_CATEGORIES = 3600; // 1h
 const CACHE_TTL_FEATURED = 900; // 15min
+const ALLOWED_PRODUCT_COLUMNS = [
+  'category_id', 'name', 'description', 'price', 'base_price_per_kg',
+  'weight_variants', 'cut_types', 'marination_options', 'freshness_date',
+  'image_url', 'stock', 'unit', 'active'
+];
 
 // Helper
 const getListCacheKey = (page, limit, filters) => `products:all:${page}:${limit}:${Buffer.from(JSON.stringify(filters)).toString('base64')}`;
 
-// Admin check
+function buildProductUpdateClause(updates) {
+  const sets = [];
+  const params = [];
+  for (const [key, value] of Object.entries(updates)) {
+    if (!ALLOWED_PRODUCT_COLUMNS.includes(key)) continue;
+    params.push(value);
+    sets.push(`${key} = $${params.length}`);
+  }
+  return { sets, params };
+}
+
+// Admin check — throws so asyncHandler forwards to errorHandler
 const requireAdmin = (req) => {
-  if (req.user?.role !== ROLES.ADMIN) throw fail(null, 403, 'Admin required');
+  if (req.user?.role !== ROLES.ADMIN) {
+    const err = new Error('Admin required');
+    err.statusCode = 403;
+    throw err;
+  }
 };
 
 /**
@@ -60,7 +80,7 @@ const formatProduct = (product, weight_g = null) => {
 const getAllProducts = asyncHandler(async (req, res) => {
   const q = req.validated?.query || req.query || {};
   const page = Math.max(1, Number(q.page) || 1);
-  const limit = Math.min(50, Number(q.limit) || 20);
+  const limit = Math.min(200, Number(q.limit) || 20);
   const offset = (page - 1) * limit;
   const weight_g = q.weight_g ? Number(q.weight_g) : null;
   const resolvedCategoryId = q.categoryId || q.category;
@@ -71,12 +91,12 @@ const getAllProducts = asyncHandler(async (req, res) => {
     min_price: q.min_price ? Number(q.min_price) : null,
     max_price: q.max_price ? Number(q.max_price) : null,
     search: resolvedSearch ? String(resolvedSearch).trim() : null,
-    available: q.available !== undefined ? q.available === 'true' : true // Default to fresh only
+    available: q.available !== undefined ? q.available === 'true' : false // Default to fresh only
   };
 
   const cacheKey = getListCacheKey(page, limit, filters);
   const cached = await redis.get(cacheKey);
-  if (cached) return res.json({ success: true, data: JSON.parse(cached) });
+  if (cached) return ok(res, JSON.parse(cached));
 
   // Build conditions
   const conditions = ['p.active = true'];
@@ -135,7 +155,7 @@ const getAllProducts = asyncHandler(async (req, res) => {
   const data = { products: formattedProducts, total: Number(total), page, pages, limit };
 
   await redis.set(cacheKey, JSON.stringify(data), 'EX', CACHE_TTL_PRODUCTS);
-  return res.json({ success: true, data });
+  return ok(res, data);
 });
 
 const listProducts = getAllProducts; // compat
@@ -147,7 +167,7 @@ const getProductById = asyncHandler(async (req, res) => {
   let cached = await redis.get(cacheKey);
   if (cached) {
     const data = JSON.parse(cached);
-    return res.json({ success: true, data: { product: formatProduct(data.product, weight_g) } });
+    return ok(res, { product: formatProduct(data, weight_g) });
   }
 
   const { rows } = await query('SELECT * FROM products WHERE id = $1 AND active = true', [id]);
@@ -155,19 +175,18 @@ const getProductById = asyncHandler(async (req, res) => {
 
   const product = rows[0];
 
-  // Check freshness
   if (!isProductFresh(product.freshness_date)) {
-    return fail(res, 400, 'FRESHNESS_EXPIRED', 'This product is no longer fresh');
+    return fail(res, 400, 'This product is no longer fresh');
   }
 
   await redis.set(cacheKey, JSON.stringify(product), 'EX', CACHE_TTL_PRODUCT);
-  return res.json({ success: true, data: { product: formatProduct(product, weight_g) } });
+  return ok(res, { product: formatProduct(product, weight_g) });
 });
 
 const getCategories = asyncHandler(async (req, res) => {
   const cacheKey = 'products:categories';
   let cached = await redis.get(cacheKey);
-  if (cached) return res.json({ success: true, data: { categories: JSON.parse(cached) } });
+  if (cached) return ok(res, { categories: JSON.parse(cached) });
 
   const { rows } = await query('SELECT id, name FROM categories WHERE active = true ORDER BY sort_order');
   const categories = rows.map(r => ({
@@ -177,13 +196,13 @@ const getCategories = asyncHandler(async (req, res) => {
   }));
 
   await redis.set(cacheKey, JSON.stringify(categories), 'EX', CACHE_TTL_CATEGORIES);
-  return res.json({ success: true, data: { categories } });
+  return ok(res, { categories });
 });
 
 const getFeaturedProducts = asyncHandler(async (req, res) => {
   const cacheKey = 'products:featured';
   let cached = await redis.get(cacheKey);
-  if (cached) return res.json({ success: true, data: { products: JSON.parse(cached) } });
+  if (cached) return ok(res, { products: JSON.parse(cached) });
 
   // Get fresh products only
   const { rows } = await query(
@@ -195,7 +214,7 @@ const getFeaturedProducts = asyncHandler(async (req, res) => {
 
   const formattedProducts = rows.map(p => formatProduct(p));
   await redis.set(cacheKey, JSON.stringify(formattedProducts), 'EX', CACHE_TTL_FEATURED);
-  return res.json({ success: true, data: { products: formattedProducts } });
+  return ok(res, { products: formattedProducts });
 });
 
 const searchProducts = asyncHandler(async (req, res) => {
@@ -274,41 +293,34 @@ const updateProduct = asyncHandler(async (req, res) => {
   requireAdmin(req);
   const id = Number(req.params.id);
   const patch = req.body;
-  const sets = [], params = [];
+  const updates = {};
 
-  const allowed = [
-    'category_id', 'name', 'description', 'price', 'base_price_per_kg',
-    'weight_variants', 'cut_types', 'marination_options', 'freshness_date',
-    'image_url', 'stock', 'unit', 'active'
-  ];
+  for (const [key, rawValue] of Object.entries(patch || {})) {
+    if (!ALLOWED_PRODUCT_COLUMNS.includes(key) || rawValue === undefined) continue;
+    let value = rawValue;
 
-  for (const k of allowed) {
-    if (patch[k] !== undefined) {
-      let value = patch[k];
-
-      // Handle array/JSON fields
-      if (k === 'weight_variants' && typeof value === 'string') {
-        try { value = JSON.parse(value); } catch (e) { }
-      }
-      if (k === 'cut_types' && typeof value === 'string') {
-        try { value = JSON.parse(value); } catch (e) { }
-      }
-      if (k === 'marination_options' && typeof value === 'string') {
-        try { value = JSON.parse(value); } catch (e) { }
-      }
-
-      params.push(value);
-      sets.push(k + '= $' + params.length);
+    // Normalize array/JSON fields before parameter binding
+    if (key === 'weight_variants' && typeof value === 'string') {
+      try { value = JSON.parse(value); } catch (e) { }
     }
+    if (key === 'cut_types' && typeof value === 'string') {
+      try { value = JSON.parse(value); } catch (e) { }
+    }
+    if (key === 'marination_options' && typeof value === 'string') {
+      try { value = JSON.parse(value); } catch (e) { }
+    }
+
+    updates[key] = value;
   }
 
+  const { sets, params } = buildProductUpdateClause(updates);
   if (!sets.length) return fail(res, 400, 'No fields');
   params.push(id);
   const { rows } = await query(
-    `UPDATE products SET ${sets.join(',')} WHERE id=$${params.length} RETURNING *`,
+    `UPDATE products SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
     params
   );
-  if (!rows[0]) return fail(res, 404);
+  if (!rows[0]) return fail(res, 404, 'Product not found');
   await redis.del('products:*');
   logger.info('product_updated', { id });
   return ok(res, { product: formatProduct(rows[0]) });
@@ -318,7 +330,7 @@ const deleteProduct = asyncHandler(async (req, res) => {
   requireAdmin(req);
   const id = Number(req.params.id);
   const { rows } = await query('UPDATE products SET active=false WHERE id=$1 RETURNING id', [id]);
-  if (!rows[0]) return fail(res, 404);
+  if (!rows[0]) return fail(res, 404, 'Product not found');
   await redis.del('products:*');
   logger.info('product_deleted', { id });
   return ok(res, { message: 'Soft deleted' });

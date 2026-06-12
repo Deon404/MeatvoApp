@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
+const { repairAppSettingsSchema } = require('../../db/appSettings');
 const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { emitToAll } = require('../../socket/socket');
@@ -29,9 +30,9 @@ const DEFAULT_BANNER = {
 
 /** Default store settings used when DB row doesn't exist yet */
 const DEFAULT_STORE_SETTINGS = {
-  delivery_radius_km: 5.0,
-  center_lat: 0,
-  center_lng: 0,
+  delivery_radius_km: 8.0,
+  center_lat: 23.6583,
+  center_lng: 86.1764,
   min_order_amount: 150.0,
   delivery_fee: 30.0,
   is_open: true,
@@ -41,43 +42,78 @@ const DEFAULT_STORE_SETTINGS = {
 
 const getSetting = async (key) => {
   try {
-    const { rows } = await query('SELECT value FROM app_settings WHERE key = $1', [key]);
+    const { rows } = await query(
+      `SELECT value->$1 AS value
+       FROM app_settings
+       ORDER BY id
+       LIMIT 1`,
+      [key]
+    );
     return rows[0]?.value || null;
   } catch (err) {
     if (err?.code === '42P01') return null;
+    if (err?.code === '42703') {
+      await repairAppSettingsSchema();
+      const { rows } = await query(
+        `SELECT value->$1 AS value
+         FROM app_settings
+         ORDER BY id
+         LIMIT 1`,
+        [key]
+      );
+      return rows[0]?.value || null;
+    }
     throw err;
   }
 };
 
 const putSetting = async (key, value) => {
   try {
+    const { rows: existing } = await query(
+      'SELECT id FROM app_settings ORDER BY id LIMIT 1'
+    );
+    if (existing[0]) {
+      const { rows } = await query(
+        `UPDATE app_settings
+         SET value = jsonb_set(COALESCE(value, '{}'::jsonb), ARRAY[$1], $2::jsonb, true),
+             updated_at = NOW()
+         WHERE id = $3
+         RETURNING value->$1 AS value`,
+        [key, value, existing[0].id]
+      );
+      return rows[0]?.value || value;
+    }
+
     const { rows } = await query(
-      `INSERT INTO app_settings (key, value, updated_at)
-       VALUES ($1,$2,NOW())
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-       RETURNING value`,
+      `INSERT INTO app_settings (value, updated_at)
+       VALUES (jsonb_build_object($1, $2::jsonb), NOW())
+       RETURNING value->$1 AS value`,
       [key, value]
     );
     return rows[0]?.value || value;
   } catch (err) {
+    if (err?.code === '42703') {
+      await repairAppSettingsSchema();
+      return putSetting(key, value);
+    }
     if (err?.code !== '42P01') throw err;
 
     try {
       await query(
         `CREATE TABLE IF NOT EXISTS app_settings (
-          key TEXT PRIMARY KEY,
-          value JSONB NOT NULL,
+          id SERIAL PRIMARY KEY,
+          delivery_charge NUMERIC(10,2) DEFAULT 30,
+          min_order_amount NUMERIC(10,2) DEFAULT 150,
+          store_open BOOLEAN DEFAULT true,
+          store_open_time TIME,
+          store_close_time TIME,
+          delivery_radius_km INTEGER DEFAULT 5,
+          value JSONB NOT NULL DEFAULT '{}'::jsonb,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )`
       );
-      const { rows } = await query(
-        `INSERT INTO app_settings (key, value, updated_at)
-         VALUES ($1,$2,NOW())
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-         RETURNING value`,
-        [key, value]
-      );
-      return rows[0]?.value || value;
+      await repairAppSettingsSchema();
+      return putSetting(key, value);
     } catch (e2) {
       logger.warn('settings_table_create_failed', { message: e2?.message, code: e2?.code });
       return value;
@@ -193,13 +229,10 @@ const checkDelivery = asyncHandler(async (req, res) => {
   const { deliverable, distanceKm } = isWithinDeliveryZone(centerLat, centerLng, lat, lng, radiusKm);
 
   if (!deliverable) {
-    return res.status(400).json({
-      success: false,
-      error: {
-        code: 'OUTSIDE_DELIVERY_ZONE',
-        message: 'Not available in your area — expanding soon!',
-        data: { distanceKm, radiusKm },
-      },
+    return fail(res, 400, 'Not available in your area — expanding soon!', {
+      code: 'OUTSIDE_DELIVERY_ZONE',
+      distanceKm,
+      radiusKm,
     });
   }
 
@@ -336,4 +369,6 @@ module.exports = {
   checkDelivery,
   updateDeliveryZone,
   toggleStoreOpen,
+  // Helpers
+  getStoreSettings,
 };

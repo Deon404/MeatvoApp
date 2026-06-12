@@ -26,19 +26,19 @@ const {
   applyCouponSchema,
 } = require('./orders.validation');
 
+// Static paths must come before dynamic /:id to avoid route shadowing
+router.post('/apply-coupon', protect, validate(applyCouponSchema), applyCoupon);
+router.get('/my', protect, validate(getOrdersSchema), getOrders);
+
+// Admin routes (static - must be before /:id)
+router.get('/admin', protect, rbac(ROLES.ADMIN), validate(getAllOrdersSchema), getAllOrders);
+router.put('/admin/:id/status', protect, rbac(ROLES.ADMIN), validate(updateOrderStatusSchema), updateOrderStatus);
+
 router.post('/', protect, validate(createOrderSchema), createOrder);
 router.get('/', protect, validate(getOrdersSchema), getOrders);
 router.get('/:id', protect, validate(getOrderSchema), getOrder);
 router.put('/:id/cancel', protect, validate(cancelOrderSchema), cancelOrder);
-router.post('/apply-coupon', protect, validate(applyCouponSchema), applyCoupon);
-
-// Admin routes
-router.get('/admin', protect, rbac(ROLES.ADMIN), validate(getAllOrdersSchema), getAllOrders);
-router.put('/admin/:id/status', protect, rbac(ROLES.ADMIN), validate(updateOrderStatusSchema), updateOrderStatus);
-
-// Compat
-router.get('/my', protect, validate(getOrdersSchema), getOrders);
-router.put('/:id/status', protect, updateOrderStatus);
+router.put('/:id/status', protect, validate(updateOrderStatusSchema), updateOrderStatus);
 
 
 module.exports = router;

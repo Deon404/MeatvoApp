@@ -27,7 +27,7 @@ services:
     container_name: meatvo-api
     environment:
       NODE_ENV: production
-      PORT: 5000
+      PORT: 8080
       LOG_LEVEL: info
       TRUST_PROXY: true
       
@@ -41,7 +41,9 @@ services:
       OTP_HASH_SECRET: ${OTP_HASH_SECRET}
       
       # External Services (from secrets)
-      MSG91_API_KEY: ${MSG91_API_KEY}
+      MSG91_AUTH_KEY: ${MSG91_AUTH_KEY:-${MSG91_API_KEY}}
+      MSG91_TEMPLATE_ID: ${MSG91_TEMPLATE_ID}
+      MSG91_SENDER_ID: ${MSG91_SENDER_ID:-MEATVO}
       PHONEPE_MERCHANT_ID: ${PHONEPE_MERCHANT_ID}
       PHONEPE_SALT_KEY: ${PHONEPE_SALT_KEY}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}

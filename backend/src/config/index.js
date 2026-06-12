@@ -3,17 +3,17 @@ const config = {
   development: {
     port: 8080,
     database: {
-      url: process.env.DATABASE_URL || 'postgres://postgres:123456@localhost:5432/meatvo'
+      url: process.env.DATABASE_URL
     },
     redis: {
-      url: process.env.REDIS_URL || 'redis://localhost:6379'
+      url: process.env.REDIS_URL
     },
     cors: {
       origins: ['http://localhost:3000', 'http://127.0.0.1:3000']
     },
     jwt: {
-      accessSecret: process.env.JWT_ACCESS_SECRET || 'dev-access-secret',
-      refreshSecret: process.env.JWT_REFRESH_SECRET || 'dev-refresh-secret',
+      accessSecret: process.env.JWT_ACCESS_SECRET,
+      refreshSecret: process.env.JWT_REFRESH_SECRET,
       accessExpiry: '15m',
       refreshExpiry: '30d'
     },
@@ -23,8 +23,8 @@ const config = {
       logToConsole: true
     },
     msg91: {
-      authKey: process.env.MSG91_AUTH_KEY || 'dev-auth-key',
-      templateId: process.env.MSG91_TEMPLATE_ID || 'dev-template'
+      authKey: process.env.MSG91_AUTH_KEY,
+      templateId: process.env.MSG91_TEMPLATE_ID
     }
   },
   

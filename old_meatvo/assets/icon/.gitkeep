@@ -1,0 +1,4 @@
+# Placeholder so Flutter recognizes this asset directory.
+# Drop your launcher icon here as `logo.png` (1024x1024 PNG, transparent bg,
+# 10-15% safe-area padding) and then run:
+#   flutter pub run flutter_launcher_icons

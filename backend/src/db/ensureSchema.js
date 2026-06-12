@@ -1,5 +1,6 @@
 const { query } = require('./postgres');
 const { logger } = require('../utils/logger');
+const { repairAppSettingsSchema } = require('./appSettings');
 
 const ensureSchema = async () => {
   const steps = [
@@ -12,6 +13,10 @@ const ensureSchema = async () => {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `,
+    },
+    {
+      name: 'app_settings.columns',
+      run: repairAppSettingsSchema,
     },
     {
       name: 'categories.sort_order',
@@ -70,6 +75,47 @@ const ensureSchema = async () => {
       sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS earnings NUMERIC(10,2) NOT NULL DEFAULT 0`,
     },
     {
+      name: 'users.is_active',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true`,
+    },
+    {
+      name: 'delivery_partners.cleanup_non_delivery_roles',
+      sql: `
+        DELETE FROM delivery_partners dp
+        USING users u
+        WHERE dp.user_id = u.id
+          AND u.role <> 'delivery'
+      `,
+    },
+    {
+      name: 'order_assignments_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS order_assignments (
+          id BIGSERIAL PRIMARY KEY,
+          order_id BIGINT NOT NULL UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+          delivery_partner_id BIGINT NOT NULL REFERENCES delivery_partners(id) ON DELETE RESTRICT,
+          assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          status VARCHAR(20) NOT NULL DEFAULT 'ASSIGNED'
+        )
+      `,
+    },
+    {
+      name: 'order_assignments_partner_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_order_assignments_partner ON order_assignments(delivery_partner_id)`,
+    },
+    {
+      name: 'users.mfa_enabled',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+    },
+    {
+      name: 'users.mfa_secret',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret TEXT`,
+    },
+    {
+      name: 'users.mfa_backup_codes',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_backup_codes JSONB`,
+    },
+    {
       name: 'payment_transactions_table',
       sql: `
         CREATE TABLE IF NOT EXISTS payment_transactions (
@@ -110,14 +156,84 @@ const ensureSchema = async () => {
         CREATE TABLE IF NOT EXISTS addresses (
           id BIGSERIAL PRIMARY KEY,
           user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-          label TEXT NOT NULL,
-          address_line TEXT NOT NULL,
+          address_line1 TEXT NOT NULL,
+          address_line2 TEXT,
+          city VARCHAR(100) DEFAULT 'Dhanbad',
+          state VARCHAR(100) DEFAULT 'Jharkhand',
+          pincode VARCHAR(10),
           landmark TEXT,
-          lat NUMERIC(10,7) NOT NULL,
-          lng NUMERIC(10,7) NOT NULL,
-          is_default BOOLEAN NOT NULL DEFAULT FALSE,
-          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          address_type VARCHAR(20) DEFAULT 'HOME',
+          latitude DECIMAL(10,8) DEFAULT 23.7957,
+          longitude DECIMAL(11,8) DEFAULT 86.4304,
+          is_default BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMPTZ DEFAULT NOW(),
+          label TEXT DEFAULT 'home',
+          address_line TEXT,
+          lat NUMERIC(10,7),
+          lng NUMERIC(10,7)
         )
+      `,
+    },
+    {
+      name: 'addresses_address_line1',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS address_line1 TEXT`,
+    },
+    {
+      name: 'addresses_address_line2',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS address_line2 TEXT`,
+    },
+    {
+      name: 'addresses_city',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS city VARCHAR(100) DEFAULT 'Dhanbad'`,
+    },
+    {
+      name: 'addresses_state',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS state VARCHAR(100) DEFAULT 'Jharkhand'`,
+    },
+    {
+      name: 'addresses_pincode',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS pincode VARCHAR(10) DEFAULT ''`,
+    },
+    {
+      name: 'addresses_address_type',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS address_type VARCHAR(20) DEFAULT 'HOME'`,
+    },
+    {
+      name: 'addresses_latitude',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS latitude DECIMAL(10,8) DEFAULT 23.7957`,
+    },
+    {
+      name: 'addresses_longitude',
+      sql: `ALTER TABLE addresses ADD COLUMN IF NOT EXISTS longitude DECIMAL(11,8) DEFAULT 86.4304`,
+    },
+    {
+      name: 'addresses_column_defaults',
+      sql: `
+        ALTER TABLE addresses ALTER COLUMN city SET DEFAULT 'Dhanbad';
+        ALTER TABLE addresses ALTER COLUMN state SET DEFAULT 'Jharkhand';
+        ALTER TABLE addresses ALTER COLUMN latitude SET DEFAULT 23.7957;
+        ALTER TABLE addresses ALTER COLUMN longitude SET DEFAULT 86.4304;
+        ALTER TABLE addresses ALTER COLUMN address_type SET DEFAULT 'HOME'
+      `,
+    },
+    {
+      name: 'addresses_backfill_from_legacy',
+      sql: `
+        UPDATE addresses
+        SET address_line1 = COALESCE(address_line1, address_line),
+            latitude = COALESCE(latitude, lat),
+            longitude = COALESCE(longitude, lng),
+            address_type = COALESCE(address_type, UPPER(COALESCE(label, 'home')))
+        WHERE address_line1 IS NULL OR latitude IS NULL OR longitude IS NULL OR address_type IS NULL
+      `,
+    },
+    {
+      name: 'addresses_legacy_nullable',
+      sql: `
+        ALTER TABLE addresses ALTER COLUMN label SET DEFAULT 'home';
+        ALTER TABLE addresses ALTER COLUMN address_line DROP NOT NULL;
+        ALTER TABLE addresses ALTER COLUMN lat DROP NOT NULL;
+        ALTER TABLE addresses ALTER COLUMN lng DROP NOT NULL
       `,
     },
     {
@@ -127,11 +243,229 @@ const ensureSchema = async () => {
         CREATE INDEX IF NOT EXISTS idx_addresses_default ON addresses(user_id, is_default);
       `,
     },
+    {
+      name: 'otp_logs.template_id',
+      sql: `ALTER TABLE otp_logs ADD COLUMN IF NOT EXISTS template_id TEXT`,
+    },
+    {
+      name: 'otp_logs.msg91_response',
+      sql: `ALTER TABLE otp_logs ADD COLUMN IF NOT EXISTS msg91_response JSONB`,
+    },
+    {
+      name: 'categories.seed_defaults',
+      sql: `
+        INSERT INTO categories (name, image_url, sort_order, active)
+        SELECT v.name, v.image_url, v.sort_order, TRUE
+        FROM (
+          VALUES
+            ('Chicken', 'https://images.unsplash.com/photo-1604503468506-a8da286d644f?auto=format&fit=crop&w=600&q=80', 1),
+            ('Mutton', 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&w=600&q=80', 2),
+            ('Fish', 'https://images.unsplash.com/photo-1519003722824-194d4455a60c?auto=format&fit=crop&w=600&q=80', 3),
+            ('Eggs', 'https://images.unsplash.com/photo-1582729478250-c89cae4dc85b?auto=format&fit=crop&w=600&q=80', 4)
+        ) AS v(name, image_url, sort_order)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM categories c WHERE LOWER(TRIM(c.name)) = LOWER(TRIM(v.name))
+        )
+      `,
+    },
+    {
+      name: 'categories.backfill_images',
+      sql: `
+        UPDATE categories SET image_url = CASE
+          WHEN LOWER(name) LIKE '%chicken%' THEN 'https://images.unsplash.com/photo-1604503468506-a8da286d644f?auto=format&fit=crop&w=600&q=80'
+          WHEN LOWER(name) LIKE '%mutton%'
+            OR LOWER(name) LIKE '%lamb%'
+            OR LOWER(name) LIKE '%goat%' THEN 'https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&fit=crop&w=600&q=80'
+          WHEN LOWER(name) LIKE '%fish%'
+            OR LOWER(name) LIKE '%seafood%' THEN 'https://images.unsplash.com/photo-1519003722824-194d4455a60c?auto=format&fit=crop&w=600&q=80'
+          WHEN LOWER(name) LIKE '%egg%' THEN 'https://images.unsplash.com/photo-1582729478250-c89cae4dc85b?auto=format&fit=crop&w=600&q=80'
+          ELSE image_url
+        END
+        WHERE image_url IS NULL OR TRIM(image_url) = ''
+      `,
+    },
+    {
+      name: 'delivery_slots.drop_legacy_shape',
+      sql: `
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'delivery_slots'
+              AND column_name = 'slot_time'
+          ) AND NOT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'delivery_slots'
+              AND column_name = 'slot_date'
+          ) THEN
+            DROP TABLE IF EXISTS delivery_slots CASCADE;
+          END IF;
+        END $$
+      `,
+    },
+    {
+      name: 'delivery_slots_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS delivery_slots (
+          id BIGSERIAL PRIMARY KEY,
+          name VARCHAR(50) NOT NULL,
+          start_time TIME NOT NULL,
+          end_time TIME NOT NULL,
+          slot_date DATE NOT NULL,
+          capacity INT NOT NULL DEFAULT 20,
+          booked INT NOT NULL DEFAULT 0,
+          is_active BOOLEAN NOT NULL DEFAULT true,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'delivery_slots_indexes',
+      sql: `
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_delivery_slots_slot_date_name ON delivery_slots(slot_date, name);
+        CREATE INDEX IF NOT EXISTS idx_delivery_slots_slot_date ON delivery_slots(slot_date);
+        CREATE INDEX IF NOT EXISTS idx_delivery_slots_active_date ON delivery_slots(is_active, slot_date);
+      `,
+    },
+    {
+      name: 'delivery_slots.auto_generate_function',
+      sql: `
+        CREATE OR REPLACE FUNCTION auto_generate_delivery_slots()
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        DECLARE
+          d DATE;
+          horizon DATE := CURRENT_DATE + INTERVAL '13 days';
+        BEGIN
+          d := CURRENT_DATE;
+          WHILE d <= horizon LOOP
+            INSERT INTO delivery_slots (name, start_time, end_time, slot_date, capacity, booked, is_active)
+            VALUES
+              ('Morning', '07:00:00', '11:00:00', d, 20, 0, true),
+              ('Evening', '16:00:00', '20:00:00', d, 20, 0, true)
+            ON CONFLICT (slot_date, name) DO NOTHING;
+            d := d + 1;
+          END LOOP;
+        END;
+        $$
+      `,
+    },
+    {
+      name: 'delivery_slots.seed',
+      sql: `SELECT auto_generate_delivery_slots()`,
+    },
+    {
+      name: 'order_status.picked_up',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PICKED_UP'`,
+    },
+    {
+      name: 'order_status.on_the_way',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'ON_THE_WAY'`,
+    },
+    {
+      name: 'delivery_slots.max_orders',
+      sql: `ALTER TABLE delivery_slots ADD COLUMN IF NOT EXISTS max_orders INTEGER DEFAULT 15`,
+    },
+    {
+      name: 'delivery_slots.current_orders',
+      sql: `ALTER TABLE delivery_slots ADD COLUMN IF NOT EXISTS current_orders INTEGER DEFAULT 0`,
+    },
+    {
+      name: 'delivery_slots.backfill_current_orders',
+      sql: `UPDATE delivery_slots SET current_orders = COALESCE(booked, 0) WHERE current_orders = 0`,
+    },
+    {
+      name: 'orders.estimated_delivery_time',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery_time TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.eta_minutes',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS eta_minutes INTEGER`,
+    },
+    {
+      name: 'orders.eta_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_orders_estimated_delivery_time ON orders(estimated_delivery_time)`,
+    },
+    {
+      name: 'orders.updated_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    },
+    {
+      name: 'delivery_partners.updated_at',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    },
+    {
+      name: 'order_assignments.updated_at',
+      sql: `ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    },
+    {
+      name: 'users.fcm_token',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS fcm_token TEXT`,
+    },
+    {
+      name: 'users.fcm_token_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_users_fcm_token ON users(fcm_token) WHERE fcm_token IS NOT NULL`,
+    },
+    {
+      name: 'schema_migrations_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(255) NOT NULL UNIQUE,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'order_status.payment_pending',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PAYMENT_PENDING'`,
+    },
+    {
+      name: 'order_status.payment_verified',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PAYMENT_VERIFIED'`,
+    },
+    {
+      name: 'order_status.packing_started',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PACKING_STARTED'`,
+    },
+    {
+      name: 'order_status.rider_assigned',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'RIDER_ASSIGNED'`,
+    },
+    {
+      name: 'order_status.rider_accepted',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'RIDER_ACCEPTED'`,
+    },
+    {
+      name: 'order_status.rider_rejected',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'RIDER_REJECTED'`,
+    },
+    {
+      name: 'order_status.rider_nearby',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'RIDER_NEARBY'`,
+    },
+    {
+      name: 'order_status.refunded',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'REFUNDED'`,
+    },
+    {
+      name: 'order_status.failed',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'FAILED'`,
+    },
   ];
 
   for (const step of steps) {
     try {
-      await query(step.sql);
+      if (step.run) {
+        await step.run();
+      } else {
+        await query(step.sql);
+      }
     } catch (err) {
       logger.warn('schema_ensure_failed', {
         step: step.name,
