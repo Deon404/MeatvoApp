@@ -9,200 +9,458 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg: #0F0F0F;
+      --surface: #1C1C1E;
+      --primary: #C8102E;
+      --primary-hover: #E8293F;
+      --text: #FFFFFF;
+      --text-muted: #A0A0A0;
+      --highlight: #2C2C2E;
+      --shadow: #080808;
+      --radius-card: 16px;
+      --radius-btn: 12px;
+      --radius-pill: 20px;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; scroll-padding-top: 80px; }
 
     body {
       font-family: 'Poppins', sans-serif;
       font-size: 16px;
       line-height: 1.6;
-      color: #1a1a1a;
-      background: #fafafa;
+      color: var(--text-muted);
+      background: var(--bg);
+      min-height: 100vh;
     }
 
-    a { color: #C8102E; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    a { color: var(--primary); text-decoration: none; transition: color 0.2s; }
+    a:hover { color: var(--primary-hover); }
 
-    /* Header */
-    header {
-      background: #C8102E;
-      color: #fff;
-      padding: 2.5rem 1.25rem 2rem;
-      text-align: center;
+    /* Neumorphic utilities */
+    .neu-raised {
+      background: var(--surface);
+      border-radius: var(--radius-card);
+      box-shadow: 8px 8px 16px var(--shadow), -8px -8px 16px var(--highlight);
     }
 
-    header .logo {
-      font-size: 2.25rem;
+    .neu-inset {
+      background: var(--surface);
+      border-radius: var(--radius-btn);
+      box-shadow: inset 4px 4px 8px var(--shadow), inset -4px -4px 8px var(--highlight);
+    }
+
+    .neu-pill {
+      background: var(--surface);
+      border-radius: var(--radius-pill);
+      box-shadow: inset 3px 3px 6px var(--shadow), inset -3px -3px 6px var(--highlight);
+    }
+
+    /* Hero */
+    .hero {
+      max-width: 960px;
+      margin: 1.5rem auto 0;
+      padding: 0 1.25rem;
+    }
+
+    .hero-inner {
+      display: grid;
+      gap: 1.75rem;
+      padding: 2rem 1.5rem;
+      align-items: center;
+    }
+
+    .hero-brand {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .hero-brand img {
+      width: 56px;
+      height: 56px;
+      border-radius: var(--radius-btn);
+      object-fit: contain;
+    }
+
+    .hero-brand h1 {
+      font-size: 2rem;
       font-weight: 700;
+      color: var(--text);
       letter-spacing: -0.5px;
     }
 
-    header .tagline {
-      margin-top: 0.5rem;
-      font-size: 1.05rem;
-      font-weight: 400;
-      opacity: 0.95;
+    .hero-tagline {
+      font-size: 1.1rem;
+      color: var(--text-muted);
+      margin-bottom: 1.25rem;
+    }
+
+    .hero-tagline em {
+      color: var(--primary);
+      font-style: normal;
+      font-weight: 600;
+    }
+
+    .hero-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+    }
+
+    .hero-chip {
+      padding: 0.45rem 1rem;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    .hero-image-wrap {
+      padding: 0.75rem;
+      border-radius: var(--radius-card);
+    }
+
+    .hero-image-wrap img {
+      width: 100%;
+      height: 220px;
+      object-fit: cover;
+      border-radius: var(--radius-btn);
+      display: block;
     }
 
     /* Nav */
-    nav {
-      background: #fff;
-      border-bottom: 1px solid #e8e8e8;
+    .nav-wrap {
+      max-width: 960px;
+      margin: 1.25rem auto 0;
+      padding: 0 1.25rem;
       position: sticky;
-      top: 0;
-      z-index: 10;
+      top: 0.75rem;
+      z-index: 100;
+    }
+
+    nav.neu-inset {
+      padding: 0.5rem;
       overflow-x: auto;
       -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
     }
+
+    nav.neu-inset::-webkit-scrollbar { display: none; }
 
     nav ul {
       list-style: none;
       display: flex;
       flex-wrap: nowrap;
-      gap: 0;
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 0.75rem;
+      gap: 0.25rem;
+      min-width: min-content;
     }
-
-    nav li { flex-shrink: 0; }
 
     nav a {
       display: block;
-      padding: 0.85rem 0.9rem;
-      font-size: 0.82rem;
+      padding: 0.55rem 0.85rem;
+      font-size: 0.78rem;
       font-weight: 500;
-      color: #444;
-      text-decoration: none;
+      color: var(--text-muted);
+      border-radius: var(--radius-pill);
       white-space: nowrap;
-      border-bottom: 2px solid transparent;
+      text-decoration: none;
+      transition: color 0.2s, box-shadow 0.2s;
     }
 
     nav a:hover {
-      color: #C8102E;
-      border-bottom-color: #C8102E;
-      text-decoration: none;
+      color: var(--primary);
+      box-shadow: inset 2px 2px 4px var(--shadow), inset -2px -2px 4px var(--highlight);
     }
 
     /* Main */
     main {
-      max-width: 720px;
+      max-width: 960px;
       margin: 0 auto;
       padding: 1.5rem 1.25rem 3rem;
     }
 
-    section {
-      background: #fff;
-      border-radius: 12px;
+    section.neu-raised {
       padding: 1.75rem 1.5rem;
-      margin-bottom: 1.25rem;
-      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+      margin-bottom: 1.5rem;
     }
 
     section h2 {
-      font-size: 1.25rem;
+      font-size: 1.3rem;
       font-weight: 600;
-      color: #C8102E;
-      margin-bottom: 1rem;
-      padding-bottom: 0.5rem;
-      border-bottom: 2px solid #f0f0f0;
+      color: var(--primary);
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--highlight);
     }
-
-    section h3 {
-      font-size: 1rem;
-      font-weight: 600;
-      color: #333;
-      margin: 1.25rem 0 0.4rem;
-    }
-
-    section h3:first-of-type { margin-top: 0; }
 
     section p {
-      color: #555;
       margin-bottom: 0.75rem;
     }
 
     section p:last-child { margin-bottom: 0; }
 
     section ul {
-      color: #555;
       padding-left: 1.25rem;
       margin-bottom: 0.75rem;
     }
 
     section li { margin-bottom: 0.35rem; }
 
+    .meta { font-size: 0.85rem; color: var(--text-muted); opacity: 0.8; }
+
+    /* About grid */
+    .about-grid {
+      display: grid;
+      gap: 1.5rem;
+      align-items: center;
+    }
+
+    .about-visual {
+      padding: 1.25rem;
+      text-align: center;
+    }
+
+    .about-visual img {
+      max-width: 160px;
+      width: 100%;
+      height: auto;
+      border-radius: var(--radius-btn);
+    }
+
+    /* Services grid */
+    .services-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1.25rem;
+      margin: 1.25rem 0;
+    }
+
+    .service-card {
+      padding: 1rem;
+      text-align: center;
+      transition: box-shadow 0.25s;
+    }
+
+    .service-card:hover {
+      box-shadow: 8px 8px 16px var(--shadow), -8px -8px 16px var(--highlight),
+                  0 0 20px rgba(200, 16, 46, 0.15);
+    }
+
+    .service-img-frame {
+      padding: 0.5rem;
+      margin-bottom: 0.75rem;
+      border-radius: var(--radius-btn);
+    }
+
+    .service-img-frame img {
+      width: 100%;
+      height: 140px;
+      object-fit: cover;
+      border-radius: 8px;
+      display: block;
+    }
+
+    .service-card h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.25rem;
+    }
+
+    .service-card p {
+      font-size: 0.85rem;
+      margin-bottom: 0;
+    }
+
+    /* Contact */
+    .contact-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
     .contact-item {
       display: flex;
       align-items: flex-start;
-      gap: 0.6rem;
-      margin-bottom: 0.6rem;
-      color: #555;
+      gap: 0.75rem;
+      padding: 0.85rem 1rem;
+      font-size: 0.92rem;
     }
 
     .contact-item strong {
-      color: #333;
-      min-width: 3.5rem;
+      color: var(--text);
+      min-width: 3.75rem;
+      font-weight: 600;
+      font-size: 0.85rem;
     }
+
+    /* Legal collapsibles */
+    .legal-block { margin-top: 0.75rem; }
+
+    details.neu-inset {
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+    }
+
+    details.neu-inset summary {
+      padding: 0.85rem 1rem;
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+
+    details.neu-inset summary::-webkit-details-marker { display: none; }
+
+    details.neu-inset summary::before {
+      content: '+';
+      display: inline-block;
+      width: 1.25rem;
+      color: var(--primary);
+      font-weight: 700;
+    }
+
+    details.neu-inset[open] summary::before { content: '−'; }
+
+    details.neu-inset .detail-body {
+      padding: 0 1rem 1rem;
+      font-size: 0.9rem;
+    }
+
+    details.neu-inset .detail-body p { margin-bottom: 0.6rem; }
+    details.neu-inset .detail-body ul { margin-bottom: 0.6rem; }
 
     /* Footer */
     footer {
-      text-align: center;
-      padding: 1.5rem 1.25rem;
-      font-size: 0.85rem;
-      color: #888;
-      border-top: 1px solid #e8e8e8;
-      background: #fff;
+      max-width: 960px;
+      margin: 0 auto 2rem;
+      padding: 0 1.25rem;
     }
 
-    footer .brand { color: #C8102E; font-weight: 600; }
+    .footer-inner {
+      text-align: center;
+      padding: 1.25rem 1.5rem;
+      font-size: 0.85rem;
+    }
 
-    @media (min-width: 600px) {
-      header { padding: 3rem 2rem 2.5rem; }
-      header .logo { font-size: 2.75rem; }
-      header .tagline { font-size: 1.15rem; }
-      main { padding: 2rem 1.5rem 3.5rem; }
-      section { padding: 2rem 2rem; }
+    footer .brand {
+      color: var(--primary);
+      font-weight: 600;
+    }
+
+    footer p + p { margin-top: 0.35rem; }
+
+    @media (min-width: 640px) {
+      .hero-inner {
+        grid-template-columns: 1fr 1fr;
+        padding: 2.5rem 2rem;
+      }
+
+      .hero-brand h1 { font-size: 2.5rem; }
+
+      .hero-image-wrap img { height: 280px; }
+
+      .about-grid { grid-template-columns: 1fr auto; }
+
+      .services-grid { grid-template-columns: repeat(3, 1fr); }
+
+      section.neu-raised { padding: 2rem 2rem; }
+
+      nav a { font-size: 0.82rem; padding: 0.6rem 1rem; }
+    }
+
+    @media (hover: none) {
+      .service-card:hover {
+        box-shadow: inset 4px 4px 8px var(--shadow), inset -4px -4px 8px var(--highlight);
+      }
     }
   </style>
 </head>
 <body>
 
-  <header>
-    <div class="logo">Meatvo</div>
-    <p class="tagline">Fresh meat, delivered in 1 hour</p>
-  </header>
+  <div class="hero">
+    <div class="hero-inner neu-raised">
+      <div class="hero-text">
+        <div class="hero-brand">
+          <img src="assets/logo.png" alt="Meatvo logo" width="56" height="56">
+          <h1>Meatvo</h1>
+        </div>
+        <p class="hero-tagline"><em>Fresh meat, delivered in 1 hour</em></p>
+        <div class="hero-chips">
+          <span class="hero-chip neu-pill">1-Hour Delivery</span>
+          <span class="hero-chip neu-pill">Bokaro, Jharkhand</span>
+          <span class="hero-chip neu-pill">COD &amp; Online</span>
+        </div>
+      </div>
+      <div class="hero-image-wrap neu-inset">
+        <img src="assets/hero-food.jpg" alt="Fresh meat delivery from Meatvo">
+      </div>
+    </div>
+  </div>
 
-  <nav aria-label="Page sections">
-    <ul>
-      <li><a href="#about">About</a></li>
-      <li><a href="#services">Services</a></li>
-      <li><a href="#contact">Contact</a></li>
-      <li><a href="#privacy">Privacy</a></li>
-      <li><a href="#terms">Terms</a></li>
-      <li><a href="#refund">Refund</a></li>
-      <li><a href="#shipping">Delivery</a></li>
-    </ul>
-  </nav>
+  <div class="nav-wrap">
+    <nav class="neu-inset" aria-label="Page sections">
+      <ul>
+        <li><a href="#about">About</a></li>
+        <li><a href="#services">Services</a></li>
+        <li><a href="#contact">Contact</a></li>
+        <li><a href="#privacy">Privacy</a></li>
+        <li><a href="#terms">Terms</a></li>
+        <li><a href="#refund">Refund</a></li>
+        <li><a href="#shipping">Delivery</a></li>
+      </ul>
+    </nav>
+  </div>
 
   <main>
 
-    <section id="about">
+    <section id="about" class="neu-raised">
       <h2>About Us</h2>
-      <p>
-        Meatvo is a hyperlocal raw meat delivery app serving Bokaro and surrounding areas in Jharkhand.
-        We connect you with fresh, quality chicken, mutton, and fish — cut and packed to order —
-        delivered straight to your doorstep.
-      </p>
-      <p>
-        Our mission is to make buying fresh meat as easy as ordering anything else online:
-        browse, checkout, and receive your order within the hour.
-      </p>
+      <div class="about-grid">
+        <div>
+          <p>
+            Meatvo is a hyperlocal raw meat delivery app serving Bokaro and surrounding areas in Jharkhand.
+            We connect you with fresh, quality chicken, mutton, and fish — cut and packed to order —
+            delivered straight to your doorstep.
+          </p>
+          <p>
+            Our mission is to make buying fresh meat as easy as ordering anything else online:
+            browse, checkout, and receive your order within the hour.
+          </p>
+        </div>
+        <div class="about-visual neu-inset">
+          <img src="assets/meatvo_logo.png" alt="Meatvo brand">
+        </div>
+      </div>
     </section>
 
-    <section id="services">
+    <section id="services" class="neu-raised">
       <h2>Services &amp; Pricing</h2>
+      <div class="services-grid">
+        <article class="service-card neu-inset">
+          <div class="service-img-frame neu-inset">
+            <img src="https://images.unsplash.com/photo-1604503468506-a8da286d644f?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Fresh chicken" loading="lazy">
+          </div>
+          <h3>Chicken</h3>
+          <p>Whole bird, cuts &amp; boneless — farm fresh</p>
+        </article>
+        <article class="service-card neu-inset">
+          <div class="service-img-frame neu-inset">
+            <img src="https://images.unsplash.com/photo-1607623814075-e51df1bdc82f?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Fresh mutton" loading="lazy">
+          </div>
+          <h3>Mutton</h3>
+          <p>Curry cuts, chops &amp; premium selections</p>
+        </article>
+        <article class="service-card neu-inset">
+          <div class="service-img-frame neu-inset">
+            <img src="https://images.unsplash.com/photo-1519003722824-194d4455a60c?auto=format&amp;fit=crop&amp;w=600&amp;q=80" alt="Fresh fish" loading="lazy">
+          </div>
+          <h3>Fish</h3>
+          <p>Cleaned, cut &amp; ready to cook</p>
+        </article>
+      </div>
       <p>
         Prices are shown in the app and updated regularly to reflect current market rates.
         All product listings include weight, cut type, and per-unit pricing before you add to cart.
@@ -217,236 +475,320 @@
       </p>
     </section>
 
-    <section id="contact">
+    <section id="contact" class="neu-raised">
       <h2>Contact Us</h2>
       <p>We are here to help with orders, delivery queries, and account support.</p>
-      <div class="contact-item">
-        <strong>Email:</strong>
-        <a href="mailto:support@meatvo.in">support@meatvo.in</a>
-      </div>
-      <div class="contact-item">
-        <strong>Phone:</strong>
-        <span>+91 XXXXX XXXXX (placeholder)</span>
-      </div>
-      <div class="contact-item">
-        <strong>Hours:</strong>
-        <span>Monday – Sunday, 8:00 AM – 10:00 PM IST</span>
-      </div>
-      <div class="contact-item">
-        <strong>Area:</strong>
-        <span>Bokaro, Jharkhand and nearby serviceable localities</span>
+      <div class="contact-list">
+        <div class="contact-item neu-inset">
+          <strong>Email:</strong>
+          <a href="mailto:support@meatvo.in">support@meatvo.in</a>
+        </div>
+        <div class="contact-item neu-inset">
+          <strong>Phone:</strong>
+          <span>+91 XXXXX XXXXX (placeholder)</span>
+        </div>
+        <div class="contact-item neu-inset">
+          <strong>Hours:</strong>
+          <span>Monday – Sunday, 8:00 AM – 10:00 PM IST</span>
+        </div>
+        <div class="contact-item neu-inset">
+          <strong>Area:</strong>
+          <span>Bokaro, Jharkhand and nearby serviceable localities</span>
+        </div>
       </div>
     </section>
 
-    <section id="privacy">
+    <section id="privacy" class="neu-raised">
       <h2>Privacy Policy</h2>
-      <p><em>Last updated: June 2026</em></p>
+      <p class="meta">Last updated: June 2026</p>
       <p>
         This Privacy Policy explains how Meatvo ("we", "us", "our") collects, uses, and protects
         your personal information when you use our mobile application and related services.
       </p>
-
-      <h3>Data We Collect</h3>
-      <p>
-        We collect information necessary to provide our meat delivery service, including your
-        delivery location, phone number, name, and order history. Location data is used to confirm
-        delivery availability in your area and to route your orders efficiently. Your phone number
-        is used for account verification via OTP, order status updates, and delivery coordination.
-      </p>
-      <p>
-        We may also collect payment transaction references (not full card details), device
-        information, and app usage data to maintain and improve the service.
-      </p>
-
-      <h3>How We Use Your Data</h3>
-      <p>
-        Your data is used to fulfil deliveries, send order status notifications, process payments,
-        and improve our app experience. We may analyse anonymised usage patterns to enhance product
-        recommendations and delivery efficiency. We do not use your personal data for purposes
-        unrelated to our service.
-      </p>
-      <p>
-        We may share limited information with delivery partners solely to complete your order.
-        We do not sell, rent, or trade your personal data to third parties for marketing purposes.
-      </p>
-
-      <h3>Data Retention</h3>
-      <p>
-        We retain your account and order data for as long as your account is active or as needed
-        to comply with legal obligations, resolve disputes, and enforce our agreements. You may
-        request account deletion by contacting us at support@meatvo.in.
-      </p>
-
-      <h3>Data Security</h3>
-      <p>
-        We store your personal information using encrypted storage and industry-standard security
-        practices. Access to your data is restricted to authorised personnel only. While we take
-        reasonable measures to protect your information, no method of transmission over the
-        internet is 100% secure.
-      </p>
-
-      <h3>Your Rights</h3>
-      <p>
-        You may request access to, correction of, or deletion of your personal data by contacting
-        us. You may also opt out of non-essential communications at any time.
-      </p>
-
-      <h3>Contact Us</h3>
-      <p>
-        If you have questions about this privacy policy or how we handle your data, please contact
-        us at <a href="mailto:support@meatvo.in">support@meatvo.in</a>.
-      </p>
+      <div class="legal-block">
+        <details class="neu-inset">
+          <summary>Data We Collect</summary>
+          <div class="detail-body">
+            <p>
+              We collect information necessary to provide our meat delivery service, including your
+              delivery location, phone number, name, and order history. Location data is used to confirm
+              delivery availability in your area and to route your orders efficiently. Your phone number
+              is used for account verification via OTP, order status updates, and delivery coordination.
+            </p>
+            <p>
+              We may also collect payment transaction references (not full card details), device
+              information, and app usage data to maintain and improve the service.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>How We Use Your Data</summary>
+          <div class="detail-body">
+            <p>
+              Your data is used to fulfil deliveries, send order status notifications, process payments,
+              and improve our app experience. We may analyse anonymised usage patterns to enhance product
+              recommendations and delivery efficiency. We do not use your personal data for purposes
+              unrelated to our service.
+            </p>
+            <p>
+              We may share limited information with delivery partners solely to complete your order.
+              We do not sell, rent, or trade your personal data to third parties for marketing purposes.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Data Retention</summary>
+          <div class="detail-body">
+            <p>
+              We retain your account and order data for as long as your account is active or as needed
+              to comply with legal obligations, resolve disputes, and enforce our agreements. You may
+              request account deletion by contacting us at support@meatvo.in.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Data Security</summary>
+          <div class="detail-body">
+            <p>
+              We store your personal information using encrypted storage and industry-standard security
+              practices. Access to your data is restricted to authorised personnel only. While we take
+              reasonable measures to protect your information, no method of transmission over the
+              internet is 100% secure.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Your Rights</summary>
+          <div class="detail-body">
+            <p>
+              You may request access to, correction of, or deletion of your personal data by contacting
+              us. You may also opt out of non-essential communications at any time.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Contact Us</summary>
+          <div class="detail-body">
+            <p>
+              If you have questions about this privacy policy or how we handle your data, please contact
+              us at <a href="mailto:support@meatvo.in">support@meatvo.in</a>.
+            </p>
+          </div>
+        </details>
+      </div>
     </section>
 
-    <section id="terms">
+    <section id="terms" class="neu-raised">
       <h2>Terms of Service</h2>
-      <p><em>Last updated: June 2026</em></p>
-
-      <h3>Acceptance of Terms</h3>
-      <p>
-        By using the Meatvo app, you agree to these Terms of Service. If you do not agree, please
-        discontinue use of the app. We may update these terms from time to time, and continued use
-        after changes constitutes acceptance of the revised terms.
-      </p>
-
-      <h3>Orders &amp; Payments</h3>
-      <p>
-        All orders placed through the app are subject to product availability and delivery area
-        coverage. Prices displayed at checkout are final. Payment must be completed before order
-        confirmation (or at delivery for Cash on Delivery orders). Refunds and cancellations are
-        handled according to our Refund &amp; Cancellation Policy and applicable consumer protection
-        laws.
-      </p>
-
-      <h3>User Responsibilities</h3>
-      <p>
-        You are responsible for providing accurate delivery addresses and contact information.
-        You agree to use the app only for lawful purposes and not to misuse the service, attempt
-        unauthorised access, or interfere with other users' experience.
-      </p>
-
-      <h3>Product Quality</h3>
-      <p>
-        Meatvo sells perishable food products. Please inspect your order upon delivery and report
-        any quality concerns within the timeframe stated in our Refund Policy. We are not liable
-        for issues arising from improper storage after delivery.
-      </p>
-
-      <h3>Limitation of Liability</h3>
-      <p>
-        Meatvo is not liable for delays caused by factors outside our reasonable control, including
-        severe weather, traffic, or incorrect address information provided by the customer. Our
-        liability is limited to the value of the affected order.
-      </p>
-
-      <h3>Contact Us</h3>
-      <p>
-        For questions about these terms or any disputes, please contact us at
-        <a href="mailto:support@meatvo.in">support@meatvo.in</a>.
-      </p>
+      <p class="meta">Last updated: June 2026</p>
+      <div class="legal-block">
+        <details class="neu-inset">
+          <summary>Acceptance of Terms</summary>
+          <div class="detail-body">
+            <p>
+              By using the Meatvo app, you agree to these Terms of Service. If you do not agree, please
+              discontinue use of the app. We may update these terms from time to time, and continued use
+              after changes constitutes acceptance of the revised terms.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Orders &amp; Payments</summary>
+          <div class="detail-body">
+            <p>
+              All orders placed through the app are subject to product availability and delivery area
+              coverage. Prices displayed at checkout are final. Payment must be completed before order
+              confirmation (or at delivery for Cash on Delivery orders). Refunds and cancellations are
+              handled according to our Refund &amp; Cancellation Policy and applicable consumer protection
+              laws.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>User Responsibilities</summary>
+          <div class="detail-body">
+            <p>
+              You are responsible for providing accurate delivery addresses and contact information.
+              You agree to use the app only for lawful purposes and not to misuse the service, attempt
+              unauthorised access, or interfere with other users' experience.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Product Quality</summary>
+          <div class="detail-body">
+            <p>
+              Meatvo sells perishable food products. Please inspect your order upon delivery and report
+              any quality concerns within the timeframe stated in our Refund Policy. We are not liable
+              for issues arising from improper storage after delivery.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Limitation of Liability</summary>
+          <div class="detail-body">
+            <p>
+              Meatvo is not liable for delays caused by factors outside our reasonable control, including
+              severe weather, traffic, or incorrect address information provided by the customer. Our
+              liability is limited to the value of the affected order.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Contact Us</summary>
+          <div class="detail-body">
+            <p>
+              For questions about these terms or any disputes, please contact us at
+              <a href="mailto:support@meatvo.in">support@meatvo.in</a>.
+            </p>
+          </div>
+        </details>
+      </div>
     </section>
 
-    <section id="refund">
+    <section id="refund" class="neu-raised">
       <h2>Refund &amp; Cancellation Policy</h2>
-      <p><em>Last updated: June 2026</em></p>
-
-      <h3>Order Cancellation by Customer</h3>
-      <p>
-        You may cancel an order free of charge before it enters the "Preparing" stage. Once preparation
-        has begun, cancellation may not be possible as fresh products are cut and packed to order.
-        To cancel, use the in-app cancel option or contact support@meatvo.in immediately.
-      </p>
-
-      <h3>Cancellation by Meatvo</h3>
-      <p>
-        We reserve the right to cancel an order if a product is unavailable, your address is outside
-        our service area, payment cannot be verified, or we suspect fraudulent activity. You will
-        receive a full refund for any prepaid amount in such cases.
-      </p>
-
-      <h3>Refund Eligibility</h3>
-      <p>Refunds may be issued in the following situations:</p>
-      <ul>
-        <li>Order cancelled by Meatvo due to unavailability or service issues</li>
-        <li>Wrong item delivered — report within 2 hours of delivery with photo evidence</li>
-        <li>Product quality issue (spoiled, incorrect weight, or not fresh) — report within 2 hours of delivery</li>
-        <li>Order not delivered within the promised window due to our fault</li>
-      </ul>
-
-      <h3>Non-Refundable Cases</h3>
-      <ul>
-        <li>Change of mind after order preparation has started</li>
-        <li>Incorrect address or contact details provided by the customer</li>
-        <li>Customer unavailable at the delivery location after multiple attempts</li>
-        <li>Products stored improperly after delivery</li>
-      </ul>
-
-      <h3>Refund Processing</h3>
-      <p>
-        Approved refunds for online payments are processed within 5–7 business days to the original
-        payment method. COD orders eligible for refund will be credited via UPI or bank transfer
-        after verification. Contact <a href="mailto:support@meatvo.in">support@meatvo.in</a> to
-        initiate a refund request.
-      </p>
+      <p class="meta">Last updated: June 2026</p>
+      <div class="legal-block">
+        <details class="neu-inset">
+          <summary>Order Cancellation by Customer</summary>
+          <div class="detail-body">
+            <p>
+              You may cancel an order free of charge before it enters the "Preparing" stage. Once preparation
+              has begun, cancellation may not be possible as fresh products are cut and packed to order.
+              To cancel, use the in-app cancel option or contact support@meatvo.in immediately.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Cancellation by Meatvo</summary>
+          <div class="detail-body">
+            <p>
+              We reserve the right to cancel an order if a product is unavailable, your address is outside
+              our service area, payment cannot be verified, or we suspect fraudulent activity. You will
+              receive a full refund for any prepaid amount in such cases.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Refund Eligibility</summary>
+          <div class="detail-body">
+            <p>Refunds may be issued in the following situations:</p>
+            <ul>
+              <li>Order cancelled by Meatvo due to unavailability or service issues</li>
+              <li>Wrong item delivered — report within 2 hours of delivery with photo evidence</li>
+              <li>Product quality issue (spoiled, incorrect weight, or not fresh) — report within 2 hours of delivery</li>
+              <li>Order not delivered within the promised window due to our fault</li>
+            </ul>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Non-Refundable Cases</summary>
+          <div class="detail-body">
+            <ul>
+              <li>Change of mind after order preparation has started</li>
+              <li>Incorrect address or contact details provided by the customer</li>
+              <li>Customer unavailable at the delivery location after multiple attempts</li>
+              <li>Products stored improperly after delivery</li>
+            </ul>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Refund Processing</summary>
+          <div class="detail-body">
+            <p>
+              Approved refunds for online payments are processed within 5–7 business days to the original
+              payment method. COD orders eligible for refund will be credited via UPI or bank transfer
+              after verification. Contact <a href="mailto:support@meatvo.in">support@meatvo.in</a> to
+              initiate a refund request.
+            </p>
+          </div>
+        </details>
+      </div>
     </section>
 
-    <section id="shipping">
+    <section id="shipping" class="neu-raised">
       <h2>Shipping &amp; Delivery Policy</h2>
-      <p><em>Last updated: June 2026</em></p>
-
-      <h3>Delivery Area</h3>
-      <p>
-        Meatvo currently delivers to selected localities in and around Bokaro, Jharkhand.
-        Enter your address in the app to check whether your location is serviceable before placing
-        an order.
-      </p>
-
-      <h3>Express 1-Hour Delivery</h3>
-      <p>
-        Our express delivery promise aims to deliver your order within 1 hour of confirmation,
-        subject to product availability, order volume, and weather or traffic conditions.
-        Delivery times shown in the app are estimates and not guaranteed in exceptional circumstances.
-      </p>
-
-      <h3>Delivery Slots</h3>
-      <p>
-        You may choose an available delivery slot at checkout. We pack orders fresh to your
-        selected slot. Please ensure someone is available at the delivery address during the
-        chosen time window.
-      </p>
-
-      <h3>Packaging</h3>
-      <p>
-        All meat products are hygienically packed in sealed, food-grade packaging to maintain
-        freshness and temperature during transit. We recommend refrigerating products immediately
-        upon receipt.
-      </p>
-
-      <h3>Delivery Charges</h3>
-      <p>
-        Applicable delivery fees, if any, are displayed at checkout before you confirm your order.
-        Promotional free delivery offers, when available, will be reflected in the app.
-      </p>
-
-      <h3>Failed Delivery</h3>
-      <p>
-        If our delivery partner is unable to reach you after reasonable attempts, the order may
-        be marked as failed delivery. Perishable items cannot be re-delivered; please refer to our
-        Refund Policy for applicable cases.
-      </p>
-
-      <h3>Contact</h3>
-      <p>
-        For delivery-related queries, reach us at
-        <a href="mailto:support@meatvo.in">support@meatvo.in</a> or call +91 XXXXX XXXXX (placeholder).
-      </p>
+      <p class="meta">Last updated: June 2026</p>
+      <div class="legal-block">
+        <details class="neu-inset">
+          <summary>Delivery Area</summary>
+          <div class="detail-body">
+            <p>
+              Meatvo currently delivers to selected localities in and around Bokaro, Jharkhand.
+              Enter your address in the app to check whether your location is serviceable before placing
+              an order.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Express 1-Hour Delivery</summary>
+          <div class="detail-body">
+            <p>
+              Our express delivery promise aims to deliver your order within 1 hour of confirmation,
+              subject to product availability, order volume, and weather or traffic conditions.
+              Delivery times shown in the app are estimates and not guaranteed in exceptional circumstances.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Delivery Slots</summary>
+          <div class="detail-body">
+            <p>
+              You may choose an available delivery slot at checkout. We pack orders fresh to your
+              selected slot. Please ensure someone is available at the delivery address during the
+              chosen time window.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Packaging</summary>
+          <div class="detail-body">
+            <p>
+              All meat products are hygienically packed in sealed, food-grade packaging to maintain
+              freshness and temperature during transit. We recommend refrigerating products immediately
+              upon receipt.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Delivery Charges</summary>
+          <div class="detail-body">
+            <p>
+              Applicable delivery fees, if any, are displayed at checkout before you confirm your order.
+              Promotional free delivery offers, when available, will be reflected in the app.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Failed Delivery</summary>
+          <div class="detail-body">
+            <p>
+              If our delivery partner is unable to reach you after reasonable attempts, the order may
+              be marked as failed delivery. Perishable items cannot be re-delivered; please refer to our
+              Refund Policy for applicable cases.
+            </p>
+          </div>
+        </details>
+        <details class="neu-inset">
+          <summary>Contact</summary>
+          <div class="detail-body">
+            <p>
+              For delivery-related queries, reach us at
+              <a href="mailto:support@meatvo.in">support@meatvo.in</a> or call +91 XXXXX XXXXX (placeholder).
+            </p>
+          </div>
+        </details>
+      </div>
     </section>
 
   </main>
 
   <footer>
-    <p>&copy; 2026 <span class="brand">Meatvo</span>. All rights reserved.</p>
-    <p>Bokaro, Jharkhand, India</p>
+    <div class="footer-inner neu-inset">
+      <p>&copy; 2026 <span class="brand">Meatvo</span>. All rights reserved.</p>
+      <p>Bokaro, Jharkhand, India</p>
+    </div>
   </footer>
 
 </body>
