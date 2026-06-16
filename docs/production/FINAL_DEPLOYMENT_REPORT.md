@@ -82,11 +82,13 @@ Live deployment, external credentials, and mobile store release require operator
 ### 2. Phase 1 — Server Setup (~30 min)
 
 ```bash
-MEATVO_DB_PASSWORD='StrongDbPass!' \
-MEATVO_REDIS_PASSWORD='StrongRedisPass!' \
+MEATVO_DB_PASSWORD='<SET_VIA_ENV>' \
+MEATVO_REDIS_PASSWORD='<SET_VIA_ENV>' \
   bash scripts/vps-phase1-setup.sh
 bash scripts/vps-phase1-verify.sh
 ```
+
+> **Security note:** Rotate these credentials before deploy — example values were previously committed in plaintext. Generate with `openssl rand -base64 24` and store only in server env / `.env` (never in git).
 
 ### 3. Phase 2 — Deploy Backend (~20 min)
 

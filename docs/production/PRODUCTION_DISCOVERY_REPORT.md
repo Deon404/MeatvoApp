@@ -12,7 +12,7 @@ Meatvo is a hyperlocal raw-meat delivery platform (India). Monorepo structure:
 | Path | Purpose |
 |------|---------|
 | `backend/` | Node.js REST API + Socket.io + PostgreSQL/Redis |
-| `old_meatvo/` | Flutter customer/rider/admin mobile app |
+| `frontend/` | Flutter customer/rider/admin mobile app |
 | `admin/`, `customer/`, `delivery/` | Web SPAs served by backend |
 | `shared/` | Shared env manifest (`env-manifest.json`) |
 | `scripts/` | VPS deployment, backup, SSL, Nginx configs |
@@ -37,7 +37,7 @@ Meatvo is a hyperlocal raw-meat delivery platform (India). Monorepo structure:
 
 | Client | Stack |
 |--------|-------|
-| Flutter (`old_meatvo/`) | Flutter 3.9+, Riverpod, Dio, Socket.io, Google Maps |
+| Flutter (`frontend/`) | Flutter 3.9+, Riverpod, Dio, Socket.io, Google Maps |
 | Web SPAs | Static HTML/JS served from `/admin`, `/customer`, `/delivery` |
 
 ---
@@ -105,7 +105,7 @@ Critical production: `DATABASE_URL`, `REDIS_URL`, JWT secrets, `OTP_HASH_SECRET`
 cd backend && npm ci --omit=dev
 
 # Flutter (release)
-cd old_meatvo && flutter build appbundle --release --dart-define-from-file=env.production.json
+cd frontend && flutter build appbundle --release --dart-define-from-file=env.production.json
 ```
 
 ---

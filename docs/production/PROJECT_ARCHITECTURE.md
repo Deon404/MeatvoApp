@@ -12,7 +12,7 @@ Meatvo is a hyperlocal raw-meat delivery platform (India). Monorepo with Node.js
 | Database | PostgreSQL (raw SQL) | `backend/src/db/` |
 | Cache | Redis (`ioredis`) | `backend/src/db/redis.js` |
 | Real-time | Socket.io path `/ws` | `backend/src/socket/` |
-| Mobile | Flutter 3.9+ | `old_meatvo/` |
+| Mobile | Flutter 3.9+ | `frontend/` |
 | Reverse proxy | Nginx | VPS / Docker |
 | Process manager | PM2 | `backend/ecosystem.config.js` |
 

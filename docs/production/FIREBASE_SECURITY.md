@@ -1,6 +1,6 @@
 # Firebase API Key Security
 
-The file `old_meatvo/android/app/google-services.json` contains a Firebase API key committed to the repository.
+The file `frontend/android/app/google-services.json` contains a Firebase API key committed to the repository.
 
 ## Required Actions (Firebase Console)
 

@@ -26,4 +26,4 @@ The Node.js backend (`backend/index.js`) serves:
 
 ## Flutter Mobile
 
-Customer/rider/admin mobile apps are built from `old_meatvo/` and connect to the same backend API.
+Customer/rider/admin mobile apps are built from `frontend/` and connect to the same backend API.

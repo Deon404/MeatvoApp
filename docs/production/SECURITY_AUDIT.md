@@ -42,7 +42,7 @@ Default OTP length increased to **6 digits** (100K–999K range).
 
 ### SEC-05: Flutter Debug Keystore — OPERATOR
 
-**File:** `old_meatvo/android/app/build.gradle.kts`  
+**File:** `frontend/android/app/build.gradle.kts`  
 Release signing config added; operator must provide production keystore.
 
 ---

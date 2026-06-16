@@ -1,4 +1,7 @@
 {
+  "_meta": {
+    "note": "Historical Codeflow export — XSS patterns below are NOT deployed; web admin SPA absent from repo. Use Flutter admin (frontend/lib/screens/admin/) or /api/admin/* APIs."
+  },
   "repository": "Local Folder",
   "analyzedAt": "2026-04-29T19:08:29.329Z",
   "codeflowVersion": "1.0",

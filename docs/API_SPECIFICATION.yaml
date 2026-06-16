@@ -1,0 +1,3708 @@
+openapi: 3.0.3
+info:
+  title: Meatvo API
+  description: |
+    **Enterprise-grade REST API for Meatvo - Hyperlocal Raw Meat Delivery Platform**
+    
+    ## Overview
+    Meatvo provides a comprehensive API for managing a hyperlocal raw meat delivery service.
+    The platform supports three user roles: Customers, Delivery Partners, and Admins.
+    
+    ## Base URL
+    - Development: `http://localhost:8080/api`
+    - Production: `https://api.meatvo.com/api`
+    
+    ## Authentication
+    Most endpoints require JWT authentication via Bearer token in the Authorization header.
+    Obtain tokens through the OTP-based authentication flow.
+    
+    ## Rate Limiting
+    - **API General**: 300 requests per 15 minutes per IP
+    - **Auth Routes**: 60 requests per 15 minutes per IP
+    - **OTP Requests**: 10 requests per 10 minutes per phone number
+    - **Payment Initiation**: 10 requests per minute per user
+    - **Admin Routes**: 100 requests per 15 minutes per IP
+    - **Token Refresh**: 10 requests per minute per IP
+    
+    ## Standard Response Format
+    
+    ### Success Response (2xx)
+    ```json
+    {
+      "success": true,
+      "ok": true,
+      "data": {},
+      "message": "Success message"
+    }
+    ```
+    
+    ### Error Response (4xx/5xx)
+    ```json
+    {
+      "success": false,
+      "ok": false,
+      "error": {
+        "message": "Error description",
+        "code": "ERROR_CODE"
+      },
+      "data": {},
+      "message": "Error description"
+    }
+    ```
+    
+    ## Error Codes
+    - `VALIDATION_ERROR` - Request validation failed
+    - `UNAUTHORIZED` - Authentication required or invalid token
+    - `FORBIDDEN` - Insufficient permissions
+    - `NOT_FOUND` - Resource not found
+    - `RATE_LIMITED` - Too many requests
+    - `OTP_EXPIRED` - OTP has expired
+    - `OTP_INVALID` - OTP verification failed
+    - `PHONE_BLOCKED` - Too many failed OTP attempts
+    - `PAYMENT_FAILED` - Payment processing failed
+    - `ORDER_NOT_CANCELLABLE` - Order cannot be cancelled
+    - `INSUFFICIENT_STOCK` - Product out of stock
+    - `INVALID_COUPON` - Coupon code is invalid or expired
+    - `SERVER_ERROR` - Internal server error
+    
+  version: 1.0.0
+  contact:
+    name: Meatvo API Support
+    email: api@meatvo.com
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080/api
+    description: Development server
+  - url: https://api.meatvo.com/api
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: OTP-based authentication, JWT token management, and MFA
+  - name: Users
+    description: User profile and FCM token management
+  - name: Addresses
+    description: Customer delivery address management
+  - name: Products
+    description: Product catalog browsing and management
+  - name: Categories
+    description: Product category operations
+  - name: Cart
+    description: Shopping cart operations (Redis-backed)
+  - name: Orders
+    description: Order placement, tracking, and management
+  - name: Payments
+    description: PhonePe payment integration
+  - name: Delivery
+    description: Delivery partner operations and slot management
+  - name: Coupons
+    description: Discount coupon management
+  - name: Banners
+    description: Promotional banner management
+  - name: Settings
+    description: Store settings and configuration
+  - name: Admin
+    description: Administrative operations
+  - name: Health
+    description: Health check and monitoring endpoints
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ==================== AUTHENTICATION ====================
+  /auth/send-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Send OTP to phone number
+      description: |
+        Sends a 4-digit OTP via SMS (MSG91) to the provided phone number.
+        Creates a new user account if phone number doesn't exist.
+        
+        **Rate Limits:**
+        - 10 OTP requests per 10 minutes per phone
+        - 100 requests per 15 minutes per IP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+              properties:
+                phone:
+                  type: string
+                  description: Phone number in E.164 format (e.g., +919999999999)
+                  pattern: '^\+[1-9]\d{1,14}$'
+                  example: "+919876543210"
+                resend:
+                  type: boolean
+                  description: Set to true if resending OTP
+                  default: false
+      responses:
+        '200':
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+              example:
+                success: true
+                ok: true
+                data:
+                  phone: "+919876543210"
+                  expiresIn: 600
+                message: "OTP sent successfully"
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /auth/verify-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Verify OTP and get JWT tokens
+      description: |
+        Verifies the OTP and returns JWT access and refresh tokens.
+        Also supports MFA verification if enabled for the user.
+        
+        **Rate Limits:**
+        - Max 3 OTP verification attempts before phone is temporarily blocked
+        - 100 requests per 15 minutes per IP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - otp
+              properties:
+                phone:
+                  type: string
+                  pattern: '^\+[1-9]\d{1,14}$'
+                  example: "+919876543210"
+                otp:
+                  type: string
+                  pattern: '^\d{4}$'
+                  description: 4-digit OTP code
+                  example: "1234"
+                mfaToken:
+                  type: string
+                  pattern: '^\d{6}$'
+                  description: 6-digit MFA token (required if MFA is enabled)
+                  example: "123456"
+      responses:
+        '200':
+          description: OTP verified successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken:
+                            type: string
+                            description: JWT access token (expires in 1 hour)
+                          refreshToken:
+                            type: string
+                            description: JWT refresh token (expires in 30 days)
+                          user:
+                            $ref: '#/components/schemas/User'
+        '401':
+          description: Invalid or expired OTP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidOtp:
+                  value:
+                    success: false
+                    ok: false
+                    error:
+                      message: "Invalid OTP"
+                      code: "OTP_INVALID"
+                    message: "Invalid OTP"
+                expiredOtp:
+                  value:
+                    success: false
+                    ok: false
+                    error:
+                      message: "OTP expired"
+                      code: "OTP_EXPIRED"
+                    message: "OTP expired"
+                phoneBlocked:
+                  value:
+                    success: false
+                    ok: false
+                    error:
+                      message: "Too many failed attempts. Phone blocked temporarily"
+                      code: "PHONE_BLOCKED"
+                    message: "Too many failed attempts. Phone blocked temporarily"
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/refresh-token:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: |
+        Exchanges a valid refresh token for a new access token.
+        
+        **Rate Limit:** 10 requests per minute per IP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  description: JWT refresh token obtained from /auth/verify-otp
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          accessToken:
+                            type: string
+                          refreshToken:
+                            type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /auth/me:
+    get:
+      tags:
+        - Authentication
+      summary: Get current user info
+      description: Returns the authenticated user's profile information
+      responses:
+        '200':
+          description: User info retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      description: Invalidates the current refresh token
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/mfa/setup:
+    post:
+      tags:
+        - Authentication
+      summary: Setup MFA (Multi-Factor Authentication)
+      description: |
+        Generates a new MFA secret and returns QR code data for authenticator apps.
+        User must verify with a token before MFA is enabled.
+      responses:
+        '200':
+          description: MFA setup initiated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          secret:
+                            type: string
+                            description: Base32-encoded MFA secret
+                          qrCode:
+                            type: string
+                            description: Data URL for QR code
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/mfa/enable:
+    post:
+      tags:
+        - Authentication
+      summary: Enable MFA
+      description: Enables MFA for the user after verifying a token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - secret
+                - token
+              properties:
+                secret:
+                  type: string
+                  minLength: 32
+                  description: MFA secret from /auth/mfa/setup
+                token:
+                  type: string
+                  pattern: '^\d{6}$'
+                  description: 6-digit token from authenticator app
+      responses:
+        '200':
+          description: MFA enabled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/mfa/disable:
+    post:
+      tags:
+        - Authentication
+      summary: Disable MFA
+      description: Disables MFA for the user after verifying a token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+              properties:
+                token:
+                  type: string
+                  pattern: '^\d{6}$'
+                  description: 6-digit token from authenticator app
+      responses:
+        '200':
+          description: MFA disabled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ==================== USERS ====================
+  /users/me:
+    get:
+      tags:
+        - Users
+      summary: Get current user profile
+      description: Returns the authenticated user's profile
+      responses:
+        '200':
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          phone:
+                            type: string
+                          role:
+                            type: string
+                            enum: [customer, delivery, admin]
+                          name:
+                            type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /users/fcm-token:
+    post:
+      tags:
+        - Users
+      summary: Update FCM token
+      description: Updates the Firebase Cloud Messaging token for push notifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - fcm_token
+              properties:
+                fcm_token:
+                  type: string
+                  description: Firebase Cloud Messaging device token
+      responses:
+        '200':
+          description: FCM token saved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ==================== ADDRESSES ====================
+  /addresses:
+    get:
+      tags:
+        - Addresses
+      summary: List user addresses
+      description: |
+        Returns all delivery addresses for the authenticated user.
+        
+        **Roles:** Customer, Delivery Partner
+      responses:
+        '200':
+          description: Addresses retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Address'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    
+    post:
+      tags:
+        - Addresses
+      summary: Add new address
+      description: |
+        Creates a new delivery address for the user.
+        
+        **Roles:** Customer, Delivery Partner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressInput'
+      responses:
+        '201':
+          description: Address created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Address'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /addresses/{id}:
+    patch:
+      tags:
+        - Addresses
+      summary: Update address
+      description: |
+        Updates an existing address. Only the owner can update their address.
+        
+        **Roles:** Customer, Delivery Partner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Address ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddressUpdateInput'
+      responses:
+        '200':
+          description: Address updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Address'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    
+    delete:
+      tags:
+        - Addresses
+      summary: Delete address
+      description: |
+        Deletes an address. Only the owner can delete their address.
+        
+        **Roles:** Customer, Delivery Partner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Address ID
+      responses:
+        '200':
+          description: Address deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /addresses/{id}/default:
+    patch:
+      tags:
+        - Addresses
+      summary: Set default address
+      description: |
+        Sets an address as the default delivery address.
+        
+        **Roles:** Customer, Delivery Partner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Address ID
+      responses:
+        '200':
+          description: Default address updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==================== PRODUCTS ====================
+  /products:
+    get:
+      tags:
+        - Products
+      summary: List products
+      description: |
+        Returns a paginated list of products with optional filtering.
+        Public endpoint (no authentication required).
+      security: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Items per page
+        - name: categoryId
+          in: query
+          schema:
+            type: integer
+          description: Filter by category ID
+        - name: min_price
+          in: query
+          schema:
+            type: number
+            minimum: 0
+          description: Minimum price filter
+        - name: max_price
+          in: query
+          schema:
+            type: number
+            minimum: 0
+          description: Maximum price filter
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search query
+        - name: includeInactive
+          in: query
+          schema:
+            type: boolean
+          description: Include inactive products (admin only)
+      responses:
+        '200':
+          description: Products retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          products:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Product'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+    
+    post:
+      tags:
+        - Products
+      summary: Create product
+      description: |
+        Creates a new product. Admin only.
+        
+        **Role:** Admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductInput'
+      responses:
+        '201':
+          description: Product created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /products/{id}:
+    get:
+      tags:
+        - Products
+      summary: Get product by ID
+      description: Returns detailed information about a specific product
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Product ID
+      responses:
+        '200':
+          description: Product retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    
+    put:
+      tags:
+        - Products
+      summary: Update product
+      description: |
+        Updates an existing product. Admin only.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Product ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdateInput'
+      responses:
+        '200':
+          description: Product updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Product'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    
+    delete:
+      tags:
+        - Products
+      summary: Delete product
+      description: |
+        Deletes a product. Admin only.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Product ID
+      responses:
+        '200':
+          description: Product deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /products/featured:
+    get:
+      tags:
+        - Products
+      summary: Get featured products
+      description: Returns a list of featured products
+      security: []
+      responses:
+        '200':
+          description: Featured products retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+
+  /products/search:
+    get:
+      tags:
+        - Products
+      summary: Search products
+      description: Full-text search across product names and descriptions
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 100
+          description: Search query
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+
+  # ==================== CATEGORIES ====================
+  /categories:
+    get:
+      tags:
+        - Categories
+      summary: List categories
+      description: Returns all product categories
+      security: []
+      responses:
+        '200':
+          description: Categories retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Category'
+    
+    post:
+      tags:
+        - Categories
+      summary: Create category
+      description: |
+        Creates a new category. Admin only.
+        
+        **Role:** Admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryInput'
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /categories/{id}:
+    put:
+      tags:
+        - Categories
+      summary: Update category
+      description: |
+        Updates an existing category. Admin only.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Category ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryUpdateInput'
+      responses:
+        '200':
+          description: Category updated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    
+    delete:
+      tags:
+        - Categories
+      summary: Delete category
+      description: |
+        Deletes a category. Admin only.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Category ID
+      responses:
+        '200':
+          description: Category deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==================== CART ====================
+  /cart:
+    get:
+      tags:
+        - Cart
+      summary: Get cart
+      description: |
+        Returns the user's shopping cart (Redis-backed).
+        
+        **Role:** Customer
+      responses:
+        '200':
+          description: Cart retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Cart'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    
+    post:
+      tags:
+        - Cart
+      summary: Add item to cart
+      description: |
+        Adds a product to the cart or updates quantity if already exists.
+        
+        **Role:** Customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - productId
+                - quantity
+              properties:
+                productId:
+                  type: integer
+                  minimum: 1
+                  description: Product ID to add
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  description: Quantity to add
+      responses:
+        '200':
+          description: Item added to cart
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    
+    delete:
+      tags:
+        - Cart
+      summary: Clear cart
+      description: |
+        Removes all items from the cart.
+        
+        **Role:** Customer
+      responses:
+        '200':
+          description: Cart cleared successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cart/count:
+    get:
+      tags:
+        - Cart
+      summary: Get cart item count
+      description: |
+        Returns the total number of items in the cart.
+        
+        **Role:** Customer
+      responses:
+        '200':
+          description: Cart count retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          count:
+                            type: integer
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /cart/{itemId}:
+    put:
+      tags:
+        - Cart
+      summary: Update cart item quantity
+      description: |
+        Updates the quantity of a cart item. Set quantity to 0 to remove.
+        
+        **Role:** Customer
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Cart item ID (product ID)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - quantity
+              properties:
+                quantity:
+                  type: integer
+                  minimum: 0
+                  maximum: 10
+      responses:
+        '200':
+          description: Cart item updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Cart'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    
+    delete:
+      tags:
+        - Cart
+      summary: Remove item from cart
+      description: |
+        Removes a specific item from the cart.
+        
+        **Role:** Customer
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Cart item ID (product ID)
+      responses:
+        '200':
+          description: Item removed from cart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ==================== ORDERS ====================
+  /orders:
+    get:
+      tags:
+        - Orders
+      summary: List user orders
+      description: |
+        Returns orders for the authenticated user.
+        
+        **Roles:** Customer, Delivery Partner, Admin
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    
+    post:
+      tags:
+        - Orders
+      summary: Create order
+      description: |
+        Places a new order from the user's cart. Clears cart on success.
+        
+        **Role:** Customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderInput'
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /orders/my:
+    get:
+      tags:
+        - Orders
+      summary: Get my orders
+      description: |
+        Returns orders for the current user (alias for /orders).
+        
+        **Roles:** Customer, Delivery Partner
+      responses:
+        '200':
+          description: Orders retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+
+  /orders/apply-coupon:
+    post:
+      tags:
+        - Orders
+      summary: Apply coupon
+      description: |
+        Validates a coupon code and returns the discount amount.
+        
+        **Role:** Customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+                - orderTotal
+              properties:
+                code:
+                  type: string
+                  minLength: 2
+                  maxLength: 40
+                  description: Coupon code
+                orderTotal:
+                  type: number
+                  minimum: 0
+                  description: Order subtotal before discount
+      responses:
+        '200':
+          description: Coupon applied successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          discount:
+                            type: number
+                            description: Discount amount
+                          finalTotal:
+                            type: number
+                            description: Order total after discount
+        '400':
+          description: Invalid coupon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                ok: false
+                error:
+                  message: "Invalid or expired coupon"
+                  code: "INVALID_COUPON"
+                message: "Invalid or expired coupon"
+
+  /orders/{id}:
+    get:
+      tags:
+        - Orders
+      summary: Get order by ID
+      description: |
+        Returns detailed information about a specific order.
+        Users can only access their own orders unless they are admin.
+        
+        **Roles:** Customer, Delivery Partner, Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      responses:
+        '200':
+          description: Order retrieved successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /orders/{id}/cancel:
+    put:
+      tags:
+        - Orders
+      summary: Cancel order
+      description: |
+        Cancels an order. Only allowed for orders in PLACED or CONFIRMED status.
+        
+        **Role:** Customer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      responses:
+        '200':
+          description: Order cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Order cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                ok: false
+                error:
+                  message: "Order cannot be cancelled at this stage"
+                  code: "ORDER_NOT_CANCELLABLE"
+                message: "Order cannot be cancelled at this stage"
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /orders/{id}/status:
+    put:
+      tags:
+        - Orders
+      summary: Update order status
+      description: |
+        Updates the order status. Admin only.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - PLACED
+                    - CONFIRMED
+                    - PACKED
+                    - OUT_FOR_DELIVERY
+                    - DELIVERED
+                    - CANCELLED
+      responses:
+        '200':
+          description: Order status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==================== PAYMENTS ====================
+  /payments/initiate:
+    post:
+      tags:
+        - Payments
+      summary: Initiate payment
+      description: |
+        Initiates a PhonePe payment for an order.
+        Returns a payment URL to redirect the user to.
+        
+        **Rate Limit:** 10 requests per minute per user
+        
+        **Role:** Customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - orderId
+              properties:
+                orderId:
+                  type: integer
+                  minimum: 1
+                  description: Order ID to pay for
+      responses:
+        '200':
+          description: Payment initiated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          paymentUrl:
+                            type: string
+                            format: uri
+                            description: PhonePe payment page URL
+                          merchantTransactionId:
+                            type: string
+                            description: Unique transaction ID
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /payments/verify:
+    post:
+      tags:
+        - Payments
+      summary: Verify payment
+      description: |
+        Verifies a PhonePe payment status.
+        
+        **Rate Limit:** 10 requests per minute per user
+        
+        **Role:** Customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transactionId:
+                  type: string
+                  description: PhonePe transaction ID
+                merchantTransactionId:
+                  type: string
+                  description: Merchant transaction ID
+              oneOf:
+                - required: [transactionId]
+                - required: [merchantTransactionId]
+      responses:
+        '200':
+          description: Payment verified
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum: [SUCCESS, FAILED, PENDING]
+                          amount:
+                            type: number
+                          transactionId:
+                            type: string
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /payments/{orderId}/status:
+    get:
+      tags:
+        - Payments
+      summary: Get payment status
+      description: |
+        Returns the payment status for an order.
+        
+        **Role:** Customer
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      responses:
+        '200':
+          description: Payment status retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                            enum: [PENDING, SUCCESS, FAILED]
+                          paymentMethod:
+                            type: string
+                            enum: [COD, ONLINE]
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /payments/webhook:
+    post:
+      tags:
+        - Payments
+      summary: PhonePe webhook
+      description: |
+        PhonePe payment gateway webhook endpoint.
+        Handles payment status updates from PhonePe.
+        
+        **Rate Limit:** 10 requests per minute per IP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: PhonePe webhook payload (signature verified)
+      responses:
+        '200':
+          description: Webhook processed
+        '400':
+          description: Invalid webhook payload
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  # ==================== DELIVERY ====================
+  /delivery/slots:
+    get:
+      tags:
+        - Delivery
+      summary: Get available delivery slots
+      description: |
+        Returns available delivery time slots.
+        Public endpoint (no authentication required).
+      security: []
+      responses:
+        '200':
+          description: Delivery slots retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DeliverySlot'
+
+  /delivery/slots/{id}:
+    get:
+      tags:
+        - Delivery
+      summary: Get delivery slot by ID
+      description: Returns information about a specific delivery slot
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Slot ID
+      responses:
+        '200':
+          description: Slot retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DeliverySlot'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /delivery/me:
+    get:
+      tags:
+        - Delivery
+      summary: Get delivery partner profile
+      description: |
+        Returns the delivery partner's profile and stats.
+        
+        **Role:** Delivery Partner
+      responses:
+        '200':
+          description: Profile retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DeliveryPartner'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /delivery/orders:
+    get:
+      tags:
+        - Delivery
+      summary: List delivery orders
+      description: |
+        Returns orders assigned to the delivery partner.
+        
+        **Role:** Delivery Partner
+      responses:
+        '200':
+          description: Orders retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /delivery/orders/available:
+    get:
+      tags:
+        - Delivery
+      summary: List available orders
+      description: |
+        Returns unassigned orders available for claiming.
+        
+        **Role:** Delivery Partner
+      responses:
+        '200':
+          description: Available orders retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /delivery/orders/{id}/accept:
+    post:
+      tags:
+        - Delivery
+      summary: Accept order
+      description: |
+        Claims an available order for delivery.
+        
+        **Role:** Delivery Partner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      responses:
+        '200':
+          description: Order accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Order already assigned or not available
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /delivery/orders/{id}/reject:
+    post:
+      tags:
+        - Delivery
+      summary: Reject order
+      description: |
+        Rejects an assigned order.
+        
+        **Role:** Delivery Partner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 200
+                  description: Rejection reason
+      responses:
+        '200':
+          description: Order rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /delivery/orders/{id}/status:
+    put:
+      tags:
+        - Delivery
+      summary: Update delivery status
+      description: |
+        Updates the delivery status of an order.
+        
+        **Role:** Delivery Partner
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Order ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum:
+                    - OUT_FOR_DELIVERY
+                    - PICKED_UP
+                    - ON_THE_WAY
+                    - DELIVERED
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /delivery/location:
+    put:
+      tags:
+        - Delivery
+      summary: Update location
+      description: |
+        Updates the delivery partner's current GPS location.
+        Used for real-time order tracking.
+        
+        **Role:** Delivery Partner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lat
+                - lng
+              properties:
+                lat:
+                  type: number
+                  description: Latitude
+                lng:
+                  type: number
+                  description: Longitude
+                orderId:
+                  type: integer
+                  description: Active order ID (optional)
+      responses:
+        '200':
+          description: Location updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /delivery/online:
+    post:
+      tags:
+        - Delivery
+      summary: Toggle online status
+      description: |
+        Toggles the delivery partner's online/offline status.
+        
+        **Role:** Delivery Partner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_online:
+                  type: boolean
+                  description: Set to true to go online, false to go offline
+                lat:
+                  type: number
+                  description: Current latitude
+                lng:
+                  type: number
+                  description: Current longitude
+      responses:
+        '200':
+          description: Status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /delivery/earnings:
+    get:
+      tags:
+        - Delivery
+      summary: Get earnings
+      description: |
+        Returns earnings for the delivery partner.
+        
+        **Role:** Delivery Partner
+      parameters:
+        - name: period
+          in: query
+          schema:
+            type: string
+            enum: [today, week, month]
+            default: today
+          description: Time period for earnings
+      responses:
+        '200':
+          description: Earnings retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          totalEarnings:
+                            type: number
+                          deliveriesCount:
+                            type: integer
+                          period:
+                            type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /delivery/profile:
+    patch:
+      tags:
+        - Delivery
+      summary: Update profile
+      description: |
+        Updates delivery partner profile information.
+        
+        **Role:** Delivery Partner
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  nullable: true
+                vehicle:
+                  type: string
+                  nullable: true
+                vehicleNumber:
+                  type: string
+                  nullable: true
+                licenceNumber:
+                  type: string
+                  nullable: true
+                bankDetails:
+                  type: string
+                  nullable: true
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ==================== COUPONS ====================
+  /coupons:
+    get:
+      tags:
+        - Coupons
+      summary: List active coupons
+      description: Returns all active coupon codes
+      security: []
+      responses:
+        '200':
+          description: Coupons retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Coupon'
+    
+    post:
+      tags:
+        - Coupons
+      summary: Create coupon
+      description: |
+        Creates a new coupon. Admin only.
+        
+        **Role:** Admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CouponInput'
+      responses:
+        '201':
+          description: Coupon created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Coupon'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /coupons/validate:
+    post:
+      tags:
+        - Coupons
+      summary: Validate coupon
+      description: Validates a coupon code without applying it
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+              properties:
+                code:
+                  type: string
+                  description: Coupon code to validate
+      responses:
+        '200':
+          description: Coupon is valid
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Coupon'
+        '400':
+          description: Invalid coupon
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ==================== BANNERS ====================
+  /banners:
+    get:
+      tags:
+        - Banners
+      summary: List banners
+      description: Returns all active promotional banners
+      security: []
+      responses:
+        '200':
+          description: Banners retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Banner'
+    
+    post:
+      tags:
+        - Banners
+      summary: Create banner
+      description: |
+        Creates a new banner. Admin only.
+        
+        **Role:** Admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BannerInput'
+      responses:
+        '201':
+          description: Banner created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Banner'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /banners/{id}:
+    delete:
+      tags:
+        - Banners
+      summary: Delete banner
+      description: |
+        Deletes a banner. Admin only.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Banner ID
+      responses:
+        '200':
+          description: Banner deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==================== SETTINGS ====================
+  /settings/theme:
+    get:
+      tags:
+        - Settings
+      summary: Get theme settings
+      description: Returns the app theme configuration
+      security: []
+      responses:
+        '200':
+          description: Theme settings retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          primaryColor:
+                            type: string
+                          secondaryColor:
+                            type: string
+                          logoUrl:
+                            type: string
+
+  /settings/banner:
+    get:
+      tags:
+        - Settings
+      summary: Get banner settings
+      description: Returns banner configuration
+      security: []
+      responses:
+        '200':
+          description: Banner settings retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /store/status:
+    get:
+      tags:
+        - Settings
+      summary: Get store status
+      description: Returns whether the store is open or closed
+      security: []
+      responses:
+        '200':
+          description: Store status retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          isOpen:
+                            type: boolean
+                          message:
+                            type: string
+
+  /store/check-delivery:
+    post:
+      tags:
+        - Settings
+      summary: Check delivery availability
+      description: Checks if delivery is available to a specific location
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lat
+                - lng
+              properties:
+                lat:
+                  type: number
+                  description: Latitude
+                lng:
+                  type: number
+                  description: Longitude
+      responses:
+        '200':
+          description: Delivery availability checked
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          available:
+                            type: boolean
+                          message:
+                            type: string
+
+  # ==================== ADMIN ====================
+  /admin/dashboard:
+    get:
+      tags:
+        - Admin
+      summary: Get dashboard stats
+      description: |
+        Returns overview statistics for the admin dashboard.
+        
+        **Role:** Admin
+        **Rate Limit:** 100 requests per 15 minutes per IP
+      responses:
+        '200':
+          description: Dashboard data retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          totalOrders:
+                            type: integer
+                          totalRevenue:
+                            type: number
+                          activeUsers:
+                            type: integer
+                          activeRiders:
+                            type: integer
+                          pendingOrders:
+                            type: integer
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/customers:
+    get:
+      tags:
+        - Admin
+      summary: List customers
+      description: |
+        Returns a list of all customers.
+        
+        **Role:** Admin
+      responses:
+        '200':
+          description: Customers retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/users/{id}:
+    get:
+      tags:
+        - Admin
+      summary: Get user detail
+      description: |
+        Returns detailed information about a user.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      responses:
+        '200':
+          description: User detail retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /admin/users/{id}/status:
+    patch:
+      tags:
+        - Admin
+      summary: Toggle user status
+      description: |
+        Enables or disables a user account.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - active
+              properties:
+                active:
+                  type: boolean
+      responses:
+        '200':
+          description: User status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /admin/users/{id}/role:
+    patch:
+      tags:
+        - Admin
+      summary: Change user role
+      description: |
+        Changes a user's role (customer, delivery, admin).
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: User ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - role
+              properties:
+                role:
+                  type: string
+                  enum: [customer, delivery, admin]
+      responses:
+        '200':
+          description: User role updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /admin/delivery-partners:
+    get:
+      tags:
+        - Admin
+      summary: List delivery partners
+      description: |
+        Returns a list of all delivery partners.
+        
+        **Role:** Admin
+      responses:
+        '200':
+          description: Delivery partners retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DeliveryPartner'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/delivery-partners/{id}:
+    patch:
+      tags:
+        - Admin
+      summary: Update delivery partner
+      description: |
+        Updates delivery partner information.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Delivery partner ID
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                vehicle:
+                  type: string
+                vehicleNumber:
+                  type: string
+                is_online:
+                  type: boolean
+      responses:
+        '200':
+          description: Delivery partner updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /admin/orders:
+    get:
+      tags:
+        - Admin
+      summary: List all orders
+      description: |
+        Returns all orders with optional filtering.
+        
+        **Role:** Admin
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - PLACED
+              - CONFIRMED
+              - PACKED
+              - OUT_FOR_DELIVERY
+              - DELIVERED
+              - CANCELLED
+        - name: user
+          in: query
+          schema:
+            type: string
+          description: Filter by user ID
+      responses:
+        '200':
+          description: Orders retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          orders:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Order'
+                          pagination:
+                            $ref: '#/components/schemas/Pagination'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/products:
+    get:
+      tags:
+        - Admin
+      summary: List all products (admin)
+      description: |
+        Returns all products including inactive ones.
+        
+        **Role:** Admin
+      responses:
+        '200':
+          description: Products retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/products/{id}/stock:
+    patch:
+      tags:
+        - Admin
+      summary: Update product stock
+      description: |
+        Updates the stock quantity for a product.
+        
+        **Role:** Admin
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: Product ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - stock
+              properties:
+                stock:
+                  type: integer
+                  minimum: 0
+      responses:
+        '200':
+          description: Stock updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /admin/settings:
+    get:
+      tags:
+        - Admin
+      summary: Get admin settings
+      description: |
+        Returns store settings and configuration.
+        
+        **Role:** Admin
+      responses:
+        '200':
+          description: Settings retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+    
+    patch:
+      tags:
+        - Admin
+      summary: Update settings
+      description: |
+        Updates store settings and configuration.
+        
+        **Role:** Admin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                storeName:
+                  type: string
+                storePhone:
+                  type: string
+                deliveryCharge:
+                  type: number
+                minOrderAmount:
+                  type: number
+                isOpen:
+                  type: boolean
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/store/toggle:
+    patch:
+      tags:
+        - Admin
+      summary: Toggle store open/closed
+      description: |
+        Opens or closes the store for orders.
+        
+        **Role:** Admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - isOpen
+              properties:
+                isOpen:
+                  type: boolean
+      responses:
+        '200':
+          description: Store status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/analytics:
+    get:
+      tags:
+        - Admin
+      summary: Get analytics data
+      description: |
+        Returns analytics and business intelligence data.
+        
+        **Role:** Admin
+      responses:
+        '200':
+          description: Analytics data retrieved
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          revenue:
+                            type: object
+                          orders:
+                            type: object
+                          customers:
+                            type: object
+                          products:
+                            type: object
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /admin/upload/image:
+    post:
+      tags:
+        - Admin
+      summary: Upload image
+      description: |
+        Uploads an image for products, banners, etc.
+        
+        **Role:** Admin
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - image
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Image uploaded successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          url:
+                            type: string
+                            format: uri
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ==================== HEALTH ====================
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Basic health check endpoint
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  service:
+                    type: string
+                    example: "meatvo-backend"
+                  health:
+                    type: string
+                    example: "/health"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token obtained from /auth/verify-otp
+
+  schemas:
+    # ==================== BASE SCHEMAS ====================
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        ok:
+          type: boolean
+          example: true
+        data:
+          type: object
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        ok:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+        data:
+          type: object
+        message:
+          type: string
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+
+    # ==================== USER SCHEMAS ====================
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+        phone:
+          type: string
+          pattern: '^\+[1-9]\d{1,14}$'
+        name:
+          type: string
+          nullable: true
+        role:
+          type: string
+          enum: [customer, delivery, admin]
+        createdAt:
+          type: string
+          format: date-time
+        mfaEnabled:
+          type: boolean
+          description: Whether MFA is enabled
+
+    # ==================== ADDRESS SCHEMAS ====================
+    Address:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        label:
+          type: string
+          enum: [home, work, other]
+        addressLine1:
+          type: string
+        addressLine2:
+          type: string
+          nullable: true
+        city:
+          type: string
+        state:
+          type: string
+        pincode:
+          type: string
+        landmark:
+          type: string
+          nullable: true
+        lat:
+          type: number
+        lng:
+          type: number
+        isDefault:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    AddressInput:
+      type: object
+      required:
+        - addressLine1
+      properties:
+        label:
+          type: string
+          enum: [home, work, other]
+          default: home
+        addressLine1:
+          type: string
+          minLength: 5
+          maxLength: 300
+        addressLine2:
+          type: string
+          maxLength: 300
+          nullable: true
+        city:
+          type: string
+          maxLength: 100
+          default: "Dhanbad"
+        state:
+          type: string
+          maxLength: 100
+          default: "Jharkhand"
+        pincode:
+          type: string
+          maxLength: 10
+        landmark:
+          type: string
+          maxLength: 120
+          nullable: true
+        lat:
+          type: number
+          description: Latitude
+        lng:
+          type: number
+          description: Longitude
+        isDefault:
+          type: boolean
+          default: false
+
+    AddressUpdateInput:
+      type: object
+      properties:
+        label:
+          type: string
+          enum: [home, work, other]
+        addressLine1:
+          type: string
+          minLength: 5
+          maxLength: 300
+        addressLine2:
+          type: string
+          maxLength: 300
+          nullable: true
+        city:
+          type: string
+          maxLength: 100
+        state:
+          type: string
+          maxLength: 100
+        pincode:
+          type: string
+          maxLength: 10
+        landmark:
+          type: string
+          maxLength: 120
+          nullable: true
+        lat:
+          type: number
+        lng:
+          type: number
+        isDefault:
+          type: boolean
+
+    # ==================== PRODUCT SCHEMAS ====================
+    Product:
+      type: object
+      properties:
+        id:
+          type: integer
+        categoryId:
+          type: integer
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        price:
+          type: number
+        mrp:
+          type: number
+          nullable: true
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        stock:
+          type: integer
+        unit:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    ProductInput:
+      type: object
+      required:
+        - name
+        - price
+      properties:
+        category_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          minLength: 3
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        price:
+          type: number
+          minimum: 0
+          maximum: 10000
+        mrp:
+          type: number
+          minimum: 0
+          nullable: true
+        image_url:
+          type: string
+          format: uri
+          nullable: true
+        stock:
+          type: integer
+          minimum: 0
+          default: 0
+        unit:
+          type: string
+          maxLength: 20
+          nullable: true
+        active:
+          type: boolean
+          default: true
+
+    ProductUpdateInput:
+      type: object
+      properties:
+        category_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          minLength: 3
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        price:
+          type: number
+          minimum: 0
+          maximum: 10000
+        mrp:
+          type: number
+          minimum: 0
+          nullable: true
+        image_url:
+          type: string
+          format: uri
+          nullable: true
+        stock:
+          type: integer
+          minimum: 0
+        unit:
+          type: string
+          maxLength: 20
+          nullable: true
+        active:
+          type: boolean
+
+    # ==================== CATEGORY SCHEMAS ====================
+    Category:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    CategoryInput:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        active:
+          type: boolean
+          default: true
+
+    CategoryUpdateInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        imageUrl:
+          type: string
+          format: uri
+          nullable: true
+        active:
+          type: boolean
+
+    # ==================== CART SCHEMAS ====================
+    Cart:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              quantity:
+                type: integer
+              product:
+                $ref: '#/components/schemas/Product'
+        total:
+          type: number
+        itemCount:
+          type: integer
+
+    # ==================== ORDER SCHEMAS ====================
+    Order:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        orderNumber:
+          type: string
+        status:
+          type: string
+          enum:
+            - PLACED
+            - CONFIRMED
+            - PACKED
+            - OUT_FOR_DELIVERY
+            - DELIVERED
+            - CANCELLED
+        paymentMethod:
+          type: string
+          enum: [COD, ONLINE]
+        paymentStatus:
+          type: string
+          enum: [PENDING, SUCCESS, FAILED]
+        total:
+          type: number
+        deliveryAddress:
+          type: string
+        deliverySlot:
+          type: object
+          nullable: true
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              productId:
+                type: integer
+              name:
+                type: string
+              quantity:
+                type: integer
+              price:
+                type: number
+        createdAt:
+          type: string
+          format: date-time
+        deliveryPartnerId:
+          type: integer
+          nullable: true
+
+    OrderInput:
+      type: object
+      required:
+        - deliveryAddress
+        - paymentMethod
+      properties:
+        deliveryAddress:
+          type: string
+          minLength: 10
+          maxLength: 500
+        paymentMethod:
+          type: string
+          enum: [COD, ONLINE]
+        lat:
+          type: number
+          description: Delivery latitude
+        lng:
+          type: number
+          description: Delivery longitude
+        addressId:
+          type: integer
+          description: Address ID from saved addresses
+        deliverySlotId:
+          type: integer
+          description: Delivery slot ID
+        deliverySlot:
+          type: object
+          properties:
+            name:
+              type: string
+              minLength: 1
+              maxLength: 40
+            date:
+              type: string
+              minLength: 8
+              maxLength: 20
+            time:
+              type: string
+              minLength: 3
+              maxLength: 40
+        couponCode:
+          type: string
+          minLength: 2
+          maxLength: 40
+
+    # ==================== DELIVERY SCHEMAS ====================
+    DeliveryPartner:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        name:
+          type: string
+          nullable: true
+        phone:
+          type: string
+        vehicle:
+          type: string
+          nullable: true
+        vehicleNumber:
+          type: string
+          nullable: true
+        licenceNumber:
+          type: string
+          nullable: true
+        isOnline:
+          type: boolean
+        currentLat:
+          type: number
+          nullable: true
+        currentLng:
+          type: number
+          nullable: true
+        totalDeliveries:
+          type: integer
+        totalEarnings:
+          type: number
+        rating:
+          type: number
+          nullable: true
+
+    DeliverySlot:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        date:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+        capacity:
+          type: integer
+        booked:
+          type: integer
+        available:
+          type: boolean
+
+    # ==================== COUPON SCHEMAS ====================
+    Coupon:
+      type: object
+      properties:
+        id:
+          type: integer
+        code:
+          type: string
+        discountType:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+        discountValue:
+          type: number
+        minOrderAmount:
+          type: number
+          nullable: true
+        maxDiscount:
+          type: number
+          nullable: true
+        validFrom:
+          type: string
+          format: date-time
+        validUntil:
+          type: string
+          format: date-time
+        usageLimit:
+          type: integer
+          nullable: true
+        usedCount:
+          type: integer
+        active:
+          type: boolean
+
+    CouponInput:
+      type: object
+      required:
+        - code
+        - discountType
+        - discountValue
+      properties:
+        code:
+          type: string
+          minLength: 2
+          maxLength: 40
+        discountType:
+          type: string
+          enum: [PERCENTAGE, FIXED]
+        discountValue:
+          type: number
+          minimum: 0
+        minOrderAmount:
+          type: number
+          minimum: 0
+          nullable: true
+        maxDiscount:
+          type: number
+          minimum: 0
+          nullable: true
+        validFrom:
+          type: string
+          format: date-time
+        validUntil:
+          type: string
+          format: date-time
+        usageLimit:
+          type: integer
+          minimum: 1
+          nullable: true
+        active:
+          type: boolean
+          default: true
+
+    # ==================== BANNER SCHEMAS ====================
+    Banner:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        imageUrl:
+          type: string
+          format: uri
+        linkUrl:
+          type: string
+          format: uri
+          nullable: true
+        position:
+          type: integer
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    BannerInput:
+      type: object
+      required:
+        - title
+        - imageUrl
+      properties:
+        title:
+          type: string
+          minLength: 2
+          maxLength: 100
+        imageUrl:
+          type: string
+          format: uri
+        linkUrl:
+          type: string
+          format: uri
+          nullable: true
+        position:
+          type: integer
+          minimum: 0
+        active:
+          type: boolean
+          default: true
+
+  responses:
+    # ==================== ERROR RESPONSES ====================
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            ok: false
+            error:
+              message: "Validation failed"
+              code: "VALIDATION_ERROR"
+            data:
+              issues:
+                - field: "phone"
+                  message: "Phone must be E.164 format"
+            message: "Validation failed"
+
+    UnauthorizedError:
+      description: Authentication required or token invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            ok: false
+            error:
+              message: "Unauthorized"
+              code: "UNAUTHORIZED"
+            message: "Unauthorized"
+
+    ForbiddenError:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            ok: false
+            error:
+              message: "Forbidden"
+              code: "FORBIDDEN"
+            message: "Forbidden"
+
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            ok: false
+            error:
+              message: "Not found"
+              code: "NOT_FOUND"
+            message: "Not found"
+
+    RateLimitError:
+      description: Too many requests
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            ok: false
+            error:
+              message: "Too many requests. Try again later."
+              code: "RATE_LIMITED"
+            message: "Too many requests. Try again later."
+
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            ok: false
+            error:
+              message: "Internal server error"
+              code: "SERVER_ERROR"
+            message: "Internal server error"

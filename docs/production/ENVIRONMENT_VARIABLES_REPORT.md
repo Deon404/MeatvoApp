@@ -58,5 +58,5 @@
 ## Templates
 
 - Backend VPS: `backend/.env.vps.example`
-- Flutter prod: `old_meatvo/env.production.example.json`
+- Flutter prod: `frontend/env.production.example.json`
 - Manifest: `shared/env-manifest.json` (PORT default = 8080)

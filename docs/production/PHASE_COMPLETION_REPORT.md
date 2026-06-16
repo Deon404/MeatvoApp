@@ -26,7 +26,7 @@ Requires live server access. Scripts are ready:
 
 Build command:
 ```bash
-cd old_meatvo
+cd frontend
 flutter build appbundle --release --dart-define-from-file=env.production.json
 ```
 
