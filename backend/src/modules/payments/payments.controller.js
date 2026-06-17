@@ -13,6 +13,7 @@ const { reserveStockForPaidOrder } = require('./payment-stock');
 const { notifyStaffNewOrder } = require('../../services/notification.service');
 const { cancelOrderForPaymentFailure } = require('../../services/payment-reconciliation.service');
 const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
+const cashfreeController = require('./cashfree.controller');
 
 // PhonePe configuration
 const PHONEPE_API_BASE = process.env.PHONEPE_API_BASE || 'https://api.phonepe.com/v1';
@@ -25,17 +26,17 @@ const PHONEPE_WEBHOOK_URL = process.env.PHONEPE_WEBHOOK_URL;
 const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
 if (!PHONEPE_MERCHANT_ID || !PHONEPE_SALT_KEY) {
-  logger.error('phonepe_config_missing', {
+  logger.warn('phonepe_config_missing', {
     merchantId: PHONEPE_MERCHANT_ID ? 'configured' : 'missing',
     saltKey: PHONEPE_SALT_KEY ? 'configured' : 'missing',
   });
-  if (isProd) {
-    throw new Error('PhonePe configuration missing. Set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY.');
-  }
 }
 
 if (isProd && (!PHONEPE_REDIRECT_URL || !PHONEPE_WEBHOOK_URL)) {
-  throw new Error('PHONEPE_REDIRECT_URL and PHONEPE_WEBHOOK_URL must be set in production.');
+  logger.warn('phonepe_redirect_webhook_missing', {
+    redirectUrl: PHONEPE_REDIRECT_URL ? 'configured' : 'missing',
+    webhookUrl: PHONEPE_WEBHOOK_URL ? 'configured' : 'missing',
+  });
 }
 
 const buildChecksum = (payload) =>
@@ -48,6 +49,10 @@ const verifyWebhookSignature = (payload, signature) =>
  * Create PhonePe payment request
  */
 const createPhonePePayment = async (orderId, amount, customerPhone, customerEmail = null, idempotencyKey = null) => {
+  if (!PHONEPE_MERCHANT_ID || !PHONEPE_SALT_KEY) {
+    return { success: false, error: 'PhonePe not configured — use CashFree' };
+  }
+
   const transactionId = idempotencyKey
     ? `TXN_${idempotencyKey}_${Date.now()}`
     : `TXN_${orderId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -55,7 +60,7 @@ const createPhonePePayment = async (orderId, amount, customerPhone, customerEmai
   const paymentPayload = {
     merchantId: PHONEPE_MERCHANT_ID,
     merchantTransactionId: transactionId,
-    amount: amount * 100, // Convert to paise
+    amount: Math.round(amount * 100), // Convert to paise
     redirectUrl: PHONEPE_REDIRECT_URL,
     redirectMode: 'REDIRECT',
     callbackUrl: PHONEPE_WEBHOOK_URL,
@@ -77,8 +82,10 @@ const createPhonePePayment = async (orderId, amount, customerPhone, customerEmai
       headers: {
         'Content-Type': 'application/json',
         'X-VERIFY': checksum,
-        'X-MERCHANT-ID': PHONEPE_MERCHANT_ID
-      }
+        'X-MERCHANT-ID': PHONEPE_MERCHANT_ID,
+        Accept: 'application/json',
+      },
+      timeout: 30000,
     });
 
     if (response.data.success) {
@@ -114,6 +121,10 @@ const createPhonePePayment = async (orderId, amount, customerPhone, customerEmai
  * Check payment status
  */
 const checkPaymentStatus = async (merchantTransactionId) => {
+  if (!PHONEPE_MERCHANT_ID || !PHONEPE_SALT_KEY) {
+    return { success: false, error: 'PhonePe is not configured' };
+  }
+
   const payload = `/pg/v1/status/${PHONEPE_MERCHANT_ID}/${merchantTransactionId}`;
   const checksum = buildChecksum(payload);
 
@@ -122,8 +133,10 @@ const checkPaymentStatus = async (merchantTransactionId) => {
       headers: {
         'Content-Type': 'application/json',
         'X-VERIFY': checksum,
-        'X-MERCHANT-ID': PHONEPE_MERCHANT_ID
-      }
+        'X-MERCHANT-ID': PHONEPE_MERCHANT_ID,
+        Accept: 'application/json',
+      },
+      timeout: 15000,
     });
 
     if (response.data.success) {
@@ -150,165 +163,10 @@ const checkPaymentStatus = async (merchantTransactionId) => {
 };
 
 /**
- * Initiate payment for an order
+ * Initiate payment for an order (delegates to CashFree)
  */
 const initiatePayment = asyncHandler(async (req, res) => {
-  const { orderId } = req.validated.body;
-
-  if (!orderId) {
-    return fail(res, 400, 'Order ID is required');
-  }
-
-  try {
-    // Start database transaction for atomic operations
-    const client = await getClient();
-    
-    try {
-      await client.query('BEGIN');
-      
-      // Fetch order from database with user ownership validation
-      const orderResult = await client.query(
-        `SELECT o.id, o.customer_id, o.total_amount, o.status, o.payment_mode, u.phone
-         FROM orders o 
-         JOIN users u ON o.customer_id = u.id 
-         WHERE o.id = $1 AND o.customer_id = $2`,
-        [orderId, req.user.id]
-      );
-
-      if (orderResult.rows.length === 0) {
-        await client.query('ROLLBACK');
-        client.release();
-        return fail(res, 404, 'Order not found or access denied');
-      }
-
-      const order = orderResult.rows[0];
-
-      // Validate order status
-      if (order.status !== 'PLACED') {
-        await client.query('ROLLBACK');
-        client.release();
-        return fail(res, 400, 'Order cannot be paid for. Current status: ' + order.status);
-      }
-
-      // Validate payment mode
-      if (order.payment_mode !== 'ONLINE') {
-        await client.query('ROLLBACK');
-        client.release();
-        return fail(res, 400, 'Order is not configured for online payment');
-      }
-
-      // Idempotency: orderId is the idempotency key.
-      const existingPaymentResult = await client.query(
-        `SELECT id, status, payment_url, gateway_transaction_id
-         FROM payment_transactions
-         WHERE order_id = $1 AND status IN ($2, $3, $4)
-         ORDER BY created_at DESC
-         LIMIT 1
-         FOR UPDATE`,
-        [orderId, 'PENDING', 'INITIATED', 'SUCCESS']
-      );
-
-      if (existingPaymentResult.rows.length > 0) {
-        const existing = existingPaymentResult.rows[0];
-        await client.query('COMMIT');
-        client.release();
-        return ok(
-          res,
-          {
-            paymentId: existing.id,
-            paymentUrl: existing.payment_url || null,
-            transactionId: existing.gateway_transaction_id || null,
-            amount: Number(order.total_amount),
-            idempotent: true,
-          },
-          'Existing payment reused'
-        );
-      }
-
-      // Create payment transaction record
-      const paymentResult = await client.query(
-        `INSERT INTO payment_transactions (order_id, amount, status, gateway, gateway_transaction_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, NOW())
-         RETURNING id`,
-        [orderId, order.total_amount, 'INITIATED', 'PHONEPE', null]
-      );
-
-      const paymentId = paymentResult.rows[0].id;
-
-      // Initiate PhonePe payment
-      const paymentResponse = await createPhonePePayment(
-        orderId,
-        order.total_amount,
-        order.phone,
-        null,
-        String(orderId)
-      );
-
-      if (!paymentResponse.success) {
-        // Update payment transaction as failed
-        await client.query(
-          'UPDATE payment_transactions SET status = $1, gateway_response = $2 WHERE id = $3',
-          ['FAILED', JSON.stringify(paymentResponse.error), paymentId]
-        );
-        await client.query('ROLLBACK');
-        client.release();
-        
-        paymentLogger.payment.initiationFailed(logger, {
-          orderId,
-          userId: req.user.id,
-          error: paymentResponse.error
-        });
-        
-        logger.error('Payment initiation gateway error:', paymentResponse.error);
-        return fail(res, 500, 'Payment initiation failed');
-      }
-
-      // Update payment transaction with gateway details
-      await client.query(
-        `UPDATE payment_transactions 
-         SET status = $1, gateway_transaction_id = $2, payment_url = $3, gateway_response = $4
-         WHERE id = $5`,
-        [
-          'PENDING',
-          paymentResponse.data.transactionId,
-          paymentResponse.data.paymentUrl,
-          JSON.stringify(paymentResponse.data),
-          paymentId
-        ]
-      );
-
-      // Commit transaction
-      await client.query('COMMIT');
-      client.release();
-
-      paymentLogger.payment.initiated(logger, {
-        orderId,
-        paymentId,
-        transactionId: paymentResponse.data.transactionId,
-        amount: order.total_amount,
-        userId: req.user.id
-      });
-
-      return ok(res, {
-        paymentId,
-        paymentUrl: paymentResponse.data.paymentUrl,
-        transactionId: paymentResponse.data.transactionId,
-        amount: order.total_amount
-      }, 'Payment initiated successfully');
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      client.release();
-      throw error;
-    }
-  } catch (error) {
-    paymentLogger.payment.initiationFailed(logger, {
-      orderId,
-      userId: req.user?.id,
-      error: error.message
-    });
-    return fail(res, 500, 'Payment initiation failed');
-  }
+  return cashfreeController.initiatePayment(req, res);
 });
 
 /**
@@ -766,5 +624,6 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
 module.exports = {
   initiatePayment,
   getPaymentStatus,
-  handlePhonePeWebhook
+  handlePhonePeWebhook,
+  paymentLogger,
 };
