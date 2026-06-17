@@ -300,7 +300,8 @@ const sendSMS = async (phone, otp) => {
     hasDltTeId: Boolean(dltTeId),
   });
 
-  const deliveryMode = (process.env.MSG91_DELIVERY_MODE || 'otp').toLowerCase();
+  // SMS Templates (Send_otp + ##var##) use "template"; OTP section templates (##OTP##) use "otp"
+  const deliveryMode = (process.env.MSG91_DELIVERY_MODE || 'template').toLowerCase();
 
   logger.info('msg91_delivery_mode', {
     mode: deliveryMode,
