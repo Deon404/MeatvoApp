@@ -98,7 +98,7 @@ dependencies:
   audioplayers: ^6.1.0
 
   # Error Tracking
-  sentry_flutter: ^9.10.0 
+  sentry_flutter: ^9.22.0
   
   # Environment Variables
   flutter_dotenv: ^5.1.0

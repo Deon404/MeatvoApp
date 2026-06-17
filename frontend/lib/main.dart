@@ -41,32 +41,6 @@ import 'utils/debug_session_log.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  FlutterError.onError = (FlutterErrorDetails details) {
-    if (kReleaseMode) {
-      ErrorTrackingService.captureException(
-        details.exception,
-        stackTrace: details.stack,
-        tag: 'flutter_error',
-        context: {'library': details.library ?? 'unknown'},
-      );
-    } else {
-      FlutterError.dumpErrorToConsole(details);
-    }
-  };
-
-  PlatformDispatcher.instance.onError = (error, stack) {
-    if (kReleaseMode) {
-      ErrorTrackingService.captureException(
-        error,
-        stackTrace: stack,
-        tag: 'platform_error',
-      );
-    } else {
-      debugPrint('🔥 Uncaught async error: $error\n$stack');
-    }
-    return true;
-  };
-
   ErrorWidget.builder = _meatvoErrorWidgetBuilder;
 
   final hiveDirectory = await getApplicationSupportDirectory();
@@ -75,7 +49,6 @@ Future<void> main() async {
 
   try {
     await EnvConfig.load();
-    await ErrorTrackingService.initialize();
     GoogleMapsSetup.logDebugStatus();
     await BackendResolver.init();
   } catch (e) {
@@ -107,20 +80,22 @@ Future<void> main() async {
     // #endregion
   }
 
-  runApp(const ProviderScope(child: MyApp()));
+  await ErrorTrackingService.runApp(() {
+    runApp(const ProviderScope(child: MyApp()));
 
-  // Defer FCM token fetch so cold start is not blocked on Play Services (MIUI).
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    PushNotificationService().initialize();
-  });
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    registerSessionExpiredHandler(() {
-      final nav = appNavigatorKey.currentState;
-      if (nav == null) return;
-      nav.pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (_) => const PhoneScreen()),
-        (_) => false,
-      );
+    // Defer FCM token fetch so cold start is not blocked on Play Services (MIUI).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PushNotificationService().initialize();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      registerSessionExpiredHandler(() {
+        final nav = appNavigatorKey.currentState;
+        if (nav == null) return;
+        nav.pushAndRemoveUntil(
+          MaterialPageRoute<void>(builder: (_) => const PhoneScreen()),
+          (_) => false,
+        );
+      });
     });
   });
 }

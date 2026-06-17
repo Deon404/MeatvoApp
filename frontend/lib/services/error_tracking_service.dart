@@ -5,47 +5,35 @@ import '../config/env_config.dart';
 /// Error tracking service using Sentry
 /// Provides centralized error logging and tracking
 class ErrorTrackingService {
-  /// Initialize Sentry with app configuration
-  /// Note: This should be called before runApp() in main()
-  static Future<void> initialize() async {
-    // Load env first if not already loaded
-    try {
-      await EnvConfig.load();
-    } catch (e) {
-      debugPrint('⚠️ Could not load env config: $e');
-    }
-    
+  static void _configureOptions(SentryFlutterOptions options) {
+    options.dsn = EnvConfig.sentryDsn;
+    options.environment = EnvConfig.appEnv;
+    options.tracesSampleRate = EnvConfig.isProduction
+        ? EnvConfig.sentryTracesSampleRate
+        : 1.0;
+    options.release = 'meatvo_official@1.0.0';
+    options.debug = EnvConfig.isDevelopment;
+    options.maxBreadcrumbs = 100;
+    options.enableAutoPerformanceTracing = true;
+    options.enableUserInteractionTracing = true;
+    options.sendDefaultPii = true;
+  }
+
+  /// Wraps [runApp] with [SentryFlutter.init] when [SENTRY_DSN] is configured.
+  static Future<void> runApp(VoidCallback appRunner) async {
     final dsn = EnvConfig.sentryDsn;
-    
-    // Only initialize Sentry if DSN is provided
+
     if (dsn.isEmpty) {
       debugPrint('⚠️ Sentry DSN not found. Error tracking disabled.');
+      appRunner();
       return;
     }
 
     await SentryFlutter.init(
-      (options) {
-        options.dsn = dsn;
-        options.environment = EnvConfig.appEnv;
-        options.tracesSampleRate = EnvConfig.isProduction 
-            ? EnvConfig.sentryTracesSampleRate 
-            : 1.0; // 100% in development, configurable in production
-        
-        // Set release version
-        options.release = 'meatvo_official@1.0.0';
-        
-        // Enable/disable based on environment
-        options.debug = EnvConfig.isDevelopment;
-        
-        // Configure breadcrumbs
-        options.maxBreadcrumbs = 100;
-        
-        // Performance monitoring
-        options.enableAutoPerformanceTracing = true;
-        options.enableUserInteractionTracing = true;
-      },
+      _configureOptions,
+      appRunner: appRunner,
     );
-    
+
     debugPrint('✅ Sentry initialized successfully');
   }
 
@@ -172,4 +160,3 @@ class ErrorTrackingService {
     });
   }
 }
-
