@@ -87,6 +87,9 @@ async function migrateOrderStatuses() {
         }
       }
     }
+
+    await query('COMMIT');
+    await query('BEGIN');
     
     // Update order_assignments table to reflect new statuses
     logger.info('order_assignments_update_start');
@@ -94,11 +97,11 @@ async function migrateOrderStatuses() {
     const { rowCount: assignmentCount } = await query(`
       UPDATE order_assignments oa
       SET status = CASE 
-        WHEN o.status IN ('OUT_FOR_DELIVERY', 'RIDER_NEARBY') THEN 'PICKED'
-        WHEN o.status = 'RIDER_ACCEPTED' THEN 'ACCEPTED'
-        WHEN o.status = 'RIDER_ASSIGNED' THEN 'ASSIGNED'
-        WHEN o.status = 'DELIVERED' THEN 'DELIVERED'
-        WHEN o.status IN ('CANCELLED', 'RIDER_REJECTED') THEN 'CANCELLED'
+        WHEN o.status::text IN ('OUT_FOR_DELIVERY', 'RIDER_NEARBY') THEN 'PICKED'
+        WHEN o.status::text = 'RIDER_ACCEPTED' THEN 'ACCEPTED'
+        WHEN o.status::text = 'RIDER_ASSIGNED' THEN 'ASSIGNED'
+        WHEN o.status::text = 'DELIVERED' THEN 'DELIVERED'
+        WHEN o.status::text IN ('CANCELLED', 'RIDER_REJECTED') THEN 'CANCELLED'
         ELSE oa.status
       END
       FROM orders o
