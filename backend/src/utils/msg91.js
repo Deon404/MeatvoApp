@@ -51,8 +51,17 @@ const getOtpTemplateVariables = () => {
   if (raw && raw.trim()) {
     return raw.split(',').map((s) => s.trim()).filter(Boolean);
   }
-  // DLT template "Your OTP for Meatvo is ##var##" — must match MSG91 variable name
+  // DLT SMS template: "Your OTP for Meatvo is ##var##"
   return ['var'];
+};
+
+/** Set OTP on recipient/payload under every alias MSG91/DLT may expect. */
+const applyOtpVariables = (target, otp, otpVariables) => {
+  const names = new Set(['var', 'VAR', 'var1', 'VAR1', ...(otpVariables || [])]);
+  for (const name of names) {
+    if (name) target[name] = String(otp);
+  }
+  return target;
 };
 
 const getMsg91Config = () => {
@@ -141,12 +150,8 @@ const buildOtpPayload = ({ templateId, mobile, otp, senderId, dltTeId, otpVariab
     payload.PE_ID = String(process.env.MSG91_ENTITY_ID).trim();
   }
 
-  // DLT template "Your OTP for Meatvo is ##var##" — pass matching variable key(s) only
-  for (const name of otpVariables || []) {
-    if (name && name !== 'otp') {
-      payload[name] = String(otp);
-    }
-  }
+  // DLT template "Your OTP for Meatvo is ##var##" — pass matching variable key(s)
+  applyOtpVariables(payload, otp, otpVariables);
 
   return payload;
 };
@@ -213,9 +218,7 @@ const sendViaTemplateFlowApi = async ({
   dltTeId,
 }) => {
   const recipient = { mobiles: mobile };
-  for (const name of otpVariables || ['var']) {
-    if (name) recipient[name] = String(otp);
-  }
+  applyOtpVariables(recipient, otp, otpVariables);
 
   const body = {
     template_id: String(templateId).trim(),
@@ -297,7 +300,12 @@ const sendSMS = async (phone, otp) => {
     hasDltTeId: Boolean(dltTeId),
   });
 
-  const deliveryMode = (process.env.MSG91_DELIVERY_MODE || 'template').toLowerCase();
+  const deliveryMode = (process.env.MSG91_DELIVERY_MODE || 'otp').toLowerCase();
+
+  logger.info('msg91_delivery_mode', {
+    mode: deliveryMode,
+    variables: getOtpTemplateVariables(),
+  });
 
   try {
     if (deliveryMode === 'template') {
