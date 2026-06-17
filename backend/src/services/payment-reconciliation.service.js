@@ -4,7 +4,7 @@
 
 const { query, getClient } = require('../db/postgres');
 const { logger } = require('../utils/logger');
-const { checkPaymentStatus } = require('../modules/payments/phonepe.service');
+const phonepeService = require('../modules/payments/phonepe.service');
 const { applyPaymentSuccess } = require('../modules/payments/payment-success');
 
 const DEFAULT_TIMEOUT_MINUTES = Number(process.env.PAYMENT_RECONCILE_TIMEOUT_MINUTES || 15);
@@ -63,7 +63,7 @@ async function reconcileStalePayments(io = null) {
     if (!payment.gateway_transaction_id) continue;
 
     try {
-      const statusResponse = await checkPaymentStatus(payment.gateway_transaction_id);
+      const statusResponse = await phonepeService.checkPaymentStatus(payment.gateway_transaction_id);
       if (!statusResponse.success) continue;
 
       const state = statusResponse.data?.state;

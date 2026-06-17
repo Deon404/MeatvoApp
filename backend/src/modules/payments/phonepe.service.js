@@ -19,13 +19,10 @@ class PhonePeService {
     this.isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
     if (!this.merchantId || !this.saltKey) {
-      logger.error('phonepe_config_missing', {
+      logger.warn('phonepe_config_missing', {
         merchantId: this.merchantId ? 'configured' : 'missing',
         saltKey: this.saltKey ? 'configured' : 'missing',
       });
-      if (this.isProd) {
-        throw new Error('PhonePe configuration missing. Please set PHONEPE_MERCHANT_ID and PHONEPE_SALT_KEY');
-      }
     }
   }
 
@@ -61,6 +58,10 @@ class PhonePeService {
    * @returns {Promise<Object>} Payment response
    */
   async createPayment(paymentData) {
+    if (!this.isConfigured()) {
+      return { success: false, error: 'PhonePe not configured — use CashFree' };
+    }
+
     const { orderId, amount, customerPhone, customerEmail, customerName } = paymentData;
     
     const transactionId = `TXN_${orderId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
