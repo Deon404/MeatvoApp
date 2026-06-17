@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../config/support_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../models/user_model.dart';
@@ -15,14 +16,12 @@ import '../../screens/settings/terms_of_service_screen.dart';
 import '../../screens/wishlist/wishlist_screen.dart';
 import '../../services/auth_service.dart';
 import '../../services/storage_service.dart';
+import '../../features/home/widgets/home_brand_footer.dart';
 
 const _brandRed = Color(0xFFC8102E);
 const _textDark = Color(0xFF1A1A1A);
 const _textGrey = Color(0xFF6B6B6B);
 const _iconBg = AppColors.greyLight;
-const _supportPhone = '+919876543210';
-const _supportEmail = 'support@meatvo.in';
-const _faqUrl = 'https://meatvo.in/faq';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
@@ -176,19 +175,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ListTile(
                 leading: const Icon(Icons.call_outlined, color: _brandRed),
                 title: const Text('Call us'),
-                subtitle: Text(_supportPhone),
+                subtitle: Text(SupportConfig.phone),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _launchUrl(Uri.parse('tel:$_supportPhone'));
+                  _launchUrl(Uri.parse('tel:${SupportConfig.phone}'));
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.mail_outline, color: _brandRed),
                 title: const Text('Email'),
-                subtitle: Text(_supportEmail),
+                subtitle: Text(SupportConfig.email),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _launchUrl(Uri.parse('mailto:$_supportEmail'));
+                  _launchUrl(Uri.parse('mailto:${SupportConfig.email}'));
                 },
               ),
               ListTile(
@@ -198,7 +197,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _launchUrl(
-                    Uri.parse(_faqUrl),
+                    Uri.parse(SupportConfig.faqUrl),
                     mode: LaunchMode.externalApplication,
                   );
                 },
@@ -579,7 +578,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 32),
+                    const HomeBrandFooter(
+                      align: CrossAxisAlignment.center,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
                   ],
                 ),
               );

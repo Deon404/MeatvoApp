@@ -6,6 +6,7 @@ import 'package:shimmer/shimmer.dart';
 import '../../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../../design_system/tokens/meatvo_colors.dart';
 import '../../../models/banner_model.dart';
+import '../../../utils/media_url_resolver.dart';
 import '../../../widgets/common/banner_image_shimmer.dart';
 
 class HeroBannerCarousel extends StatefulWidget {
@@ -148,7 +149,8 @@ class _BannerSlide extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
-    final hasImage = banner.imageUrl.trim().isNotEmpty;
+    final resolvedImage = MediaUrlResolver.resolve(banner.imageUrl) ?? '';
+    final hasImage = resolvedImage.isNotEmpty;
 
     if (!hasImage) {
       return _PremiumFallbackBanner(height: height, onTap: onTap);
@@ -177,11 +179,15 @@ class _BannerSlide extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 BannerImageWithShimmer(
-                  imageUrl: banner.imageUrl,
+                  imageUrl: resolvedImage,
                   fit: BoxFit.cover,
                   baseColor: mv.surfaceWarm,
                   highlightColor: mv.surfaceCard,
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  errorWidget: (_, __, ___) => CachedNetworkImage(
+                    imageUrl: HeroBannerCarousel._fallbackChickenImage,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  ),
                 ),
                 DecoratedBox(
                   decoration: BoxDecoration(
@@ -202,7 +208,6 @@ class _BannerSlide extends StatelessWidget {
                   child: _BannerCopy(
                     title: banner.title,
                     subtitle: banner.subtitle,
-                    onCta: onTap,
                   ),
                 ),
               ],
@@ -225,8 +230,6 @@ class _PremiumFallbackBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mv = context.meatvo;
-
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -293,7 +296,6 @@ class _PremiumFallbackBanner extends StatelessWidget {
                   child: _BannerCopy(
                     title: 'Farm-fresh chicken',
                     subtitle: 'Premium cuts · Same-day delivery',
-                    onCta: onTap,
                   ),
                 ),
               ],
@@ -309,12 +311,10 @@ class _BannerCopy extends StatelessWidget {
   const _BannerCopy({
     required this.title,
     required this.subtitle,
-    required this.onCta,
   });
 
   final String title;
   final String? subtitle;
-  final VoidCallback onCta;
 
   @override
   Widget build(BuildContext context) {
@@ -356,27 +356,6 @@ class _BannerCopy extends StatelessWidget {
                 ),
           ),
         ],
-        SizedBox(height: mv.spacing.sm),
-        FilledButton(
-          onPressed: onCta,
-          style: FilledButton.styleFrom(
-            backgroundColor: MeatvoColors.surfaceCard,
-            foregroundColor: mv.brandPrimary,
-            padding: EdgeInsets.symmetric(
-              horizontal: mv.spacing.lg,
-              vertical: mv.spacing.sm,
-            ),
-            minimumSize: const Size(0, 40),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(mv.radii.pill),
-            ),
-            elevation: 0,
-          ),
-          child: const Text(
-            'Order now',
-            style: TextStyle(fontWeight: FontWeight.w700),
-          ),
-        ),
       ],
     );
   }

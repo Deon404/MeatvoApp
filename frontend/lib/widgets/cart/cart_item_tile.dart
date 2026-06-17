@@ -2,9 +2,9 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/cart_model.dart';
-import '../../theme/app_theme.dart';
-import 'premium_cart_card.dart';
 
 class CartItemTile extends StatelessWidget {
   const CartItemTile({
@@ -24,15 +24,17 @@ class CartItemTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
     final qty = item.quantity.round();
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      padding: const EdgeInsets.all(12),
+      margin: EdgeInsets.symmetric(vertical: mv.spacing.xxs + 2),
+      padding: EdgeInsets.all(mv.spacing.sm),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.lg),
+        boxShadow: mv.shadowCard,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -41,7 +43,7 @@ class CartItemTile extends StatelessWidget {
             imageUrl: item.product.primaryImageUrl,
             emoji: emojiFallback,
           ),
-          const SizedBox(width: 12),
+          SizedBox(width: mv.spacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -52,36 +54,31 @@ class CartItemTile extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF1A1A1A),
-                    fontSize: 14,
+                    color: mv.textPrimary,
                     fontWeight: FontWeight.w600,
                     height: 1.3,
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: mv.spacing.xxs),
                 Text(
                   item.unit,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF6B6B6B),
-                    fontSize: 12,
-                  ),
+                  style: textTheme.bodySmall?.copyWith(color: mv.textSecondary),
                 ),
-                const SizedBox(height: 8),
+                SizedBox(height: mv.spacing.xs),
                 Text(
                   '₹${(item.unitPrice * qty).toStringAsFixed(0)}',
                   maxLines: 1,
                   style: textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFFC8102E),
-                    fontSize: 15,
+                    color: mv.brandPrimary,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: mv.spacing.xs),
           _CartQuantityStepper(
             quantity: qty,
             isBusy: isBusy,
@@ -105,29 +102,30 @@ class _ProductImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final safeUrl = imageUrl ?? '';
     final hasUrl = safeUrl.isNotEmpty;
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(mv.radii.md),
       child: SizedBox(
         width: 70,
         height: 70,
         child: !hasUrl
-            ? _placeholder(emoji)
+            ? _placeholder(mv, emoji)
             : CachedNetworkImage(
                 imageUrl: safeUrl,
                 fit: BoxFit.cover,
-                placeholder: (_, __) => _placeholder(emoji),
-                errorWidget: (_, __, ___) => _placeholder(emoji),
+                placeholder: (_, __) => _placeholder(mv, emoji),
+                errorWidget: (_, __, ___) => _placeholder(mv, emoji),
               ),
       ),
     );
   }
 
-  Widget _placeholder(String emoji) {
+  Widget _placeholder(MeatvoThemeData mv, String emoji) {
     return Container(
-      color: AppThemeColors.surface2,
+      color: MeatvoColors.surfaceMuted,
       alignment: Alignment.center,
       child: Text(emoji, style: const TextStyle(fontSize: 28)),
     );
@@ -149,15 +147,20 @@ class _CartQuantityStepper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
+
     if (isBusy) {
-      return const SizedBox(
+      return SizedBox(
         width: 88,
         height: 30,
         child: Center(
           child: SizedBox(
             width: 18,
             height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: mv.brandPrimary,
+            ),
           ),
         ),
       );
@@ -180,11 +183,10 @@ class _CartQuantityStepper extends StatelessWidget {
                 '$quantity',
                 maxLines: 1,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFF1A1A1A),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: mv.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
               ),
             ),
           ),
@@ -212,6 +214,7 @@ class _StepButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final localOnTap = onTap;
     final canTap = enabled && localOnTap != null;
 
@@ -227,14 +230,14 @@ class _StepButton extends StatelessWidget {
                   localOnTap.call();
                 }
               : null,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(mv.radii.sm),
           child: Ink(
             decoration: BoxDecoration(
-              color: const Color(0xFFC8102E),
-              borderRadius: BorderRadius.circular(8),
+              color: mv.brandPrimary,
+              borderRadius: BorderRadius.circular(mv.radii.sm),
             ),
             child: Center(
-              child: Icon(icon, size: 18, color: Colors.white),
+              child: Icon(icon, size: 18, color: MeatvoColors.white),
             ),
           ),
         ),

@@ -28,7 +28,7 @@ const customFormat = winston.format.combine(
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: customFormat,
-  defaultMeta: { service: 'phonepe-payments' },
+  defaultMeta: { service: 'cashfree-payments' },
   transports: [
     // Error log file - only errors
     new winston.transports.File({

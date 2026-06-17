@@ -4,7 +4,7 @@ const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const phonepeService = require('./phonepe.service');
 const { reserveStockForPaidOrder } = require('./payment-stock');
-const { assignOrderToPartner } = require('../../services/assignment.service');
+const { notifyStaffNewOrder } = require('../../services/notification.service');
 
 /**
  * Client-side payment verification after PhonePe redirect.
@@ -100,14 +100,20 @@ const verifyPayment = asyncHandler(async (req, res) => {
 
       const io = req.app.get('io');
       if (io) {
-        io.to('admin_room').emit('order:new', {
+        const payload = {
           orderId: payment.order_id,
           customerId: payment.customer_id,
           totalAmount: Number(payment.amount || 0),
           createdAt: new Date().toISOString(),
+        };
+        io.to('admin_room').emit('order:new', payload);
+        io.to('staff_room').emit('order:new', payload);
+        await notifyStaffNewOrder({
+          orderId: payment.order_id,
+          totalAmount: Number(payment.amount || 0),
+          io,
         });
       }
-      await assignOrderToPartner({ orderId: payment.order_id, io });
 
       logger.info('payment_verified', {
         orderId: payment.order_id,
@@ -129,7 +135,8 @@ const verifyPayment = asyncHandler(async (req, res) => {
         [JSON.stringify(phonePeData), payment.id]
       );
       await client.query(
-        `UPDATE orders SET payment_status = 'FAILED', updated_at = NOW() WHERE id = $1`,
+        `UPDATE orders SET status = 'CANCELLED', payment_status = 'FAILED', updated_at = NOW()
+         WHERE id = $1 AND status IN ('PLACED', 'PAYMENT_PENDING')`,
         [payment.order_id]
       );
       await client.query('COMMIT');

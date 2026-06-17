@@ -44,4 +44,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('MeatvoProductCard shows ordering paused overlay and Closed CTA',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 600));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: MeatvoTheme.light,
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 148,
+              height: 320,
+              child: MeatvoProductCard(
+                product: ProductModel(
+                  id: '2',
+                  name: 'Chicken Curry Cut',
+                  price: 199,
+                  unit: '500g',
+                  categoryId: 'c1',
+                  isAvailable: true,
+                ),
+                displayPrice: 199,
+                displayUnit: '500g',
+                inStock: true,
+                orderingPaused: true,
+                onAdd: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    expect(find.text('Ordering paused'), findsOneWidget);
+    expect(find.text('Closed'), findsOneWidget);
+  });
 }

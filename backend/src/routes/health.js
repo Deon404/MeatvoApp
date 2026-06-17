@@ -12,10 +12,27 @@ const { HEALTH_STATUS } = require('../constants/health.constants');
 const { adminOnly } = require('../middlewares/adminOnlyIp.middleware');
 const router = express.Router();
 
-router.use(adminOnly);
+// ─── Kubernetes probes (no IP restriction) ────────────────────────────────────
+router.get('/ready', async (req, res) => {
+  try {
+    await query('SELECT 1');
+    return res.status(200).json({ status: HEALTH_STATUS.READY, timestamp: new Date().toISOString() });
+  } catch (error) {
+    logger.error('readiness_probe_failed', { error: error.message });
+    return res.status(503).json({ status: 'not ready', error: error.message, timestamp: new Date().toISOString() });
+  }
+});
 
-// Basic health check — consumed by dashboards / general uptime monitors
-router.get('/', async (req, res) => {
+router.get('/live', (req, res) => {
+  return res.status(200).json({
+    status: HEALTH_STATUS.ALIVE,
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// IP-restricted detailed health endpoints
+router.get('/', adminOnly, async (req, res) => {
   try {
     const timestamp = new Date().toISOString();
     const uptime = process.uptime();
@@ -42,7 +59,7 @@ router.get('/', async (req, res) => {
 });
 
 // Database health check
-router.get('/db', async (req, res) => {
+router.get('/db', adminOnly, async (req, res) => {
   try {
     const start = Date.now();
     const result = await query('SELECT 1 AS health_check, NOW() AS ts');
@@ -80,7 +97,7 @@ router.get('/db', async (req, res) => {
 });
 
 // Redis health check
-router.get('/redis', async (req, res) => {
+router.get('/redis', adminOnly, async (req, res) => {
   try {
     const redis = require('../db/redis');
     const start = Date.now();
@@ -108,7 +125,7 @@ router.get('/redis', async (req, res) => {
 });
 
 // Elasticsearch health check
-router.get('/elasticsearch', async (req, res) => {
+router.get('/elasticsearch', adminOnly, async (req, res) => {
   try {
     const { elasticsearchLogger } = require('../utils/elasticsearchLogger');
     const start = Date.now();
@@ -140,7 +157,7 @@ router.get('/elasticsearch', async (req, res) => {
 });
 
 // External services health check
-router.get('/external', async (req, res) => {
+router.get('/external', adminOnly, async (req, res) => {
   const axios = require('axios');
   const services = {};
   const start = Date.now();
@@ -190,7 +207,7 @@ router.get('/external', async (req, res) => {
 });
 
 // Comprehensive health check (all services)
-router.get('/comprehensive', async (req, res) => {
+router.get('/comprehensive', adminOnly, async (req, res) => {
   const checks = ['database', 'redis', 'elasticsearch', 'external'];
   const services = {};
 
@@ -227,31 +244,6 @@ router.get('/comprehensive', async (req, res) => {
     ...(degradedList.length > 0 ? { warnings: degradedList } : {}),
   }, degradedList.length > 0 ? 'Some services degraded' : 'All services healthy');
 });
-
-// ─── Kubernetes probes ────────────────────────────────────────────────────────
-// NOTE: /ready and /live intentionally return raw JSON (no standard envelope).
-// Kubernetes kubelet evaluates HTTP status codes only; third-party uptime monitors
-// may also key on the raw `status` field. Wrapping these in ok()/fail() would add
-// extra nesting that could confuse such tooling without any benefit.
-
-router.get('/ready', async (req, res) => {
-  try {
-    await query('SELECT 1');
-    return res.status(200).json({ status: HEALTH_STATUS.READY, timestamp: new Date().toISOString() });
-  } catch (error) {
-    logger.error('readiness_probe_failed', { error: error.message });
-    return res.status(503).json({ status: 'not ready', error: error.message, timestamp: new Date().toISOString() });
-  }
-});
-
-router.get('/live', (req, res) => {
-  return res.status(200).json({
-    status: HEALTH_STATUS.ALIVE,
-    uptime: Math.floor(process.uptime()),
-    timestamp: new Date().toISOString(),
-  });
-});
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Utility helpers
 function formatUptime(seconds) {

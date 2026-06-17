@@ -1,53 +1,36 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
+
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/order_model.dart';
-import '../../core/constants/app_constants.dart';
+import '../../utils/address_display_util.dart';
+import '../../utils/eta_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/responsive_helper.dart';
-import '../../screens/orders/order_detail_screen.dart';
-import 'package:intl/intl.dart';
+import 'order_detail_screen.dart';
 
-/// Order Confirmation Screen - Shows success message and order details after order placement
+/// Success screen after order placement — MeatvoTheme warm palette.
 class OrderConfirmationScreen extends StatelessWidget {
-  final OrderModel order;
-  final String deliverySlot;
-  final Map<String, dynamic> deliveryAddress;
-  final String? paymentId;
-
   const OrderConfirmationScreen({
     super.key,
     required this.order,
-    required this.deliverySlot,
     required this.deliveryAddress,
     this.paymentId,
   });
 
-  String _formatDeliverySlot(String slot) {
-    try {
-      final dateTime = DateTime.parse(slot);
-      final formatter = DateFormat('MMM dd, yyyy • hh:mm a');
-      return formatter.format(dateTime);
-    } catch (e) {
-      return slot;
+  final OrderModel order;
+  final Map<String, dynamic> deliveryAddress;
+  final String? paymentId;
+
+  String _formatExpectedDelivery() {
+    if (order.estimatedDeliveryTime != null) {
+      return formatDeliveryByTime(order.estimatedDeliveryTime!);
     }
-  }
-
-  String _formatDeliveryAddress(Map<String, dynamic> address) {
-    final line1 = address['address_line1'] as String? ?? '';
-    final line2 = address['address_line2'] as String? ?? '';
-    final city = address['city'] as String? ?? '';
-    final state = address['state'] as String? ?? '';
-    final pincode = address['pincode'] as String? ?? '';
-
-    final parts = <String>[];
-    if (line1.isNotEmpty) parts.add(line1);
-    if (line2.isNotEmpty) parts.add(line2);
-    if (city.isNotEmpty) parts.add(city);
-    if (state.isNotEmpty) parts.add(state);
-    if (pincode.isNotEmpty) parts.add(pincode);
-
-    return parts.join(', ');
+    final etaMinutes = order.etaMinutes;
+    if (etaMinutes != null && etaMinutes > 0) {
+      return formatArrivingInLabel(etaMinutes);
+    }
+    return 'Within 1 hour';
   }
 
   String _getOrderNumber() => formatOrderDisplayId(order.id);
@@ -55,8 +38,12 @@ class OrderConfirmationScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     R.init(context);
+    final mv = context.meatvo;
+    final textTheme = Theme.of(context).textTheme;
+
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      backgroundColor: mv.surfaceWarm,
       body: SafeArea(
         top: true,
         bottom: false,
@@ -64,340 +51,219 @@ class OrderConfirmationScreen extends StatelessWidget {
           children: [
             Expanded(
               child: SingleChildScrollView(
-                padding: EdgeInsets.all(R.sw(6, context)),
+                padding: EdgeInsets.all(mv.spacing.lg),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    SizedBox(height: R.sh(4, context)),
+                    SizedBox(height: mv.spacing.lg),
                     Container(
                       width: 100,
                       height: 100,
                       decoration: BoxDecoration(
-                        color: AppColors.success.withValues(alpha: 0.1),
+                        color: mv.freshBadge.withValues(alpha: 0.12),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.check_circle,
+                      child: Icon(
+                        Icons.check_circle_rounded,
                         size: 60,
-                        color: AppColors.success,
+                        color: mv.freshBadge,
                       ),
                     ),
-                    SizedBox(height: R.sh(3, context)),
+                    SizedBox(height: mv.spacing.md),
                     Text(
                       'Order Placed Successfully!',
-                      style: TextStyle(
-                        fontSize: R.fontSize(24, context),
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
+                      style: textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: mv.textPrimary,
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    SizedBox(height: R.sh(1, context)),
+                    SizedBox(height: mv.spacing.xs),
                     Text(
                       'Your order has been confirmed',
-                      style: TextStyle(
-                        fontSize: R.fontSize(16, context),
-                        color: AppColors.textSecondary,
+                      style: textTheme.bodyLarge?.copyWith(
+                        color: mv.textSecondary,
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    SizedBox(height: R.sh(4, context)),
-                    Card(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: AppColors.divider, width: 1),
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.all(R.sw(5, context)),
-                        child: Column(
-                          children: [
-                            Text(
-                              'Order Number',
-                              style: TextStyle(
-                                fontSize: R.fontSize(14, context),
-                                color: AppColors.textSecondary,
-                              ),
+                    SizedBox(height: mv.spacing.lg),
+                    _InfoCard(
+                      child: Column(
+                        children: [
+                          Text(
+                            'Order Number',
+                            style: textTheme.bodySmall?.copyWith(
+                              color: mv.textMuted,
                             ),
-                            SizedBox(height: R.sh(1, context)),
-                            Text(
-                              '#${_getOrderNumber()}',
-                              style: TextStyle(
-                                fontSize: R.fontSize(28, context),
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.primary,
-                                letterSpacing: 2,
-                              ),
+                          ),
+                          SizedBox(height: mv.spacing.xs),
+                          Text(
+                            '#${_getOrderNumber()}',
+                            style: textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: mv.brandPrimary,
+                              letterSpacing: 1.5,
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     ),
-                    SizedBox(height: R.sh(3, context)),
-                    Card(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: AppColors.divider, width: 1),
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.all(R.sw(4, context)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Order Summary',
-                              style: TextStyle(
-                                fontSize: R.fontSize(18, context),
-                                fontWeight: FontWeight.bold,
-                                color: AppColors.textPrimary,
-                              ),
+                    SizedBox(height: mv.spacing.md),
+                    _InfoCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Order Summary',
+                            style: textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: mv.textPrimary,
                             ),
-                            SizedBox(height: R.sh(2, context)),
-                            ...order.items.map((item) => Padding(
-                                  padding:
-                                      EdgeInsets.only(bottom: R.sh(1.5, context)),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              item.productName,
-                                              style: TextStyle(
-                                                fontSize: R.fontSize(14, context),
-                                                fontWeight: FontWeight.w600,
-                                                color: AppColors.textPrimary,
-                                              ),
-                                            ),
-                                            SizedBox(height: R.sh(0.5, context)),
-                                            Text(
-                                              '${item.quantity} ${item.unit}',
-                                              style: TextStyle(
-                                                fontSize: R.fontSize(12, context),
-                                                color: AppColors.textSecondary,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Text(
-                                        '₹${item.totalPrice.toStringAsFixed(0)}',
-                                        style: TextStyle(
-                                          fontSize: R.fontSize(14, context),
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                )),
-                            const Divider(height: 24),
-                            _buildPriceRow(context, 'Subtotal',
-                                '₹${order.totalAmount.toStringAsFixed(0)}'),
-                            if (order.discountAmount != null &&
-                                order.discountAmount! > 0)
-                              _buildPriceRow(
-                                context,
-                                'Discount',
-                                '-₹${order.discountAmount!.toStringAsFixed(0)}',
-                                color: AppColors.success,
-                              ),
-                            if (order.deliveryCharge != null &&
-                                order.deliveryCharge! > 0)
-                              _buildPriceRow(
-                                context,
-                                'Delivery Charge',
-                                '₹${order.deliveryCharge!.toStringAsFixed(0)}',
-                              )
-                            else
-                              _buildPriceRow(
-                                context,
-                                'Delivery Charge',
-                                'FREE',
-                                color: AppColors.success,
-                              ),
-                            const Divider(height: 24),
-                            _buildPriceRow(
-                              context,
-                              'Total Amount',
-                              '₹${order.finalAmount.toStringAsFixed(0)}',
-                              isBold: true,
-                              fontSize: 18,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: R.sh(3, context)),
-                    Card(
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(color: AppColors.divider, width: 1),
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.all(R.sw(4, context)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.location_on,
-                                  size: 20,
-                                  color: AppColors.primary,
-                                ),
-                                SizedBox(width: R.sw(2, context)),
-                                Text(
-                                  'Delivery Details',
-                                  style: TextStyle(
-                                    fontSize: R.fontSize(18, context),
-                                    fontWeight: FontWeight.bold,
-                                    color: AppColors.textPrimary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: R.sh(2, context)),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(
-                                  Icons.home,
-                                  size: 18,
-                                  color: AppColors.textSecondary,
-                                ),
-                                SizedBox(width: R.sw(2, context)),
-                                Expanded(
-                                  child: Text(
-                                    _formatDeliveryAddress(deliveryAddress),
-                                    style: TextStyle(
-                                      fontSize: R.fontSize(14, context),
-                                      color: AppColors.textPrimary,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: R.sh(2, context)),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(
-                                  Icons.access_time,
-                                  size: 18,
-                                  color: AppColors.textSecondary,
-                                ),
-                                SizedBox(width: R.sw(2, context)),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Expected Delivery',
-                                        style: TextStyle(
-                                          fontSize: R.fontSize(12, context),
-                                          color: AppColors.textSecondary,
-                                        ),
-                                      ),
-                                      SizedBox(height: R.sh(0.5, context)),
-                                      Text(
-                                        _formatDeliverySlot(deliverySlot),
-                                        style: TextStyle(
-                                          fontSize: R.fontSize(14, context),
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: R.sh(2, context)),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  order.paymentMethod == 'cod'
-                                      ? Icons.money
-                                      : Icons.payment,
-                                  size: 18,
-                                  color: AppColors.textSecondary,
-                                ),
-                                SizedBox(width: R.sw(2, context)),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Payment Method',
-                                        style: TextStyle(
-                                          fontSize: R.fontSize(12, context),
-                                          color: AppColors.textSecondary,
-                                        ),
-                                      ),
-                                      SizedBox(height: R.sh(0.5, context)),
-                                      Text(
-                                        order.paymentMethod == 'cod'
-                                            ? 'Cash on Delivery'
-                                            : 'Online Payment',
-                                        style: TextStyle(
-                                          fontSize: R.fontSize(14, context),
-                                          fontWeight: FontWeight.w600,
-                                          color: AppColors.textPrimary,
-                                        ),
-                                      ),
-                                      if (paymentId != null &&
-                                          paymentId!.isNotEmpty) ...[
-                                        SizedBox(height: R.sh(0.5, context)),
+                          ),
+                          SizedBox(height: mv.spacing.sm),
+                          ...order.items.map(
+                            (item) => Padding(
+                              padding: EdgeInsets.only(bottom: mv.spacing.sm),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
                                         Text(
-                                          'Payment ID: ${paymentId!.substring(0, paymentId!.length > 12 ? 12 : paymentId!.length)}...',
-                                          style: TextStyle(
-                                            fontSize: R.fontSize(11, context),
-                                            color: AppColors.textSecondary,
+                                          item.productName,
+                                          style: textTheme.bodyMedium?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                            color: mv.textPrimary,
+                                          ),
+                                        ),
+                                        Text(
+                                          '${item.quantity} ${item.unit}',
+                                          style: textTheme.bodySmall?.copyWith(
+                                            color: mv.textMuted,
                                           ),
                                         ),
                                       ],
-                                    ],
+                                    ),
                                   ),
-                                ),
-                              ],
+                                  Text(
+                                    '₹${item.totalPrice.toStringAsFixed(0)}',
+                                    style: textTheme.bodyMedium?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: mv.textPrimary,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ],
-                        ),
+                          ),
+                          Divider(height: 24, color: mv.border),
+                          _PriceRow(
+                            label: 'Subtotal',
+                            value:
+                                '₹${order.totalAmount.toStringAsFixed(0)}',
+                          ),
+                          if (order.discountAmount != null &&
+                              order.discountAmount! > 0)
+                            _PriceRow(
+                              label: 'Discount',
+                              value:
+                                  '-₹${order.discountAmount!.toStringAsFixed(0)}',
+                              valueColor: mv.freshBadge,
+                            ),
+                          if (order.deliveryCharge != null &&
+                              order.deliveryCharge! > 0)
+                            _PriceRow(
+                              label: 'Delivery Charge',
+                              value:
+                                  '₹${order.deliveryCharge!.toStringAsFixed(0)}',
+                            )
+                          else
+                            _PriceRow(
+                              label: 'Delivery Charge',
+                              value: 'FREE',
+                              valueColor: mv.freshBadge,
+                            ),
+                          Divider(height: 24, color: mv.border),
+                          _PriceRow(
+                            label: 'Total Amount',
+                            value:
+                                '₹${order.finalAmount.toStringAsFixed(0)}',
+                            isBold: true,
+                            valueColor: mv.brandPrimary,
+                          ),
+                        ],
                       ),
                     ),
-                    SizedBox(height: R.sh(4, context)),
+                    SizedBox(height: mv.spacing.md),
+                    _InfoCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.location_on_rounded,
+                                size: 20,
+                                color: mv.brandPrimary,
+                              ),
+                              SizedBox(width: mv.spacing.xs),
+                              Text(
+                                'Delivery Details',
+                                style: textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: mv.textPrimary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: mv.spacing.sm),
+                          _DetailRow(
+                            icon: Icons.home_rounded,
+                            title: formatAddressForDisplay(deliveryAddress),
+                          ),
+                          SizedBox(height: mv.spacing.sm),
+                          _DetailRow(
+                            icon: Icons.schedule_rounded,
+                            label: 'Expected Delivery',
+                            title: _formatExpectedDelivery(),
+                          ),
+                          SizedBox(height: mv.spacing.sm),
+                          _DetailRow(
+                            icon: order.paymentMethod == 'cod'
+                                ? Icons.payments_outlined
+                                : Icons.credit_card_rounded,
+                            label: 'Payment Method',
+                            title: order.paymentMethod == 'cod'
+                                ? 'Cash on Delivery'
+                                : 'Online Payment',
+                            subtitle: paymentId != null && paymentId!.isNotEmpty
+                                ? 'Payment ID: ${paymentId!.substring(0, paymentId!.length > 12 ? 12 : paymentId!.length)}...'
+                                : null,
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(height: mv.spacing.lg),
                   ],
                 ),
               ),
             ),
             Container(
-              padding: EdgeInsets.all(R.sw(6, context)),
+              padding: EdgeInsets.all(mv.spacing.md),
               decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
+                color: mv.surfaceCard,
+                boxShadow: mv.shadowMd,
               ),
               child: SafeArea(
                 top: false,
-                bottom: true,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     SizedBox(
                       width: double.infinity,
+                      height: 52,
                       child: ElevatedButton.icon(
                         onPressed: () {
                           Navigator.of(context).pushReplacement(
@@ -408,47 +274,34 @@ class OrderConfirmationScreen extends StatelessWidget {
                             ),
                           );
                         },
-                        icon: const Icon(Icons.shopping_bag),
-                        label: Text(
-                          'View Order',
-                          style: TextStyle(fontSize: R.fontSize(15, context)),
-                        ),
+                        icon: const Icon(Icons.shopping_bag_outlined),
+                        label: const Text('Track Order'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          minimumSize: Size(
-                            0,
-                            math.max(44.0, R.sh(5.5, context)),
-                          ),
+                          backgroundColor: mv.brandPrimary,
+                          foregroundColor: MeatvoColors.white,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(mv.radii.md),
                           ),
                         ),
                       ),
                     ),
-                    SizedBox(height: R.sh(1.5, context)),
+                    SizedBox(height: mv.spacing.sm),
                     SizedBox(
                       width: double.infinity,
+                      height: 52,
                       child: OutlinedButton(
                         onPressed: () {
                           Navigator.of(context)
                               .popUntil((route) => route.isFirst);
                         },
                         style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.primary,
-                          side: const BorderSide(color: AppColors.primary),
-                          minimumSize: Size(
-                            0,
-                            math.max(44.0, R.sh(5.5, context)),
-                          ),
+                          foregroundColor: mv.brandPrimary,
+                          side: BorderSide(color: mv.brandPrimary),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(mv.radii.md),
                           ),
                         ),
-                        child: Text(
-                          'Continue Shopping',
-                          style: TextStyle(fontSize: R.fontSize(15, context)),
-                        ),
+                        child: const Text('Continue Shopping'),
                       ),
                     ),
                   ],
@@ -460,34 +313,66 @@ class OrderConfirmationScreen extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _buildPriceRow(
-    BuildContext context,
-    String label,
-    String value, {
-    Color? color,
-    bool isBold = false,
-    double fontSize = 14,
-  }) {
+class _InfoCard extends StatelessWidget {
+  const _InfoCard({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(mv.spacing.md),
+      decoration: BoxDecoration(
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.lg),
+        border: Border.all(color: mv.border),
+        boxShadow: mv.shadowCard,
+      ),
+      child: child,
+    );
+  }
+}
+
+class _PriceRow extends StatelessWidget {
+  const _PriceRow({
+    required this.label,
+    required this.value,
+    this.valueColor,
+    this.isBold = false,
+  });
+
+  final String label;
+  final String value;
+  final Color? valueColor;
+  final bool isBold;
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final textTheme = Theme.of(context).textTheme;
+
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: R.sh(0.5, context)),
+      padding: EdgeInsets.symmetric(vertical: mv.spacing.xxs),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
             label,
-            style: TextStyle(
-              fontSize: R.fontSize(fontSize, context),
-              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-              color: AppColors.textPrimary,
+            style: textTheme.bodyMedium?.copyWith(
+              fontWeight: isBold ? FontWeight.w700 : FontWeight.w400,
+              color: mv.textPrimary,
             ),
           ),
           Text(
             value,
-            style: TextStyle(
-              fontSize: R.fontSize(fontSize, context),
-              fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
-              color: color ?? AppColors.textPrimary,
+            style: textTheme.bodyMedium?.copyWith(
+              fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,
+              color: valueColor ?? mv.textPrimary,
             ),
           ),
         ],
@@ -496,3 +381,54 @@ class OrderConfirmationScreen extends StatelessWidget {
   }
 }
 
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({
+    required this.icon,
+    required this.title,
+    this.label,
+    this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? label;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: mv.textMuted),
+        SizedBox(width: mv.spacing.sm),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (label != null)
+                Text(
+                  label!,
+                  style: textTheme.bodySmall?.copyWith(color: mv.textMuted),
+                ),
+              Text(
+                title,
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: mv.textPrimary,
+                ),
+              ),
+              if (subtitle != null)
+                Text(
+                  subtitle!,
+                  style: textTheme.bodySmall?.copyWith(color: mv.textMuted),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

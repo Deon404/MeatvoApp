@@ -21,6 +21,7 @@ const {
   recordEarningsHistory,
   updateRiderEarnings,
 } = require('./earnings.service');
+const { emitOrderLifecycleEvent } = require('../utils/orderSocketEmit');
 
 /**
  * Transition order to new state
@@ -36,7 +37,7 @@ async function transitionOrderState({
   try {
     // Get current order
     const { rows: orderRows } = await query(
-      'SELECT id, customer_id, status FROM orders WHERE id = $1',
+      'SELECT id, customer_id, status, payment_mode, payment_status FROM orders WHERE id = $1',
       [orderId]
     );
     
@@ -59,6 +60,38 @@ async function transitionOrderState({
       throw new Error(
         `Role ${actorRole} cannot trigger state ${newState}`
       );
+    }
+
+    // LIFECYCLE FIX: block CONFIRMED+ for online orders until payment settles (COD exempt)
+    const paymentMode = String(order.payment_mode || '').toUpperCase();
+    const paymentStatus = String(order.payment_status || 'PENDING').toUpperCase();
+    const postConfirmStates = new Set([
+      ORDER_STATES.CONFIRMED,
+      ORDER_STATES.PACKING_STARTED,
+      ORDER_STATES.PACKED,
+      ORDER_STATES.RIDER_ASSIGNED,
+      ORDER_STATES.RIDER_ACCEPTED,
+      ORDER_STATES.OUT_FOR_DELIVERY,
+      ORDER_STATES.DELIVERED,
+    ]);
+    if (
+      paymentMode === 'ONLINE' &&
+      postConfirmStates.has(newState) &&
+      !['PAID', 'PAYMENT_VERIFIED'].includes(paymentStatus) &&
+      newState !== ORDER_STATES.CANCELLED
+    ) {
+      const isAdminOverride = actorRole === 'admin' && context.adminOverride === true;
+      if (!isAdminOverride) {
+        throw new Error(
+          `Online payment must be PAID before transitioning to ${newState} (current: ${paymentStatus})`
+        );
+      }
+      logger.warn('admin_payment_override', {
+        orderId,
+        actor,
+        newState,
+        paymentStatus,
+      });
     }
 
     // Update order state
@@ -124,7 +157,7 @@ async function transitionOrderState({
       io,
     });
 
-    // Emit socket events for real-time updates
+    // LIFECYCLE FIX: emit to canonical + legacy socket rooms on every transition
     if (io) {
       const payload = {
         orderId,
@@ -132,17 +165,12 @@ async function transitionOrderState({
         updatedAt: new Date().toISOString(),
         ...context,
       };
-
-      // Emit to customer
-      io.to(`customer_${order.customer_id}`).emit('order:status_updated', payload);
-      
-      // Emit to admin
-      io.to('admin_room').emit('order:updated', payload);
-      
-      // Emit to rider if assigned
-      if (riderUserId) {
-        io.to(`delivery_${riderUserId}`).emit('order:status_updated', payload);
-      }
+      emitOrderLifecycleEvent(io, {
+        orderId,
+        customerId: order.customer_id,
+        riderUserId,
+        payload,
+      });
     }
 
     // Handle automatic state-based actions
@@ -184,9 +212,11 @@ async function handleStateActions(orderId, state, io) {
         break;
 
       case ORDER_STATES.PACKED:
-        // Auto-assign rider
+        // Auto-assign rider (fire-and-forget — do not block mark-packed response)
         logger.info('auto_assigning_rider', { orderId });
-        await assignOrderToPartner({ orderId, io });
+        assignOrderToPartner({ orderId, io }).catch((err) => {
+          logger.error('packed_auto_assign_failed', { orderId, error: err.message });
+        });
         break;
 
       case ORDER_STATES.RIDER_REJECTED:

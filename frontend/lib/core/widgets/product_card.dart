@@ -256,18 +256,13 @@ class _AddButton extends StatelessWidget {
       child: InkWell(
         onTap: onPressed,
         borderRadius: BorderRadius.circular(AppRadius.button),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.sm + 2,
-            vertical: AppSpacing.xs + 2,
-          ),
-          child: Text(
-            '+ Add',
-            style: AppTextStyles.caption.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
+        child: const SizedBox(
+          width: 32,
+          height: 32,
+          child: Icon(
+            Icons.add_rounded,
+            color: AppColors.white,
+            size: 20,
           ),
         ),
       ),
@@ -305,7 +300,7 @@ class _QuantityStepper extends StatelessWidget {
             child: Text(
               '$quantity',
               style: AppTextStyles.caption.copyWith(
-                color: AppColors.textPrimary,
+                color: AppColors.white,
                 fontWeight: FontWeight.w600,
                 fontSize: 13,
               ),
@@ -342,7 +337,7 @@ class _StepIconButton extends StatelessWidget {
           child: Icon(
             icon,
             size: 16,
-            color: AppColors.textPrimary,
+            color: AppColors.white,
           ),
         ),
       ),

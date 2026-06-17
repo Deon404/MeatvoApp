@@ -1,10 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../design_system/tokens/meatvo_colors.dart';
 import '../../navigation/app_destinations.dart';
 import '../../services/auth_service.dart';
+import '../../services/push_notification_service.dart';
 import '../../services/storage_service.dart';
 import '../../utils/app_transitions.dart';
+import '../onboarding/onboarding_screen.dart';
 import 'phone_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -58,6 +64,8 @@ class _SplashScreenState extends State<SplashScreen>
           if (userProfile != null) {
             destination = destinationAfterAuth(role: userProfile.role);
           }
+          // Upload FCM token in background — do not block splash navigation.
+          unawaited(PushNotificationService().syncTokenWithBackend());
         } catch (e) {
           debugPrint('Failed to fetch user profile for role-based routing: $e');
           final cached = await AuthService().getCurrentUserProfile();
@@ -70,9 +78,14 @@ class _SplashScreenState extends State<SplashScreen>
         Navigator.of(context).pushReplacement(AppTransitions.fade(destination));
       } else {
         if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          AppTransitions.fade(const PhoneScreen()),
-        );
+        final prefs = await SharedPreferences.getInstance();
+        final onboardingDone = prefs.getBool('onboarding_completed') ?? false;
+        if (!mounted) return;
+
+        final destination = onboardingDone
+            ? const PhoneScreen()
+            : const OnboardingScreen();
+        Navigator.of(context).pushReplacement(AppTransitions.fade(destination));
       }
     } catch (e) {
       debugPrint('Error in splash initialization: $e');
@@ -94,7 +107,18 @@ class _SplashScreenState extends State<SplashScreen>
     return Scaffold(
       body: Stack(
         children: [
-          Container(color: const Color(0xFFC8102E)),
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  MeatvoColors.brandPrimary,
+                  MeatvoColors.brandPrimaryDark,
+                ],
+              ),
+            ),
+          ),
           Positioned.fill(
             child: FadeTransition(
               opacity: _fadeAnimation,

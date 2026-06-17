@@ -31,6 +31,7 @@ const {
   getDeliveryProof,
   getCODVerification,
 } = require('../../services/deliveryProof.service');
+const { validateRiderProofUpload } = require('../../utils/uploadSigning');
 
 /**
  * POST /api/orders/:id/transition
@@ -96,7 +97,7 @@ const startPacking = asyncHandler(async (req, res) => {
     orderId,
     newState: ORDER_STATES.PACKING_STARTED,
     actor: req.user.id,
-    actorRole: 'admin',
+    actorRole: req.user.role,
     io,
   });
 
@@ -115,7 +116,7 @@ const markPacked = asyncHandler(async (req, res) => {
     orderId,
     newState: ORDER_STATES.PACKED,
     actor: req.user.id,
-    actorRole: 'admin',
+    actorRole: req.user.role,
     io,
   });
 
@@ -227,6 +228,13 @@ const completeDelivery = asyncHandler(async (req, res) => {
   } = req.body;
   const io = req.app.get('io');
 
+  if (proofUrl) {
+    const proofCheck = validateRiderProofUpload(proofUrl, req.user.id);
+    if (!proofCheck.valid) {
+      return fail(res, 400, proofCheck.reason);
+    }
+  }
+
   // Verify delivery
   const verification = await completeDeliveryWithVerification({
     orderId,
@@ -266,7 +274,8 @@ const completeDelivery = asyncHandler(async (req, res) => {
  */
 const getProof = asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
-  const proof = await getDeliveryProof(orderId);
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const proof = await getDeliveryProof(orderId, baseUrl);
 
   if (!proof) {
     return fail(res, 404, 'Delivery proof not found');

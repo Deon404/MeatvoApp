@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/app_theme.dart';
-import 'premium_cart_card.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 
 class CartBillSummary extends StatelessWidget {
   const CartBillSummary({
@@ -25,14 +24,16 @@ class CartBillSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
     final totalDiscount = couponDiscount;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(mv.spacing.md),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.lg),
+        boxShadow: mv.shadowCard,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -40,36 +41,38 @@ class CartBillSummary extends StatelessWidget {
           Text(
             'Bill Summary',
             style: textTheme.bodyLarge?.copyWith(
-              color: const Color(0xFF1A1A1A),
-              fontSize: 15,
+              color: mv.textPrimary,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 12),
-          _summaryRow('Item total', '₹${itemTotal.toStringAsFixed(0)}'),
-          const SizedBox(height: 8),
+          SizedBox(height: mv.spacing.sm),
+          _summaryRow(context, 'Item total', '₹${itemTotal.toStringAsFixed(0)}'),
+          SizedBox(height: mv.spacing.xs),
           _summaryRow(
+            context,
             'Delivery',
             isFreeDelivery ? 'FREE' : '₹${deliveryCharge.toStringAsFixed(0)}',
-            valueColor: isFreeDelivery ? const Color(0xFF22C55E) : null,
+            valueColor: isFreeDelivery ? mv.freshBadge : null,
           ),
           if (totalDiscount > 0) ...[
-            const SizedBox(height: 8),
+            SizedBox(height: mv.spacing.xs),
             _summaryRow(
+              context,
               'Discount',
               '-₹${totalDiscount.toStringAsFixed(0)}',
-              valueColor: const Color(0xFF22C55E),
+              valueColor: mv.freshBadge,
             ),
           ],
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Divider(height: 1, color: Color(0xFFEEEEEE)),
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: mv.spacing.sm),
+            child: Divider(height: 1, color: mv.border),
           ),
           _summaryRow(
+            context,
             'Total',
             '₹${grandTotal.toStringAsFixed(0)}',
             bold: true,
-            valueColor: const Color(0xFFC8102E),
+            valueColor: mv.brandPrimary,
           ),
         ],
       ),
@@ -77,27 +80,29 @@ class CartBillSummary extends StatelessWidget {
   }
 
   Widget _summaryRow(
+    BuildContext context,
     String label,
     String value, {
     bool bold = false,
     Color? valueColor,
   }) {
+    final mv = context.meatvo;
+    final textTheme = Theme.of(context).textTheme;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
-          style: TextStyle(
-            color: const Color(0xFF6B6B6B),
-            fontSize: 13,
+          style: textTheme.bodySmall?.copyWith(
+            color: mv.textSecondary,
             fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
         Text(
           value,
-          style: TextStyle(
-            color: valueColor ?? const Color(0xFF1A1A1A),
-            fontSize: 13,
+          style: textTheme.bodySmall?.copyWith(
+            color: valueColor ?? mv.textPrimary,
             fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
           ),
         ),

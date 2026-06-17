@@ -72,10 +72,14 @@ class OfflineService {
   final Connectivity _connectivity;
 
   List<OfflineAction> _queue = [];
-  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _syncTimer;
   bool _isSyncing = false;
   bool _isOnline = true;
+
+  bool _hasConnectivity(List<ConnectivityResult> results) {
+    return results.any((result) => result != ConnectivityResult.none);
+  }
 
   OfflineService({
     RiderService? riderService,
@@ -90,7 +94,7 @@ class OfflineService {
     
     // Check initial connectivity
     final result = await _connectivity.checkConnectivity();
-    _isOnline = result != ConnectivityResult.none;
+    _isOnline = _hasConnectivity(result);
     
     if (_isOnline && _queue.isNotEmpty) {
       _scheduleSyncDebounced();
@@ -106,11 +110,11 @@ class OfflineService {
   /// Listen to connectivity changes
   void _listenToConnectivity() {
     _connectivitySubscription = _connectivity.onConnectivityChanged.listen(
-      (ConnectivityResult result) {
+      (List<ConnectivityResult> results) {
         final wasOffline = !_isOnline;
-        _isOnline = result != ConnectivityResult.none;
+        _isOnline = _hasConnectivity(results);
 
-        debugPrint('[OfflineService] Connectivity changed: ${result.name}');
+        debugPrint('[OfflineService] Connectivity changed: $results');
 
         // Connection restored
         if (wasOffline && _isOnline) {
@@ -200,7 +204,7 @@ class OfflineService {
 
     // Double-check connectivity
     final result = await _connectivity.checkConnectivity();
-    if (result == ConnectivityResult.none) {
+    if (!_hasConnectivity(result)) {
       debugPrint('[OfflineService] Still offline, cannot sync');
       return;
     }

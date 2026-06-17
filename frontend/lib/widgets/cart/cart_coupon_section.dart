@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../theme/app_theme.dart';
-import '../../ui/atoms/safe_icon_tap.dart';
-import 'premium_cart_card.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 
 class CartCouponSection extends StatefulWidget {
   const CartCouponSection({
@@ -55,41 +53,36 @@ class _CartCouponSectionState extends State<CartCouponSection> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
     final couponCode = widget.appliedCode;
     final hasCoupon = couponCode != null && couponCode.isNotEmpty;
+
+    final cardDecoration = BoxDecoration(
+      color: mv.surfaceCard,
+      borderRadius: BorderRadius.circular(mv.radii.lg),
+      boxShadow: mv.shadowCard,
+    );
 
     if (!hasCoupon) {
       return GestureDetector(
         onTap: _showCouponDialog,
         child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
+          padding: EdgeInsets.all(mv.spacing.sm + 2),
+          decoration: cardDecoration,
           child: Row(
             children: [
-              const Icon(
-                Icons.local_offer_outlined,
-                color: Color(0xFFC8102E),
-                size: 20,
-              ),
-              const SizedBox(width: 12),
+              Icon(Icons.local_offer_outlined, color: mv.brandPrimary, size: 20),
+              SizedBox(width: mv.spacing.sm),
               Text(
                 'Apply Coupon',
                 style: textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xFF1A1A1A),
-                  fontSize: 14,
+                  color: mv.textPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const Spacer(),
-              const Icon(
-                Icons.chevron_right,
-                color: Color(0xFF6B6B6B),
-                size: 20,
-              ),
+              Icon(Icons.chevron_right, color: mv.textMuted, size: 20),
             ],
           ),
         ),
@@ -97,39 +90,27 @@ class _CartCouponSectionState extends State<CartCouponSection> {
     }
 
     return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
+      padding: EdgeInsets.all(mv.spacing.sm + 2),
+      decoration: cardDecoration,
       child: Row(
         children: [
-          const Icon(
-            Icons.check_circle,
-            color: Color(0xFF22C55E),
-            size: 20,
-          ),
-          const SizedBox(width: 12),
+          Icon(Icons.check_circle, color: mv.freshBadge, size: 20),
+          SizedBox(width: mv.spacing.sm),
           Expanded(
             child: Text(
               '${couponCode.toUpperCase()} — ₹${widget.appliedDiscount.toStringAsFixed(0)} saved',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF1A1A1A),
-                fontSize: 14,
+                color: mv.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          SizedBox(width: mv.spacing.xs),
           GestureDetector(
             onTap: widget.onRemove,
-            child: const Icon(
-              Icons.close,
-              color: Color(0xFF6B6B6B),
-              size: 20,
-            ),
+            child: Icon(Icons.close, color: mv.textMuted, size: 20),
           ),
         ],
       ),
@@ -139,7 +120,7 @@ class _CartCouponSectionState extends State<CartCouponSection> {
   Future<void> _showCouponDialog() async {
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Enter Coupon Code'),
         content: TextField(
           controller: _controller,
@@ -152,7 +133,7 @@ class _CartCouponSectionState extends State<CartCouponSection> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           TextButton(

@@ -18,7 +18,7 @@ class PaymentSecurity {
   generatePaymentSignature(paymentData) {
     try {
       const { orderId, amount, currency, timestamp } = paymentData;
-      const secretKey = process.env.PHONEPE_SALT_KEY;
+      const secretKey = process.env.CASHFREE_SECRET_KEY;
       
       // Create signature string
       const signatureString = `${orderId}|${amount}|${currency}|${timestamp}`;

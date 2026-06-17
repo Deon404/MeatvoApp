@@ -144,7 +144,7 @@ class PremiumAppBar extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Hand-cut meats, premium deals aur fast delivery.',
+                'Hand-cut meats, premium deals, and fast delivery.',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: AppThemeColors.white.withValues(alpha: 0.86),
                     ),

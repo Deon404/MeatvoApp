@@ -1,30 +1,30 @@
 import 'package:flutter/material.dart';
 
-import 'home_top_bar.dart';
+import '../../../core/constants/app_constants.dart';
+import '../../../widgets/location/delivery_location_header.dart';
 
 class HomeTopBarDelegate extends SliverPersistentHeaderDelegate {
   HomeTopBarDelegate({
     required this.topPadding,
-    required this.locationLabel,
+    required this.locationTitle,
+    this.locationSubtitle,
+    this.isLocationLoading = false,
     required this.unreadCount,
-    required this.profileInitial,
-    this.profileImageUrl,
     required this.onAddressTap,
     required this.onNotificationTap,
-    required this.onProfileTap,
   });
 
   final double topPadding;
-  final String locationLabel;
+  final String locationTitle;
+  final String? locationSubtitle;
+  final bool isLocationLoading;
   final int unreadCount;
-  final String profileInitial;
-  final String? profileImageUrl;
   final VoidCallback onAddressTap;
   final VoidCallback onNotificationTap;
-  final VoidCallback onProfileTap;
 
   @override
-  double get minExtent => topPadding + HomeTopBar.barHeight;
+  double get minExtent =>
+      topPadding + DeliveryLocationHeader.barHeight;
 
   @override
   double get maxExtent => minExtent;
@@ -35,28 +35,30 @@ class HomeTopBarDelegate extends SliverPersistentHeaderDelegate {
     double shrinkOffset,
     bool overlapsContent,
   ) {
-    return Column(
-      children: [
-        SizedBox(height: topPadding),
-        HomeTopBar(
-          locationLabel: locationLabel,
-          unreadCount: unreadCount,
-          profileInitial: profileInitial,
-          profileImageUrl: profileImageUrl,
-          onAddressTap: onAddressTap,
-          onNotificationTap: onNotificationTap,
-          onProfileTap: onProfileTap,
-        ),
-      ],
+    return ColoredBox(
+      color: AppColors.primary,
+      child: Column(
+        children: [
+          SizedBox(height: topPadding),
+          DeliveryLocationHeader(
+            title: locationTitle,
+            subtitle: locationSubtitle,
+            isLoading: isLocationLoading,
+            onTap: onAddressTap,
+            onNotificationTap: onNotificationTap,
+            unreadCount: unreadCount,
+          ),
+        ],
+      ),
     );
   }
 
   @override
   bool shouldRebuild(covariant HomeTopBarDelegate oldDelegate) {
     return topPadding != oldDelegate.topPadding ||
-        locationLabel != oldDelegate.locationLabel ||
-        unreadCount != oldDelegate.unreadCount ||
-        profileInitial != oldDelegate.profileInitial ||
-        profileImageUrl != oldDelegate.profileImageUrl;
+        locationTitle != oldDelegate.locationTitle ||
+        locationSubtitle != oldDelegate.locationSubtitle ||
+        isLocationLoading != oldDelegate.isLocationLoading ||
+        unreadCount != oldDelegate.unreadCount;
   }
 }

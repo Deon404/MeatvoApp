@@ -4,7 +4,9 @@ import '../../models/user_model.dart';
 import '../../services/address_service.dart';
 import '../../services/auth_service.dart';
 import '../../core/constants/app_constants.dart';
-import 'address_form_screen.dart';
+import '../../utils/address_display_util.dart';
+import 'address_details_screen.dart';
+import 'map_pin_screen.dart';
 
 /// Address List Screen - Manage all saved addresses
 class AddressListScreen extends StatefulWidget {
@@ -118,15 +120,15 @@ class _AddressListScreenState extends State<AddressListScreen> {
 
   Future<void> _navigateToAddAddress() async {
     final messenger = ScaffoldMessenger.of(context);
-    final result = await Navigator.push(
+    final result = await Navigator.push<AddressModel>(
       context,
       MaterialPageRoute(
-        builder: (_) => const AddressFormScreen(),
+        builder: (_) => const MapPinScreen(),
       ),
     );
 
     if (!mounted) return;
-    if (result != true) return;
+    if (result == null) return;
 
     messenger.showSnackBar(
       const SnackBar(
@@ -139,15 +141,32 @@ class _AddressListScreenState extends State<AddressListScreen> {
 
   Future<void> _navigateToEditAddress(AddressModel address) async {
     final messenger = ScaffoldMessenger.of(context);
-    final result = await Navigator.push(
+    final lat = address.latitude;
+    final lng = address.longitude;
+    if (lat == null || lng == null) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('This address is missing map coordinates'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    final result = await Navigator.push<AddressModel>(
       context,
       MaterialPageRoute(
-        builder: (_) => AddressFormScreen(address: address),
+        builder: (_) => AddressDetailsScreen(
+          latitude: lat,
+          longitude: lng,
+          geocodedAddress: geocodedMapFromAddressModel(address),
+          existingAddress: address,
+        ),
       ),
     );
 
     if (!mounted) return;
-    if (result != true) return;
+    if (result == null) return;
 
     messenger.showSnackBar(
       const SnackBar(
@@ -432,7 +451,7 @@ class _AddressListScreenState extends State<AddressListScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${address.addressLine1}${address.addressLine2 != null && address.addressLine2!.isNotEmpty ? ", ${address.addressLine2}" : ""}, ${address.city}, ${address.state} ${address.pincode}',
+                        address.displayAddress,
                         style: const TextStyle(
                           fontSize: 14,
                           color: AppColors.textPrimary,

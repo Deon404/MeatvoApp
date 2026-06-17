@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/widgets/meatvo_swipe_tabs.dart';
 import '../../models/order_model.dart';
 import '../../services/order_service.dart';
 import '../../services/socket_service.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/tokens/meatvo_spacing.dart';
-import '../../theme/app_theme.dart';
 import '../../utils/app_transitions.dart';
 import '../../utils/eta_display_util.dart';
 import '../../utils/order_display_util.dart';
@@ -26,23 +28,22 @@ class OrdersScreen extends StatefulWidget {
   State<OrdersScreen> createState() => _OrdersScreenState();
 }
 
-class _OrdersScreenState extends State<OrdersScreen> {
-  static const Color _primaryRed = Color(0xFFC8102E);
-  static const Color _chipUnselectedText = Color(0xFF6B6B6B);
-  static const Color _chipBorder = Color(0xFFEEEEEE);
-  static const Color _progressUnfilled = Color(0xFFEEEEEE);
-
+class _OrdersScreenState extends State<OrdersScreen>
+    with SingleTickerProviderStateMixin {
   final OrderService _orderService = OrderService();
   final SocketService _socketService = SocketService();
   final TextEditingController _searchController = TextEditingController();
   List<OrderModel> _orders = [];
-  List<OrderModel> _filteredOrders = [];
   bool _isLoading = true;
   bool _isSearching = false;
   String? _errorMessage;
-  String _selectedFilter = 'all';
   String _searchQuery = '';
   Timer? _socketReloadDebounce;
+  final Map<String, int> _liveEtaMinutes = {};
+  final Map<String, DateTime> _liveEstimatedAt = {};
+  void Function(dynamic)? _etaHandler;
+  late TabController _tabController;
+  late MeatvoSwipeTabsHelper _tabHelper;
 
   static const _filters = [
     ('all', 'All'),
@@ -54,6 +55,13 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: _filters.length, vsync: this);
+    _tabHelper = MeatvoSwipeTabsHelper(
+      tabs: _filters.map((f) => MeatvoTabItem(label: f.$2)).toList(),
+      controller: _tabController,
+      onIndexChanged: (_) => setState(() {}),
+    );
+    _tabController.addListener(_tabHelper.handleTabChange);
     _searchController.addListener(_onSearchChanged);
     _loadOrders();
     _setupSocketListener();
@@ -62,6 +70,57 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void _setupSocketListener() {
     _socketService.connect();
     _socketService.onOrderUpdate(_onOrderStatusSocketEvent);
+    _etaHandler = _onEtaSocketEvent;
+    _socketService.onEtaUpdate(_etaHandler!);
+  }
+
+  void _onEtaSocketEvent(dynamic data) {
+    if (data is! Map) return;
+    final map = Map<String, dynamic>.from(data);
+    final orderId = map['orderId']?.toString();
+    if (orderId == null) return;
+
+    final etaRaw = map['eta'] ?? map['etaMinutes'] ?? map['eta_minutes'];
+    final etaMinutes = etaRaw is num
+        ? etaRaw.round()
+        : int.tryParse(etaRaw?.toString() ?? '');
+    if (etaMinutes == null) return;
+
+    if (!mounted) return;
+    setState(() {
+      _liveEtaMinutes[orderId] = etaMinutes;
+      _liveEstimatedAt[orderId] =
+          DateTime.now().add(Duration(minutes: etaMinutes));
+    });
+  }
+
+  void _syncLiveEtaFromOrders(List<OrderModel> orders) {
+    _liveEtaMinutes.removeWhere(
+      (orderId, _) => !orders.any((o) => o.id == orderId),
+    );
+    _liveEstimatedAt.removeWhere(
+      (orderId, _) => !orders.any((o) => o.id == orderId),
+    );
+
+    for (final order in orders) {
+      if (!isOrderActive(order.status)) {
+        _liveEtaMinutes.remove(order.id);
+        _liveEstimatedAt.remove(order.id);
+        continue;
+      }
+      if (order.etaMinutes != null) {
+        _liveEtaMinutes[order.id] = order.etaMinutes!;
+      }
+      final resolved = resolveDisplayEstimatedAt(
+        etaMinutes: order.etaMinutes,
+        fallbackEstimatedAt: order.estimatedDeliveryTime,
+      );
+      if (resolved != null) {
+        _liveEstimatedAt[order.id] = resolved;
+      } else {
+        _liveEstimatedAt.remove(order.id);
+      }
+    }
   }
 
   void _onOrderStatusSocketEvent(dynamic _) {
@@ -74,24 +133,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
   void _onSearchChanged() {
     setState(() {
       _searchQuery = _searchController.text.trim().toLowerCase();
-      _applyFilter();
     });
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_tabHelper.handleTabChange);
+    _tabController.dispose();
     _socketReloadDebounce?.cancel();
     _socketService.offOrderUpdate();
+    if (_etaHandler != null) {
+      _socketService.offEtaUpdate();
+      _etaHandler = null;
+    }
     _searchController.dispose();
     super.dispose();
-  }
-
-  void _selectFilter(String filter) {
-    if (_selectedFilter == filter) return;
-    setState(() {
-      _selectedFilter = filter;
-      _applyFilter();
-    });
   }
 
   Future<void> _loadOrders() async {
@@ -105,7 +161,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       if (mounted) {
         setState(() {
           _orders = orders;
-          _applyFilter();
+          _syncLiveEtaFromOrders(orders);
           _isLoading = false;
         });
       }
@@ -125,9 +181,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
     await _loadOrders();
   }
 
-  void _applyFilter() {
+  List<OrderModel> _ordersForFilter(String filter) {
     List<OrderModel> result;
-    switch (_selectedFilter) {
+    switch (filter) {
       case 'active':
         result =
             _orders.where((order) => isOrderActive(order.status)).toList();
@@ -154,7 +210,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       }).toList();
     }
 
-    _filteredOrders = result;
+    return result;
   }
 
   void _toggleSearch() {
@@ -169,20 +225,22 @@ class _OrdersScreenState extends State<OrdersScreen> {
   @override
   Widget build(BuildContext context) {
     R.init(context);
+    final mv = context.meatvo;
+    final textTheme = Theme.of(context).textTheme;
     final canPop = ModalRoute.of(context)?.canPop ?? false;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: AppThemeColors.background,
+      backgroundColor: mv.surfaceWarm,
       appBar: AppBar(
-        backgroundColor: AppThemeColors.white,
+        backgroundColor: mv.surfaceWarm,
         elevation: 0,
         scrolledUnderElevation: 0,
         leading: canPop
             ? IconButton(
-                icon: const Icon(
+                icon: Icon(
                   Icons.arrow_back_rounded,
-                  color: AppThemeColors.textPrimary,
+                  color: mv.textPrimary,
                 ),
                 onPressed: () => Navigator.of(context).pop(),
               )
@@ -191,19 +249,21 @@ class _OrdersScreenState extends State<OrdersScreen> {
             ? TextField(
                 controller: _searchController,
                 autofocus: true,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   hintText: 'Search orders...',
+                  hintStyle: textTheme.bodyMedium?.copyWith(color: mv.textMuted),
                   border: InputBorder.none,
                   isDense: true,
                 ),
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: AppThemeColors.textPrimary,
+                style: textTheme.titleMedium?.copyWith(
+                      color: mv.textPrimary,
                     ),
               )
             : Text(
                 'My Orders',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      color: AppThemeColors.textPrimary,
+                style: textTheme.titleLarge?.copyWith(
+                      color: mv.textPrimary,
+                      fontWeight: FontWeight.w600,
                     ),
               ),
         centerTitle: !_isSearching,
@@ -211,7 +271,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
           IconButton(
             icon: Icon(
               _isSearching ? Icons.close_rounded : Icons.search_rounded,
-              color: AppThemeColors.textPrimary,
+              color: mv.textPrimary,
             ),
             onPressed: _toggleSearch,
           ),
@@ -220,83 +280,49 @@ class _OrdersScreenState extends State<OrdersScreen> {
       body: SafeArea(
         top: false,
         bottom: true,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildFilterChips(),
-            Expanded(
-              child: _isLoading
-                  ? const ShimmerLoader.listTile(count: 4)
-                  : _errorMessage != null
-                      ? _buildErrorState()
-                      : _filteredOrders.isEmpty
-                          ? _buildEmptyState()
-                          : RefreshIndicator(
-                              onRefresh: _loadOrders,
-                              color: AppThemeColors.primary,
-                              child: ListView.builder(
-                                padding: EdgeInsets.fromLTRB(
-                                  16,
-                                  0,
-                                  16,
-                                  MeatvoSpacing.lg,
-                                ),
-                                itemCount: _filteredOrders.length,
-                                itemBuilder: (context, index) {
-                                  return _buildOrderCard(
-                                      _filteredOrders[index]);
-                                },
-                              ),
-                            ),
-            ),
-          ],
-        ),
+        child: _isLoading
+            ? const ShimmerLoader.listTile(count: 4)
+            : _errorMessage != null
+                ? _buildErrorState()
+                : MeatvoSwipeTabs(
+                    controller: _tabController,
+                    isScrollable: false,
+                    tabs: _filters
+                        .map((f) => MeatvoTabItem(label: f.$2))
+                        .toList(),
+                    children: [
+                      for (final filter in _filters)
+                        _buildOrdersTabPage(filter.$1, mv),
+                    ],
+                  ),
       ),
     );
   }
 
-  Widget _buildFilterChips() {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Row(
-        children: [
-          for (var i = 0; i < _filters.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            _buildFilterChip(_filters[i].$1, _filters[i].$2),
-          ],
-        ],
-      ),
-    );
-  }
+  Widget _buildOrdersTabPage(String filter, MeatvoThemeData mv) {
+    final orders = _ordersForFilter(filter);
 
-  Widget _buildFilterChip(String value, String label) {
-    final isSelected = _selectedFilter == value;
+    if (orders.isEmpty) {
+      return _buildEmptyStateForFilter(filter);
+    }
 
-    return GestureDetector(
-      onTap: () {
-        HapticFeedback.selectionClick();
-        _selectFilter(value);
-      },
-      child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: isSelected ? _primaryRed : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? _primaryRed : _chipBorder,
-          ),
+    return RefreshIndicator(
+      onRefresh: _loadOrders,
+      color: mv.brandPrimary,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-            color: isSelected ? Colors.white : _chipUnselectedText,
-          ),
+        padding: EdgeInsets.fromLTRB(
+          mv.spacing.md,
+          0,
+          mv.spacing.md,
+          MeatvoSpacing.lg,
         ),
+        itemCount: orders.length,
+        itemBuilder: (context, index) {
+          return _buildOrderCard(orders[index], mv);
+        },
       ),
     );
   }
@@ -309,7 +335,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyStateForFilter(String filter) {
     if (_searchQuery.isNotEmpty) {
       return const EmptyStateWidget(
         title: 'No orders found',
@@ -317,7 +343,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       );
     }
 
-    switch (_selectedFilter) {
+    switch (filter) {
       case 'active':
         return const EmptyStateWidget(
           title: 'No active orders',
@@ -338,24 +364,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
-  Widget _buildOrderCard(OrderModel order) {
+  Widget _buildOrderCard(OrderModel order, MeatvoThemeData mv) {
     final isActive = isOrderActive(order.status);
     final showTrack = isActive;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: EdgeInsets.symmetric(vertical: mv.spacing.xxs + 2),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.lg),
+        boxShadow: mv.shadowCard,
       ),
       child: InkWell(
         onTap: () {
           HapticFeedback.lightImpact();
           _openOrderDetail(order.id);
         },
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(mv.radii.lg),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: EdgeInsets.all(mv.spacing.sm + 2),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -364,32 +391,25 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 children: [
                   Text(
                     '#ORD-${formatOrderDisplayId(order.id)}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 11,
-                      color: _chipUnselectedText,
+                      color: mv.textMuted,
                     ),
                   ),
                   const Spacer(),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _buildStatusBadge(order.status),
-                      if (isActive &&
-                          order.estimatedDeliveryTime != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          formatDeliveryByTime(order.estimatedDeliveryTime!),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: _chipUnselectedText,
-                          ),
-                        ),
+                      _buildStatusBadge(order.status, mv),
+                      if (isActive) ...[
+                        SizedBox(height: mv.spacing.xxs),
+                        _buildActiveEtaLabel(order, mv),
                       ],
                     ],
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: mv.spacing.xs),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -398,40 +418,40 @@ class _OrdersScreenState extends State<OrdersScreen> {
                       _buildItemsSummary(order),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF1A1A1A),
+                        color: mv.textPrimary,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: mv.spacing.xs),
                   Text(
                     _formatDate(order.createdAt),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
-                      color: _chipUnselectedText,
+                      color: mv.textMuted,
                     ),
                   ),
                 ],
               ),
               if (isActive) ...[
-                const SizedBox(height: 12),
-                _buildProgressBar(order.status),
+                SizedBox(height: mv.spacing.sm),
+                _buildProgressBar(order.status, mv),
               ],
-              const SizedBox(height: 12),
+              SizedBox(height: mv.spacing.sm),
               Row(
                 children: [
                   Text(
                     '₹${order.finalAmount.toStringAsFixed(2)}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
-                      color: _primaryRed,
+                      color: mv.brandPrimary,
                     ),
                   ),
                   const Spacer(),
-                  if (showTrack) _buildTrackButton(order.id),
+                  if (showTrack) _buildTrackButton(order.id, mv),
                 ],
               ),
             ],
@@ -441,7 +461,28 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
-  Widget _buildProgressBar(String status) {
+  String _formatETA(DateTime? etaTime, int? etaMinutes) {
+    return formatOrderDistanceEta(
+      context,
+      estimatedDeliveryTime: etaTime,
+      etaMinutes: etaMinutes,
+    );
+  }
+
+  Widget _buildActiveEtaLabel(OrderModel order, MeatvoThemeData mv) {
+    final liveMinutes = _liveEtaMinutes[order.id] ?? order.etaMinutes;
+    final liveAt = _liveEstimatedAt[order.id] ?? order.estimatedDeliveryTime;
+
+    return Text(
+      _formatETA(liveAt, liveMinutes),
+      style: TextStyle(
+        fontSize: 11,
+        color: mv.textMuted,
+      ),
+    );
+  }
+
+  Widget _buildProgressBar(String status, MeatvoThemeData mv) {
     final filledSegments = _orderProgressSegments(status);
 
     return Row(
@@ -452,7 +493,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
             height: 3,
             margin: EdgeInsets.only(right: index < 3 ? 4 : 0),
             decoration: BoxDecoration(
-              color: isFilled ? _primaryRed : _progressUnfilled,
+              color: isFilled ? mv.brandPrimary : mv.border,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -461,7 +502,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
   }
 
-  Widget _buildTrackButton(String orderId) {
+  Widget _buildTrackButton(String orderId, MeatvoThemeData mv) {
     return SizedBox(
       height: 32,
       child: OutlinedButton(
@@ -470,51 +511,51 @@ class _OrdersScreenState extends State<OrdersScreen> {
           _openOrderDetail(orderId);
         },
         style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          side: const BorderSide(color: _primaryRed),
+          padding: EdgeInsets.symmetric(horizontal: mv.spacing.sm),
+          side: BorderSide(color: mv.brandPrimary),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(mv.radii.sm),
           ),
           minimumSize: const Size(0, 32),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        child: const Text(
+        child: Text(
           'Track Order',
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: _primaryRed,
+            color: mv.brandPrimary,
           ),
         ),
       ),
     );
   }
 
-  Widget _buildStatusBadge(String status) {
+  Widget _buildStatusBadge(String status, MeatvoThemeData mv) {
     late final Color backgroundColor;
     late final Color textColor;
     late final String label;
 
     switch (normalizeOrderStatus(status)) {
       case 'delivered':
-        backgroundColor = const Color(0xFFE8F5E9);
-        textColor = const Color(0xFF2E7D32);
+        backgroundColor = mv.freshBadge.withValues(alpha: 0.15);
+        textColor = mv.freshBadge;
         label = 'Delivered';
         break;
       case 'cancelled':
-        backgroundColor = const Color(0xFFFCEBEB);
-        textColor = const Color(0xFFC62828);
+        backgroundColor = MeatvoColors.primaryLight;
+        textColor = mv.error;
         label = 'Cancelled';
         break;
       case 'placed':
       case 'pending':
-        backgroundColor = const Color(0xFFFFF3E0);
-        textColor = const Color(0xFFE65100);
+        backgroundColor = MeatvoColors.warning.withValues(alpha: 0.15);
+        textColor = MeatvoColors.warning;
         label = 'Placed';
         break;
       default:
-        backgroundColor = const Color(0xFFFFF3E0);
-        textColor = const Color(0xFFE65100);
+        backgroundColor = MeatvoColors.primaryLight.withValues(alpha: 0.5);
+        textColor = mv.brandPrimary;
         label = 'Active';
     }
 
@@ -522,7 +563,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: backgroundColor,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(mv.radii.pill),
       ),
       child: Text(
         label,

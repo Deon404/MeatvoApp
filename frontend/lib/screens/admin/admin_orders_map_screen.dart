@@ -7,11 +7,13 @@ import '../../core/constants/app_constants.dart';
 import '../../core/widgets/map_markers.dart';
 import '../../services/admin_service.dart';
 import '../../services/maps_service.dart';
+import '../../utils/address_display_util.dart' show formatAddressForDisplay, resolveAddressCoords;
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
 
-/// Admin map view of pending orders with optimized route suggestions.
+/// Admin map view of active orders with location pins.
 class AdminOrdersMapScreen extends StatefulWidget {
   const AdminOrdersMapScreen({super.key});
 
@@ -45,9 +47,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   bool _isCalculatingZones = false;
   bool _isBulkAssigning = false;
 
-  bool _showDensityView = true;
   Map<String, BitmapDescriptor> _markerCache = {};
-  List<OrderCluster>? _clusters;
 
   List<Map<String, dynamic>> _zones = [];
   Map<String, dynamic>? _zonePlanMeta;
@@ -61,11 +61,12 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     Color(0xFFF97316),
   ];
 
-  static const _pendingStatuses = {
-    'accepted',
-    'confirmed',
-    'packed',
-    'assigned',
+  static const _inactiveStatuses = {
+    'delivered',
+    'cancelled',
+    'refunded',
+    'failed',
+    'payment_pending',
   };
 
   @override
@@ -120,6 +121,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       _zones = [];
       _zonePlanMeta = null;
       _zoneRiderSelections = {};
+      _markerCache = {};
       if (_tabController.length != 2) {
         _tabController.dispose();
         _tabController = TabController(length: 2, vsync: this);
@@ -134,22 +136,14 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       );
       final end = start.add(const Duration(days: 1));
 
-      final results = await Future.wait([
-        _adminService.getAllOrders(fromDate: start, toDate: end),
-        _adminService.getOptimizedDeliveryRoute(date: _dateQueryParam),
-      ]);
-
-      final orders = (results[0] as List<Map<String, dynamic>>)
-          .where(_isPendingOrder)
-          .toList();
-      final routeData = results[1] as Map<String, dynamic>;
-      final stops = _parseRouteStops(routeData);
+      final orders = await _adminService.getAllOrders(fromDate: start, toDate: end);
+      final activeOrders = orders.where(_isActiveOrder).toList();
 
       if (!mounted) return;
       setState(() {
-        _orders = orders;
-        _routeStops = stops;
-        _routeMeta = routeData;
+        _orders = activeOrders;
+        _routeStops = _buildStopsFromOrderList(activeOrders);
+        _routeMeta = null;
         _isLoading = false;
       });
 
@@ -166,40 +160,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     }
   }
 
-  bool _isPendingOrder(Map<String, dynamic> order) {
+  bool _isActiveOrder(Map<String, dynamic> order) {
     final status = (order['status'] ?? '').toString().toLowerCase();
-    return _pendingStatuses.contains(status);
-  }
-
-  List<Map<String, dynamic>> _parseRouteStops(Map<String, dynamic> routeData) {
-    final rawRoute = routeData['route'];
-    if (rawRoute is! List) return [];
-
-    return rawRoute.asMap().entries.map((entry) {
-      final stop = Map<String, dynamic>.from(entry.value as Map);
-      final stopNumber = _asInt(
-        stop['stopNumber'] ?? stop['stop_number'] ?? entry.key + 1,
-      );
-      return {
-        'stopNumber': stopNumber,
-        'orderId': (stop['orderId'] ?? stop['order_id'] ?? '').toString(),
-        'customerName':
-            stop['customerName'] ?? stop['customer_name'] ?? 'Customer',
-        'customerPhone':
-            stop['customerPhone'] ?? stop['customer_phone'] ?? '',
-        'address': stop['address'] ?? '',
-        'latitude': _asDouble(stop['lat'] ?? stop['latitude']),
-        'longitude': _asDouble(stop['lng'] ?? stop['longitude']),
-        'status': (stop['status'] ?? '').toString(),
-        'distanceFromPrevKm': _asDouble(
-          stop['distanceFromPrevKm'] ?? stop['distance_from_prev_km'],
-        ),
-      };
-    }).where((stop) {
-      final lat = stop['latitude'] as double;
-      final lng = stop['longitude'] as double;
-      return lat != 0 && lng != 0;
-    }).toList();
+    if (status.isEmpty) return false;
+    return !_inactiveStatuses.contains(status);
   }
 
   Future<void> _buildMapElements() async {
@@ -207,15 +171,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       await _buildZoneMapElements();
       return;
     }
-
-    if (_showDensityView) {
-      await _buildDensityMapElements();
-    } else {
-      await _buildRouteMapElements();
-    }
+    await _buildActiveOrderMapElements();
   }
 
-  Future<void> _buildRouteMapElements() async {
+  Future<void> _buildActiveOrderMapElements() async {
     final storeLocation = LatLng(
       StoreConfig.storeLatitude,
       StoreConfig.storeLongitude,
@@ -225,91 +184,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     final storeMarker = await _createStoreMarker(storeLocation);
     markers.add(storeMarker);
 
-    final stopsForMap =
-        _routeStops.isNotEmpty ? _routeStops : _buildStopsFromOrders();
-
-    for (final stop in stopsForMap) {
+    final orderStops = _buildStopsFromOrders();
+    for (final stop in orderStops) {
       final marker = await _createOrderMarker(stop);
       markers.add(marker);
-    }
-
-    final waypoints = <LatLng>[storeLocation];
-    for (final stop in stopsForMap) {
-      waypoints.add(
-        LatLng(
-          stop['latitude'] as double,
-          stop['longitude'] as double,
-        ),
-      );
-    }
-
-    final polylinePoints = await _buildRoutePolylinePoints(waypoints);
-
-    setState(() {
-      _markers = markers;
-      _polylines = {
-        Polyline(
-          polylineId: const PolylineId('optimized_route'),
-          points: polylinePoints,
-          color: AppColors.primary,
-          width: 3,
-        ),
-      };
-    });
-
-    if (_mapController != null && markers.length > 1) {
-      _fitCameraToBounds();
-    }
-  }
-
-  Future<void> _buildDensityMapElements() async {
-    final storeLocation = LatLng(
-      StoreConfig.storeLatitude,
-      StoreConfig.storeLongitude,
-    );
-
-    final markers = <Marker>{};
-
-    final storeMarker = await _createStoreMarker(storeLocation);
-    markers.add(storeMarker);
-
-    final orderStops = _buildStopsFromOrders()
-        .map((stop) => OrderStop(
-              lat: stop['latitude'] as double,
-              lng: stop['longitude'] as double,
-              orderId: stop['orderId'] as String,
-              customerName: stop['customerName'] as String,
-              address: stop['address'] as String,
-              status: stop['status'] as String,
-              originalData: stop,
-            ))
-        .toList();
-
-    _clusters = MapMarkers.clusterOrders(orderStops);
-
-    for (int i = 0; i < _clusters!.length; i++) {
-      final cluster = _clusters![i];
-      final color = MapMarkers.densityColor(cluster.count);
-      final cacheKey = 'density_${cluster.count}';
-
-      BitmapDescriptor icon;
-      if (_markerCache.containsKey(cacheKey)) {
-        icon = _markerCache[cacheKey]!;
-      } else {
-        icon = await MapMarkers.densityDot(
-          color: color,
-          orderCount: cluster.count,
-        );
-        _markerCache[cacheKey] = icon;
-      }
-
-      markers.add(Marker(
-        markerId: MarkerId('cluster_$i'),
-        position: LatLng(cluster.lat, cluster.lng),
-        icon: icon,
-        anchor: const Offset(0.5, 0.5),
-        onTap: () => _showClusterBottomSheet(cluster),
-      ));
     }
 
     setState(() {
@@ -767,34 +645,42 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
 
   String get _summaryRiderLabel {
     if (_isZoneMode) return '${_zones.length} riders';
-    return '1 rider';
+    return '${_routeStops.length} on map';
   }
 
   String get _summaryDurationLabel {
-    final minutes = _zonesTotalEstimatedMinutes;
-    if (minutes <= 0) return '~0 min';
-    if (minutes >= 60) {
-      final hours = minutes / 60;
-      return hours >= 2
-          ? '~${hours.toStringAsFixed(0)} hrs'
-          : '~${hours.toStringAsFixed(1)} hrs';
+    if (_isZoneMode) {
+      final minutes = _zonesTotalEstimatedMinutes;
+      if (minutes <= 0) return '~0 min';
+      if (minutes >= 60) {
+        final hours = minutes / 60;
+        return hours >= 2
+            ? '~${hours.toStringAsFixed(0)} hrs'
+            : '~${hours.toStringAsFixed(1)} hrs';
+      }
+      return '~$minutes min';
     }
-    return '~$minutes min';
+    final withoutLocation = _orders.length - _routeStops.length;
+    if (withoutLocation <= 0) return 'all located';
+    return '$withoutLocation without location';
   }
 
-  List<Map<String, dynamic>> _buildStopsFromOrders() {
+  List<Map<String, dynamic>> _buildStopsFromOrders() =>
+      _buildStopsFromOrderList(_orders);
+
+  List<Map<String, dynamic>> _buildStopsFromOrderList(
+    List<Map<String, dynamic>> orders,
+  ) {
     final stops = <Map<String, dynamic>>[];
-    var index = 0;
 
-    for (final order in _orders) {
-      final lat = _orderLatitude(order);
-      final lng = _orderLongitude(order);
-      if (lat == null || lng == null) continue;
+    for (final order in orders) {
+      final coords = resolveAddressCoords(order);
+      final lat = coords.lat;
+      final lng = coords.lng;
+      if (lat == null || lng == null || lat == 0 || lng == 0) continue;
 
-      index++;
       final user = order['user'] as Map<String, dynamic>? ?? {};
       stops.add({
-        'stopNumber': index,
         'orderId': (order['id'] ?? '').toString(),
         'customerName': user['name'] ?? 'Customer',
         'customerPhone': user['phone'] ?? '',
@@ -809,38 +695,9 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     return stops;
   }
 
-  double? _orderLatitude(Map<String, dynamic> order) {
-    final address = order['delivery_address'] ?? order['address'];
-    if (address is Map) {
-      final lat = address['latitude'] ?? address['lat'];
-      return _asDouble(lat);
-    }
-    final lat = order['latitude'] ?? order['lat'];
-    final parsed = _asDouble(lat);
-    return parsed == 0 ? null : parsed;
-  }
-
-  double? _orderLongitude(Map<String, dynamic> order) {
-    final address = order['delivery_address'] ?? order['address'];
-    if (address is Map) {
-      final lng = address['longitude'] ?? address['lng'];
-      return _asDouble(lng);
-    }
-    final lng = order['longitude'] ?? order['lng'];
-    final parsed = _asDouble(lng);
-    return parsed == 0 ? null : parsed;
-  }
-
   String _orderAddress(Map<String, dynamic> order) {
     final address = order['delivery_address'] ?? order['address'];
-    if (address is Map) {
-      return (address['formatted'] ??
-              address['text'] ??
-              address['address_line1'] ??
-              '')
-          .toString();
-    }
-    return '';
+    return formatAddressForDisplay(address);
   }
 
   Future<Marker> _createStoreMarker(LatLng position) async {
@@ -857,12 +714,19 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
 
   Future<Marker> _createOrderMarker(Map<String, dynamic> stop) async {
     final orderId = stop['orderId'] as String;
-    final stopNumber = stop['stopNumber'] as int;
     final status = _resolveMarkerStatus(stop);
-    final icon = await MapMarkers.numberedStop(
-      stopNumber,
-      delivered: status == 'assigned',
-    );
+    final cacheKey = 'order_$orderId';
+
+    BitmapDescriptor icon;
+    if (_markerCache.containsKey(cacheKey)) {
+      icon = _markerCache[cacheKey]!;
+    } else {
+      icon = await MapMarkers.orderIdPin(
+        orderId,
+        assigned: status == 'assigned',
+      );
+      _markerCache[cacheKey] = icon;
+    }
 
     return Marker(
       markerId: MarkerId('order_$orderId'),
@@ -871,7 +735,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         stop['longitude'] as double,
       ),
       icon: icon,
-      anchor: const Offset(0.5, 0.5),
+      anchor: const Offset(0.5, 1.0),
       onTap: () => _onMarkerTapped(stop),
     );
   }
@@ -888,53 +752,13 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
 
   void _onMarkerTapped(Map<String, dynamic> stop) {
     setState(() => _selectedStop = stop);
-  }
-
-  void _showClusterBottomSheet(OrderCluster cluster) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${cluster.count} Orders in this Area',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: cluster.orders.length,
-                separatorBuilder: (_, __) => const Divider(),
-                itemBuilder: (_, index) {
-                  final order = cluster.orders[index];
-                  final stopData = order.originalData;
-                  final status = stopData['status'] ?? '';
-
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text('#${order.orderId}'),
-                    subtitle: Text(order.customerName),
-                    trailing: _buildStatusBadge(status),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _onMarkerTapped(stopData);
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngZoom(
+        LatLng(
+          stop['latitude'] as double,
+          stop['longitude'] as double,
         ),
+        15,
       ),
     );
   }
@@ -1183,6 +1007,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.routeMap,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(color: AppColors.primary),
@@ -1216,7 +1044,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                       },
                       onTap: (_) => setState(() => _selectedStop = null),
                     ),
-                    SafeArea(child: _buildTopBar()),
+                    SafeArea(child: Builder(builder: _buildTopBar)),
                     if (_selectedStop != null)
                       Positioned(
                         left: 16,
@@ -1224,8 +1052,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                         bottom: MediaQuery.sizeOf(context).height * 0.34,
                         child: _buildOrderPopup(_selectedStop!),
                       ),
-                    if (_showDensityView && !_isLoading && _loadError == null)
-                      _buildDensityLegend(),
                     DraggableScrollableSheet(
                       initialChildSize: 0.32,
                       minChildSize: 0.18,
@@ -1262,14 +1088,14 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(BuildContext scaffoldContext) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Row(
         children: [
           IconButton(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Scaffold.of(scaffoldContext).openDrawer(),
+            icon: const Icon(Icons.menu),
             style: IconButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: AppColors.textPrimary,
@@ -1291,21 +1117,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
             onPressed: _selectDate,
             backgroundColor: Colors.white,
             side: const BorderSide(color: AppColors.divider),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: () {
-              setState(() {
-                _showDensityView = !_showDensityView;
-              });
-              _buildMapElements();
-            },
-            icon: Icon(_showDensityView ? Icons.scatter_plot : Icons.looks_one),
-            tooltip: _showDensityView ? 'Show Route' : 'Show Density',
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: AppColors.primary,
-            ),
           ),
           const SizedBox(width: 8),
         ],
@@ -1383,60 +1194,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     );
   }
 
-  Widget _buildDensityLegend() {
-    return Positioned(
-      left: 16,
-      bottom: MediaQuery.sizeOf(context).height * 0.34,
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 6,
-              offset: Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _legendRow(const Color(0xFF4CAF50), '1 order'),
-            const SizedBox(height: 4),
-            _legendRow(const Color(0xFFFF9800), '2-3 orders'),
-            const SizedBox(height: 4),
-            _legendRow(const Color(0xFFF44336), '4-6 orders'),
-            const SizedBox(height: 4),
-            _legendRow(const Color(0xFF9C27B0), '7+ orders'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _legendRow(Color color, String label) {
-    return Row(
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 1),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 10),
-        ),
-      ],
-    );
-  }
-
   Widget _buildBottomSheet(ScrollController scrollController) {
     return Container(
       decoration: const BoxDecoration(
@@ -1485,7 +1242,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                     const Tab(text: 'All Orders'),
                   ]
                 : const [
-                    Tab(text: 'Optimized Route'),
+                    Tab(text: 'Active Orders'),
                     Tab(text: 'All Orders'),
                   ],
           ),
@@ -1503,7 +1260,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                       _buildAllOrdersTab(scrollController),
                     ]
                   : [
-                      _buildOptimizedRouteTab(scrollController),
+                      _buildActiveOrdersTab(scrollController),
                       _buildAllOrdersTab(scrollController),
                     ],
             ),
@@ -1523,8 +1280,11 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         border: Border.all(color: AppColors.divider),
       ),
       child: Text(
-        '$_dateChipLabel: $_summaryOrderCount orders | $_summaryRiderLabel | '
-        '~${_zonesTotalDistanceKm.toStringAsFixed(1)}km total | $_summaryDurationLabel',
+        _isZoneMode
+            ? '$_dateChipLabel: $_summaryOrderCount orders | $_summaryRiderLabel | '
+                '~${_zonesTotalDistanceKm.toStringAsFixed(1)}km total | $_summaryDurationLabel'
+            : '$_dateChipLabel: $_summaryOrderCount active orders | $_summaryRiderLabel | '
+                '$_summaryDurationLabel',
         style: const TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
@@ -1708,96 +1468,60 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     );
   }
 
-  Widget _buildOptimizedRouteTab(ScrollController scrollController) {
-    if (_routeStops.isEmpty) {
+  Widget _buildActiveOrdersTab(ScrollController scrollController) {
+    final stops = _routeStops;
+
+    if (stops.isEmpty) {
       return EmptyStateWidget(
-        title: 'No route available',
-        message: 'No pending orders with coordinates for $_dateChipLabel.',
+        title: _orders.isEmpty ? 'No active orders' : 'No locations on map',
+        message: _orders.isEmpty
+            ? 'Active orders for $_dateChipLabel will appear here.'
+            : '${_orders.length} active order(s) found but none have delivery coordinates.',
         illustration: const Icon(
-          Icons.route_outlined,
+          Icons.location_off_outlined,
           size: 48,
           color: AppColors.textSecondary,
         ),
         buttonLabel: 'Refresh',
         onAction: _loadData,
+        fullScreen: false,
       );
     }
 
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
-            children: [
-              const Icon(Icons.straighten, size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 6),
-              Text(
-                '${_totalDistanceKm.toStringAsFixed(1)} km',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(width: 16),
-              const Icon(Icons.schedule, size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 6),
-              Text(
-                '~$_estimatedMinutes min',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.separated(
-            controller: scrollController,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            itemCount: _routeStops.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (_, index) {
-              final stop = _routeStops[index];
-              return _buildRouteStopRow(stop);
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _isAssigningRoute
-                  ? null
-                  : () => _showAssignRiderSheet(
-                        orderId: '',
-                        forRoute: true,
-                      ),
-              icon: _isAssigningRoute
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.delivery_dining),
-              label: const Text('Assign to Rider'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 48),
-              ),
-            ),
-          ),
-        ),
-      ],
+    return ListView.separated(
+      controller: scrollController,
+      padding: const EdgeInsets.all(16),
+      itemCount: stops.length,
+      separatorBuilder: (_, __) => const Divider(height: 1),
+      itemBuilder: (_, index) {
+        final stop = stops[index];
+        return _buildActiveOrderRow(stop);
+      },
     );
   }
 
-  Widget _buildRouteStopRow(Map<String, dynamic> stop) {
-    final stopNumber = stop['stopNumber'] as int;
-    final status = _resolveMarkerStatus(stop);
+  Widget _buildActiveOrderRow(Map<String, dynamic> stop) {
+    final orderId = stop['orderId'] as String;
+    final status = stop['status'];
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: _buildStopBadge(stopNumber, status),
+      leading: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.primary),
+        ),
+        child: Text(
+          '#$orderId',
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: AppColors.primary,
+          ),
+        ),
+      ),
       title: Text(
         stop['customerName'] as String? ?? 'Customer',
         style: const TextStyle(fontWeight: FontWeight.w600),
@@ -1805,17 +1529,11 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       subtitle: Text(
         (stop['address'] as String?)?.isNotEmpty == true
             ? stop['address'] as String
-            : 'Order #${stop['orderId']}',
-        maxLines: 1,
+            : 'Tap to view on map',
+        maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
-      trailing: Text(
-        '${_asDouble(stop['distanceFromPrevKm']).toStringAsFixed(1)} km',
-        style: const TextStyle(
-          fontSize: 12,
-          color: AppColors.textSecondary,
-        ),
-      ),
+      trailing: _buildStatusBadge(status),
       onTap: () => _onMarkerTapped(stop),
     );
   }
@@ -1823,8 +1541,8 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   Widget _buildAllOrdersTab(ScrollController scrollController) {
     if (_orders.isEmpty) {
       return EmptyStateWidget(
-        title: 'No pending orders',
-        message: 'Pending orders for $_dateChipLabel will appear here.',
+        title: 'No active orders',
+        message: 'Active orders for $_dateChipLabel will appear here.',
         illustration: const Icon(
           Icons.receipt_long,
           size: 48,
@@ -1832,6 +1550,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         ),
         buttonLabel: 'Refresh',
         onAction: _loadData,
+        fullScreen: false,
       );
     }
 
@@ -1875,8 +1594,9 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         style: const TextStyle(fontWeight: FontWeight.w600),
       ),
       onTap: () {
-        final lat = _orderLatitude(order);
-        final lng = _orderLongitude(order);
+        final coords = resolveAddressCoords(order);
+        final lat = coords.lat;
+        final lng = coords.lng;
         if (lat != null && lng != null) {
           _onMarkerTapped({
             'orderId': orderId,
@@ -1885,33 +1605,9 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
             'longitude': lng,
             'status': order['status'],
             'order': order,
-            'stopNumber': 0,
           });
         }
       },
-    );
-  }
-
-  Widget _buildStopBadge(int number, String status) {
-    final color = _markerColor(status);
-    return Container(
-      width: 30,
-      height: 30,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        shape: BoxShape.circle,
-        border: Border.all(color: color, width: 2),
-      ),
-      child: Center(
-        child: Text(
-          number.toString(),
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
-        ),
-      ),
     );
   }
 
@@ -1932,17 +1628,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         ),
       ),
     );
-  }
-
-  Color _markerColor(String status) {
-    switch (status.toLowerCase()) {
-      case 'packed':
-        return AppColors.bluePrimary;
-      case 'assigned':
-        return AppColors.textSecondary;
-      default:
-        return AppColors.warning;
-    }
   }
 
   Color _statusColor(dynamic status) {

@@ -28,15 +28,18 @@ class EarningsData {
     double? lifetimeTotal,
   }) {
     final monthDeliveries = (monthData['deliveries'] as num?)?.toInt() ?? 0;
+    final rating = (monthData['rating'] as num?)?.toDouble() ??
+        (todayData['rating'] as num?)?.toDouble() ??
+        0;
     return EarningsData(
       today: _parseAmount(todayData['total']),
       thisWeek: _parseAmount(weekData['total']),
       thisMonth: _parseAmount(monthData['total']),
       total: lifetimeTotal ?? _parseAmount(monthData['total']),
       totalDeliveries: monthDeliveries,
-      rating: 0,
+      rating: rating,
       completedDeliveries: monthDeliveries,
-      totalRatings: 0,
+      totalRatings: monthDeliveries,
       cancelledDeliveries: 0,
     );
   }

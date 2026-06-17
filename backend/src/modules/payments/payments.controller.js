@@ -9,8 +9,10 @@ const { query, getClient } = require('../../db/postgres');
 const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { paymentLogger } = require('./secure-logger');
-const { assignOrderToPartner } = require('../../services/assignment.service');
 const { reserveStockForPaidOrder } = require('./payment-stock');
+const { notifyStaffNewOrder } = require('../../services/notification.service');
+const { cancelOrderForPaymentFailure } = require('../../services/payment-reconciliation.service');
+const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
 
 // PhonePe configuration
 const PHONEPE_API_BASE = process.env.PHONEPE_API_BASE || 'https://api.phonepe.com/v1';
@@ -407,12 +409,16 @@ const getPaymentStatus = asyncHandler(async (req, res) => {
                 io.to(`customer_${payment.customer_id}`).emit('order:status_updated', {
                   orderId,
                   status: 'CONFIRMED',
-                  message: 'Payment confirmed! Finding delivery partner...',
+                  message: 'Your order is confirmed — preparing now',
                 });
               }
-              assignOrderToPartner({ orderId, io }).catch(err =>
-                logger.error('Post-payment auto-assign failed (status-check):', err));
             }
+          }
+
+          // LIFECYCLE FIX: cancel order when PhonePe reports failure via status poll
+          if (newStatus === 'FAILED') {
+            const io = req.app.get('io');
+            await cancelOrderForPaymentFailure(orderId, payment.customer_id, io);
           }
 
           payment.status = newStatus;
@@ -450,7 +456,16 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
   const clientIP = req.ip || req.connection.remoteAddress;
   const userAgent = req.headers['user-agent'];
 
-  const { payloadForSignature, webhookBody } = parsePhonePeWebhookBody(rawBody);
+  const { payloadForSignature, webhookBody, legacyRejected } = parsePhonePeWebhookBody(rawBody);
+
+  if (legacyRejected) {
+    paymentLogger.webhook.signatureInvalid(logger, {
+      clientIP,
+      userAgent,
+      reason: 'legacy_format_rejected',
+    });
+    return fail(res, 400, 'Legacy webhook format not accepted in production');
+  }
 
   // Log incoming webhook for security monitoring
   paymentLogger.webhook.received(logger, {
@@ -650,10 +665,11 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
           [orderStatus, paymentStatusField, payment.order_id]
         );
       } else if (code === 'PAYMENT_FAILED') {
+        // LIFECYCLE FIX: auto-cancel unpaid online orders on payment failure
         await client.query(
           `UPDATE orders 
-           SET payment_status = $1, updated_at = NOW()
-           WHERE id = $2`,
+           SET status = 'CANCELLED', payment_status = $1, updated_at = NOW()
+           WHERE id = $2 AND status IN ('PLACED', 'PAYMENT_PENDING', 'CONFIRMED')`,
           [paymentStatusField, payment.order_id]
         );
       } else if (code === 'PAYMENT_REFUNDED') {
@@ -672,11 +688,18 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
       if (code === 'PAYMENT_SUCCESS') {
         const io = req.app.get('io');
         if (io) {
-          io.to('admin_room').emit('order:new', {
+          const payload = {
             orderId: payment.order_id,
             customerId: payment.customer_id,
             totalAmount: Number(payment.total_amount || 0),
             createdAt: new Date().toISOString(),
+          };
+          io.to('admin_room').emit('order:new', payload);
+          io.to('staff_room').emit('order:new', payload);
+          await notifyStaffNewOrder({
+            orderId: payment.order_id,
+            totalAmount: Number(payment.total_amount || 0),
+            io,
           });
         }
 
@@ -694,13 +717,22 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
             io.to(`customer_${payment.customer_id}`).emit('order:status_updated', {
               orderId: payment.order_id,
               status: 'CONFIRMED',
-              message: 'Payment confirmed! Finding delivery partner...',
+              message: 'Your order is confirmed — preparing now',
             });
           }
-          // Trigger assignment after payment confirmed
-          assignOrderToPartner({ orderId: payment.order_id, io }).catch(err =>
-            logger.error('Post-payment auto-assign failed (webhook):', err));
         }
+      } else if (code === 'PAYMENT_FAILED') {
+        const io = req.app.get('io');
+        emitOrderLifecycleEvent(io, {
+          orderId: payment.order_id,
+          customerId: payment.customer_id,
+          payload: {
+            orderId: payment.order_id,
+            status: 'CANCELLED',
+            reason: 'payment_failed',
+            updatedAt: new Date().toISOString(),
+          },
+        });
       }
 
       paymentLogger.webhook.processed(logger, {

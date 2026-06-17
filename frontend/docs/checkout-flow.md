@@ -1,6 +1,6 @@
 # Flutter Checkout Flow
 
-Client-side checkout architecture for the MeatvoApp Flutter app (`old_meatvo/`). This document maps screens, services, and API calls to the backend checkout pipeline.
+Client-side checkout architecture for the MeatvoApp Flutter app (`frontend/`). This document maps screens, services, and API calls to the backend checkout pipeline.
 
 **Backend reference:** [Checkout Pipeline Architecture](../../backend/docs/checkout-pipeline-architecture.md)
 

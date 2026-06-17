@@ -1,8 +1,9 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../config/api_config.dart' show ApiProductPaths;
+import '../config/api_config.dart' show ApiProductPaths, ApiUserPaths;
 import '../models/product_model.dart';
 import '../models/product_variant_model.dart';
+import '../utils/media_url_resolver.dart';
 import 'api_service.dart';
 import 'cache_service.dart';
 
@@ -57,12 +58,37 @@ class ProductService {
       productJson['category_id'] = productJson['category_id'].toString();
     }
     // Normalize field names: backend may return camelCase or snake_case
-    if (!productJson.containsKey('price')) {
-      productJson['price'] = productJson['display_price'] ??
-          productJson['base_price'] ??
-          productJson['basePrice'] ??
-          productJson['base_price_per_kg'] ??
-          0;
+    final salePrice = productJson['display_price'] ??
+        productJson['base_price'] ??
+        productJson['basePrice'] ??
+        productJson['price'] ??
+        0;
+    final salePriceNum = salePrice is num
+        ? salePrice.toDouble()
+        : double.tryParse('$salePrice') ?? 0;
+    final mrpRaw = productJson['mrp'];
+    final mrp = mrpRaw is num ? mrpRaw.toDouble() : double.tryParse('$mrpRaw');
+    final discountRaw = productJson['discount'];
+    final discountFromApi = discountRaw is num
+        ? discountRaw.toDouble()
+        : double.tryParse('$discountRaw');
+    if (mrp != null && mrp > salePriceNum + 0.01) {
+      productJson['price'] = mrp;
+      productJson['discount'] = discountFromApi ??
+          ((mrp - salePriceNum) / mrp * 100).round();
+    } else {
+      productJson['price'] = salePriceNum;
+    }
+
+    productJson['image_url'] =
+        MediaUrlResolver.resolve(productJson['image_url']?.toString());
+    if (productJson['images'] is List) {
+      productJson['images'] = MediaUrlResolver.resolveList(
+        (productJson['images'] as List)
+            .map((e) => e?.toString() ?? '')
+            .where((s) => s.isNotEmpty)
+            .toList(),
+      );
     }
     if (!productJson.containsKey('is_available')) {
       productJson['is_available'] =
@@ -72,7 +98,7 @@ class ProductService {
     final product = ProductModel.fromJson(productJson);
 
     final rawVariants = productJson['variants'] as List?;
-    final variants = (rawVariants ?? [])
+    List<ProductVariantModel> variants = (rawVariants ?? [])
         .map((v) {
           final variantJson = Map<String, dynamic>.from(v as Map);
           if (variantJson['id'] != null) {
@@ -84,6 +110,38 @@ class ProductService {
           return ProductVariantModel.fromJson(variantJson);
         })
         .toList();
+
+    if (variants.isEmpty) {
+      final rawWeights =
+          productJson['weight_variants'] ?? productJson['weightVariants'];
+      if (rawWeights is List && rawWeights.isNotEmpty) {
+        final basePerKgRaw = productJson['base_price_per_kg'] ??
+            productJson['basePricePerKg'] ??
+            productJson['price'];
+        final basePerKg = basePerKgRaw is num
+            ? basePerKgRaw.toDouble()
+            : double.tryParse('$basePerKgRaw') ?? product.price;
+        variants = rawWeights.map((weightRaw) {
+          final grams = weightRaw is num
+              ? weightRaw.toInt()
+              : int.tryParse('$weightRaw') ?? 500;
+          final kgLabel = grams >= 1000
+              ? '${(grams / 1000).toStringAsFixed(grams % 1000 == 0 ? 0 : 1)}kg'
+              : '${grams}g';
+          final variantPrice =
+              (basePerKg * (grams / 1000) * 100).round() / 100;
+          return ProductVariantModel(
+            id: '${product.id}_$grams',
+            productId: product.id,
+            weight: kgLabel,
+            weightValue: grams / 1000,
+            price: variantPrice,
+            stock: product.stock?.toInt() ?? 0,
+            isAvailable: product.isAvailable,
+          );
+        }).toList();
+      }
+    }
 
     return ProductWithVariants(product: product, variants: variants);
   }
@@ -170,7 +228,7 @@ class ProductService {
     final image =
         map['image_url'] ?? map['imageUrl'] ?? map['icon_url'] ?? map['iconUrl'];
     if (image != null) {
-      map['image_url'] = image;
+      map['image_url'] = MediaUrlResolver.resolve(image.toString());
     }
     return map;
   }
@@ -494,6 +552,42 @@ class ProductService {
     }
   }
 
+  /// Fetch every active product (paginated) for the home catalog.
+  Future<List<ProductWithVariants>> getAllActiveProducts({
+    bool useCache = true,
+    bool swallowErrors = true,
+  }) async {
+    try {
+      final merged = <ProductWithVariants>[];
+      final seenIds = <String>{};
+      var page = 1;
+
+      while (page <= 10) {
+        final batch = await getProducts(
+          page: page,
+          limit: 100,
+          useCache: useCache,
+        );
+        if (batch.isEmpty) break;
+
+        for (final product in batch) {
+          final id = product.product.id;
+          if (seenIds.add(id)) {
+            merged.add(product);
+          }
+        }
+
+        if (batch.length < 100) break;
+        page++;
+      }
+
+      return _rankProductsForHome(merged);
+    } catch (_) {
+      if (!swallowErrors) rethrow;
+      return [];
+    }
+  }
+
   Future<List<ProductWithVariants>> getBestSellingProducts({
     int limit = 10,
     bool useCache = true,
@@ -564,9 +658,21 @@ class ProductService {
     }
   }
 
-  /// Product rating stub — not yet in backend API.
-  Future<Map<String, dynamic>> getProductRating(String productId) async =>
-      {'averageRating': 0.0, 'reviewCount': 0};
+  /// Product rating from backend API.
+  Future<Map<String, dynamic>> getProductRating(String productId) async {
+    try {
+      final res = await _api.get(ApiUserPaths.productRating(productId));
+      final data = res.data;
+      if (data is Map && data['success'] == true && data['data'] is Map) {
+        final payload = Map<String, dynamic>.from(data['data'] as Map);
+        return {
+          'averageRating': (payload['averageRating'] as num?)?.toDouble() ?? 0.0,
+          'reviewCount': (payload['reviewCount'] as num?)?.toInt() ?? 0,
+        };
+      }
+    } catch (_) {}
+    return {'averageRating': 0.0, 'reviewCount': 0};
+  }
 
   /// Get banners list from public endpoint.
   Future<List<Map<String, dynamic>>> getBanners() async {

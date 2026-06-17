@@ -1,3 +1,5 @@
+import '../utils/media_url_resolver.dart';
+
 /// Default category artwork when API/DB has no [image_url].
 abstract final class CategoryImages {
   static const chicken =
@@ -23,11 +25,9 @@ abstract final class CategoryImages {
   }
 
   static String? resolveUrl(String? imageUrl, String categoryName) {
-    final trimmed = imageUrl?.trim();
-    if (trimmed != null &&
-        trimmed.isNotEmpty &&
-        (trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
-      return trimmed;
+    final resolved = MediaUrlResolver.resolve(imageUrl);
+    if (resolved != null && resolved.isNotEmpty) {
+      return resolved;
     }
     return urlForName(categoryName);
   }

@@ -32,7 +32,12 @@ class HomeState {
   final List<ProductWithVariants> recommendedProducts;
   final List<ProductWithVariants> bestSellingProducts;
   final List<ProductWithVariants> reorderProducts;
+  final List<ProductWithVariants> allProducts;
+  final List<HomeCategoryProducts> categoryProductSections;
+  final bool isAllProductsLoading;
+  final String? allProductsError;
   final Set<String> busyProductIds;
+  final bool? isDeliveryServiceable;
 
   const HomeState({
     required this.isInitialLoading,
@@ -59,7 +64,12 @@ class HomeState {
     required this.recommendedProducts,
     required this.bestSellingProducts,
     required this.reorderProducts,
+    required this.allProducts,
+    required this.categoryProductSections,
+    required this.isAllProductsLoading,
+    required this.allProductsError,
     required this.busyProductIds,
+    this.isDeliveryServiceable,
   });
 
   factory HomeState.initial() => HomeState(
@@ -87,7 +97,12 @@ class HomeState {
         recommendedProducts: const [],
         bestSellingProducts: const [],
         reorderProducts: const [],
+        allProducts: const [],
+        categoryProductSections: const [],
+        isAllProductsLoading: true,
+        allProductsError: null,
         busyProductIds: const <String>{},
+        isDeliveryServiceable: null,
       );
 
   bool get hasContent =>
@@ -95,7 +110,8 @@ class HomeState {
       categories.isNotEmpty ||
       featuredProducts.isNotEmpty ||
       recommendedProducts.isNotEmpty ||
-      bestSellingProducts.isNotEmpty;
+      bestSellingProducts.isNotEmpty ||
+      allProducts.isNotEmpty;
 
   HomeState copyWith({
     bool? isInitialLoading,
@@ -122,7 +138,12 @@ class HomeState {
     List<ProductWithVariants>? recommendedProducts,
     List<ProductWithVariants>? bestSellingProducts,
     List<ProductWithVariants>? reorderProducts,
+    List<ProductWithVariants>? allProducts,
+    List<HomeCategoryProducts>? categoryProductSections,
+    bool? isAllProductsLoading,
+    Object? allProductsError = unsetHomeStateValue,
     Set<String>? busyProductIds,
+    Object? isDeliveryServiceable = unsetHomeStateValue,
   }) {
     return HomeState(
       isInitialLoading: isInitialLoading ?? this.isInitialLoading,
@@ -165,7 +186,27 @@ class HomeState {
       recommendedProducts: recommendedProducts ?? this.recommendedProducts,
       bestSellingProducts: bestSellingProducts ?? this.bestSellingProducts,
       reorderProducts: reorderProducts ?? this.reorderProducts,
+      allProducts: allProducts ?? this.allProducts,
+      categoryProductSections:
+          categoryProductSections ?? this.categoryProductSections,
+      isAllProductsLoading: isAllProductsLoading ?? this.isAllProductsLoading,
+      allProductsError: allProductsError == unsetHomeStateValue
+          ? this.allProductsError
+          : allProductsError as String?,
       busyProductIds: busyProductIds ?? this.busyProductIds,
+      isDeliveryServiceable: isDeliveryServiceable == unsetHomeStateValue
+          ? this.isDeliveryServiceable
+          : isDeliveryServiceable as bool?,
     );
   }
+}
+
+class HomeCategoryProducts {
+  const HomeCategoryProducts({
+    required this.category,
+    required this.products,
+  });
+
+  final HomeCategoryItem category;
+  final List<ProductWithVariants> products;
 }

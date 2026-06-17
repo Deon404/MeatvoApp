@@ -126,7 +126,7 @@ class SecretManager {
       'jwt_refresh_secret',
       'otp_hash_secret',
       'msg91_api_key',
-      'phonepe_salt_key',
+      'cashfree_secret_key',
       'google_maps_api_key'
     ];
 

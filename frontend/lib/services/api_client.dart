@@ -54,6 +54,7 @@ class ApiClient {
   late final Dio _dio;
   final StorageService _storage;
   static const String _retryAttemptKey = 'timeout_retry_attempt';
+  static const String _rateLimitRetryKey = 'rate_limit_retry_attempt';
 
   Dio get dio => _dio;
 
@@ -64,11 +65,15 @@ class ApiClient {
     RequestInterceptorHandler handler,
   ) async {
     if (!BackendResolver.hasReachableBackend) {
+      await BackendResolver.ensureReachable();
+    }
+    if (!BackendResolver.hasReachableBackend) {
+      BackendResolver.logConnectionDevHint();
       handler.reject(
         DioException(
           requestOptions: options,
           type: DioExceptionType.connectionError,
-          error: BackendResolver.connectionHelpMessage(),
+          error: BackendResolver.connectionUserMessage(),
         ),
       );
       return;
@@ -92,6 +97,14 @@ class ApiClient {
     DioException err,
     ErrorInterceptorHandler handler,
   ) async {
+    if (await _retryRateLimitRequest(err, handler)) {
+      return;
+    }
+
+    if (await _retryConnectionRequest(err, handler)) {
+      return;
+    }
+
     if (await _retryTimeoutRequest(err, handler)) {
       return;
     }
@@ -131,6 +144,76 @@ class ApiClient {
       handler.next(err);
     } finally {
       _refreshCompleter = null;
+    }
+  }
+
+  Future<bool> _retryRateLimitRequest(
+    DioException err,
+    ErrorInterceptorHandler handler,
+  ) async {
+    if (err.response?.statusCode != 429) {
+      return false;
+    }
+
+    final attempts = (err.requestOptions.extra[_rateLimitRetryKey] as int?) ?? 0;
+    if (attempts >= 2) {
+      return false;
+    }
+
+    final retryAfterHeader = err.response?.headers.value('retry-after');
+    final retryAfterSeconds = int.tryParse(retryAfterHeader ?? '') ?? 2;
+    await Future<void>.delayed(
+      Duration(seconds: retryAfterSeconds.clamp(1, 5)),
+    );
+
+    final nextExtra = Map<String, dynamic>.from(err.requestOptions.extra)
+      ..[_rateLimitRetryKey] = attempts + 1;
+
+    try {
+      final retryResponse = await _dio.fetch<dynamic>(
+        err.requestOptions.copyWith(extra: nextExtra),
+      );
+      handler.resolve(retryResponse);
+      return true;
+    } on DioException catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _retryConnectionRequest(
+    DioException err,
+    ErrorInterceptorHandler handler,
+  ) async {
+    if (err.type != DioExceptionType.connectionError) {
+      return false;
+    }
+
+    const retryKey = 'connection_reprobe_attempt';
+    final attempts = (err.requestOptions.extra[retryKey] as int?) ?? 0;
+    if (attempts >= 1) {
+      return false;
+    }
+
+    await BackendResolver.init();
+    if (!BackendResolver.hasReachableBackend) {
+      return false;
+    }
+
+    _dio.options.baseUrl = ApiConfig.baseUrl;
+    final nextExtra = Map<String, dynamic>.from(err.requestOptions.extra)
+      ..[retryKey] = attempts + 1;
+
+    try {
+      final retryResponse = await _dio.fetch<dynamic>(
+        err.requestOptions.copyWith(
+          extra: nextExtra,
+          baseUrl: ApiConfig.baseUrl,
+        ),
+      );
+      handler.resolve(retryResponse);
+      return true;
+    } on DioException catch (_) {
+      return false;
     }
   }
 

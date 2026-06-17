@@ -1,18 +1,39 @@
 /**
  * Notification Service
- * Multi-channel notification system for Customer, Admin, and Rider
+ * Multi-channel: socket, FCM push, DB persistence
  */
 
 const { query } = require('../db/postgres');
 const { logger } = require('../utils/logger');
 const { getStateNotifications } = require('../utils/enhancedOrderStateMachine');
+const { sendPushToUser } = require('../utils/fcm');
 
-// Store notifications in memory (can be moved to Redis/DB)
 const notificationStore = new Map();
 
-/**
- * Send notification to user
- */
+const emitNotification = (io, room, notification) => {
+  if (!io || !room) return;
+  io.to(room).emit('notification:new', notification);
+  io.to(room).emit('notification', notification);
+};
+
+async function persistNotification(notification) {
+  try {
+    await query(
+      `INSERT INTO user_notifications (user_id, type, title, body, data, is_read)
+       VALUES ($1, $2, $3, $4, $5, FALSE)`,
+      [
+        notification.userId,
+        notification.type || 'custom',
+        notification.title,
+        notification.body,
+        JSON.stringify(notification.data || {}),
+      ]
+    );
+  } catch (error) {
+    logger.warn('notification_db_persist_failed', { error: error.message });
+  }
+}
+
 async function sendNotification({
   userId,
   role,
@@ -21,7 +42,8 @@ async function sendNotification({
   body,
   data = {},
   priority = 'normal',
-  channels = ['socket', 'sms'],
+  channels = ['socket', 'push'],
+  io = null,
 }) {
   try {
     const notification = {
@@ -38,16 +60,20 @@ async function sendNotification({
       read: false,
     };
 
-    // Store notification
     if (!notificationStore.has(userId)) {
       notificationStore.set(userId, []);
     }
     notificationStore.get(userId).push(notification);
 
-    // Keep only last 100 notifications per user
     const userNotifications = notificationStore.get(userId);
     if (userNotifications.length > 100) {
       notificationStore.set(userId, userNotifications.slice(-100));
+    }
+
+    await persistNotification(notification);
+
+    if (channels.includes('push')) {
+      await sendPushToUser(userId, { title, body, data: { ...data, type } });
     }
 
     logger.info('notification_sent', {
@@ -65,9 +91,6 @@ async function sendNotification({
   }
 }
 
-/**
- * Send order state change notifications to all relevant parties
- */
 async function sendOrderStateNotifications({
   orderId,
   newState,
@@ -77,7 +100,6 @@ async function sendOrderStateNotifications({
   io = null,
 }) {
   try {
-    // Get notification templates for this state
     const notifications = getStateNotifications(newState, {
       orderId,
       ...context,
@@ -87,9 +109,9 @@ async function sendOrderStateNotifications({
       customer: null,
       rider: null,
       admin: null,
+      staff: null,
     };
 
-    // Send to customer
     if (notifications.customer && customerId) {
       results.customer = await sendNotification({
         userId: customerId,
@@ -99,15 +121,14 @@ async function sendOrderStateNotifications({
         body: notifications.customer.body,
         data: { orderId, state: newState },
         priority: notifications.customer.priority,
+        io,
       });
 
-      // Emit via socket
       if (io) {
-        io.to(`customer_${customerId}`).emit('notification:new', results.customer);
+        emitNotification(io, `customer_${customerId}`, results.customer);
       }
     }
 
-    // Send to rider
     if (notifications.rider && riderUserId) {
       results.rider = await sendNotification({
         userId: riderUserId,
@@ -117,21 +138,19 @@ async function sendOrderStateNotifications({
         body: notifications.rider.body,
         data: { orderId, state: newState },
         priority: notifications.rider.priority,
+        io,
       });
 
-      // Emit via socket
       if (io) {
-        io.to(`delivery_${riderUserId}`).emit('notification:new', results.rider);
+        emitNotification(io, `delivery_${riderUserId}`, results.rider);
       }
     }
 
-    // Send to admin
     if (notifications.admin) {
-      // Get all admin users
       const { rows: admins } = await query(
         "SELECT id FROM users WHERE role = 'admin'"
       );
-      
+
       for (const admin of admins) {
         const adminNotif = await sendNotification({
           userId: admin.id,
@@ -141,6 +160,7 @@ async function sendOrderStateNotifications({
           body: notifications.admin.body,
           data: { orderId, state: newState },
           priority: notifications.admin.priority,
+          io,
         });
 
         if (!results.admin) {
@@ -148,9 +168,35 @@ async function sendOrderStateNotifications({
         }
       }
 
-      // Emit via socket
       if (io) {
-        io.to('admin_room').emit('notification:new', results.admin);
+        emitNotification(io, 'admin_room', results.admin);
+      }
+    }
+
+    if (notifications.staff) {
+      const { rows: staffUsers } = await query(
+        "SELECT id FROM users WHERE role = 'staff'"
+      );
+
+      for (const staffUser of staffUsers) {
+        const staffNotif = await sendNotification({
+          userId: staffUser.id,
+          role: 'staff',
+          type: 'kitchen_new_order',
+          title: notifications.staff.title,
+          body: notifications.staff.body,
+          data: { orderId, state: newState, type: 'kitchen_new_order' },
+          priority: notifications.staff.priority,
+          io,
+        });
+
+        if (!results.staff) {
+          results.staff = staffNotif;
+        }
+      }
+
+      if (io) {
+        emitNotification(io, 'staff_room', results.staff);
       }
     }
 
@@ -165,9 +211,6 @@ async function sendOrderStateNotifications({
   }
 }
 
-/**
- * Send custom notification
- */
 async function sendCustomNotification({
   userId,
   role,
@@ -185,83 +228,123 @@ async function sendCustomNotification({
     body,
     data,
     priority,
+    io,
   });
 
-  // Emit via socket
   if (io) {
     const roomMap = {
       customer: `customer_${userId}`,
       rider: `delivery_${userId}`,
       admin: 'admin_room',
+      staff: 'staff_room',
     };
     const room = roomMap[role];
-    if (room) {
-      io.to(room).emit('notification:new', notification);
-    }
+    emitNotification(io, room, notification);
   }
 
   return notification;
 }
 
-/**
- * Get user notifications
- */
 async function getUserNotifications(userId, { limit = 50, unreadOnly = false } = {}) {
-  const userNotifications = notificationStore.get(userId) || [];
-  
-  let filtered = userNotifications;
-  if (unreadOnly) {
-    filtered = filtered.filter(n => !n.read);
+  try {
+    const params = [userId, limit];
+    let sql = `
+      SELECT id, user_id, type, title, body, data, is_read, created_at
+      FROM user_notifications
+      WHERE user_id = $1
+    `;
+    if (unreadOnly) {
+      sql += ' AND is_read = FALSE';
+    }
+    sql += ' ORDER BY created_at DESC LIMIT $2';
+
+    const { rows } = await query(sql, params);
+    if (rows.length > 0) {
+      return rows.map((row) => ({
+        id: String(row.id),
+        userId: row.user_id,
+        type: row.type,
+        title: row.title,
+        body: row.body,
+        data: typeof row.data === 'object' ? row.data : {},
+        read: row.is_read,
+        createdAt: row.created_at,
+      }));
+    }
+  } catch (error) {
+    logger.warn('notification_db_fetch_failed', { error: error.message });
   }
 
+  const userNotifications = notificationStore.get(userId) || [];
+  let filtered = userNotifications;
+  if (unreadOnly) {
+    filtered = filtered.filter((n) => !n.read);
+  }
   return filtered.slice(-limit).reverse();
 }
 
-/**
- * Mark notification as read
- */
 async function markNotificationRead(userId, notificationId) {
+  try {
+    const numericId = Number(String(notificationId).replace(/\D/g, ''));
+    if (Number.isFinite(numericId) && numericId > 0) {
+      await query(
+        `UPDATE user_notifications SET is_read = TRUE, read_at = NOW()
+         WHERE id = $1 AND user_id = $2`,
+        [numericId, userId]
+      );
+      return true;
+    }
+  } catch (error) {
+    logger.warn('notification_mark_read_db_failed', { error: error.message });
+  }
+
   const userNotifications = notificationStore.get(userId) || [];
-  const notification = userNotifications.find(n => n.id === notificationId);
-  
+  const notification = userNotifications.find((n) => n.id === notificationId);
   if (notification) {
     notification.read = true;
-    logger.info('notification_marked_read', { userId, notificationId });
     return true;
   }
-  
   return false;
 }
 
-/**
- * Mark all notifications as read
- */
 async function markAllNotificationsRead(userId) {
+  try {
+    await query(
+      `UPDATE user_notifications SET is_read = TRUE, read_at = NOW()
+       WHERE user_id = $1 AND is_read = FALSE`,
+      [userId]
+    );
+  } catch (error) {
+    logger.warn('notification_mark_all_read_db_failed', { error: error.message });
+  }
+
   const userNotifications = notificationStore.get(userId) || [];
   let count = 0;
-  
   for (const notification of userNotifications) {
     if (!notification.read) {
       notification.read = true;
       count++;
     }
   }
-  
-  logger.info('all_notifications_marked_read', { userId, count });
   return count;
 }
 
-/**
- * Get unread count
- */
 async function getUnreadCount(userId) {
+  try {
+    const { rows } = await query(
+      `SELECT COUNT(*)::int AS count FROM user_notifications
+       WHERE user_id = $1 AND is_read = FALSE`,
+      [userId]
+    );
+    if (rows[0]) return Number(rows[0].count) || 0;
+  } catch (error) {
+    logger.warn('notification_unread_count_db_failed', { error: error.message });
+  }
+
   const userNotifications = notificationStore.get(userId) || [];
-  return userNotifications.filter(n => !n.read).length;
+  return userNotifications.filter((n) => !n.read).length;
 }
 
-/**
- * Send rider nearby notification
- */
 async function sendRiderNearbyNotification({ orderId, customerId, riderName, eta, io }) {
   return sendCustomNotification({
     userId: customerId,
@@ -274,12 +357,9 @@ async function sendRiderNearbyNotification({ orderId, customerId, riderName, eta
   });
 }
 
-/**
- * Send low stock alert to admin
- */
 async function sendLowStockAlert({ productId, productName, currentStock, io }) {
   const { rows: admins } = await query("SELECT id FROM users WHERE role = 'admin'");
-  
+
   for (const admin of admins) {
     await sendCustomNotification({
       userId: admin.id,
@@ -293,12 +373,42 @@ async function sendLowStockAlert({ productId, productName, currentStock, io }) {
   }
 }
 
-/**
- * Send rider offline alert
- */
+async function notifyStaffNewOrder({ orderId, totalAmount = null, io = null }) {
+  const title = 'New Kitchen Order';
+  const body =
+    totalAmount != null
+      ? `Order #${orderId} — ₹${Number(totalAmount).toFixed(0)} ready to prepare`
+      : `Order #${orderId} is ready to prepare`;
+
+  const { rows: staffUsers } = await query(
+    "SELECT id FROM users WHERE role = 'staff'"
+  );
+
+  let firstNotif = null;
+  for (const staffUser of staffUsers) {
+    const notif = await sendNotification({
+      userId: staffUser.id,
+      role: 'staff',
+      type: 'kitchen_new_order',
+      title,
+      body,
+      data: { orderId, type: 'kitchen_new_order' },
+      priority: 'high',
+      io,
+    });
+    if (!firstNotif) firstNotif = notif;
+  }
+
+  if (io && firstNotif) {
+    emitNotification(io, 'staff_room', firstNotif);
+  }
+
+  return firstNotif;
+}
+
 async function sendRiderOfflineAlert({ riderUserId, riderName, orderId, io }) {
   const { rows: admins } = await query("SELECT id FROM users WHERE role = 'admin'");
-  
+
   for (const admin of admins) {
     await sendCustomNotification({
       userId: admin.id,
@@ -323,4 +433,5 @@ module.exports = {
   sendRiderNearbyNotification,
   sendLowStockAlert,
   sendRiderOfflineAlert,
+  notifyStaffNewOrder,
 };

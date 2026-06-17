@@ -47,6 +47,12 @@ class CartService {
       productJson['category_id'] = productJson['category_id'].toString();
     }
     productJson['image_url'] ??= productJson['imageUrl'];
+    final displayPrice = productJson['display_price'] ?? productJson['displayPrice'];
+    if (displayPrice != null) {
+      productJson['price'] = displayPrice is num
+          ? displayPrice.toDouble()
+          : double.tryParse(displayPrice.toString()) ?? productJson['price'];
+    }
     if (!productJson.containsKey('price')) {
       productJson['price'] = productJson['base_price'] ??
           productJson['basePrice'] ??
@@ -96,9 +102,9 @@ class CartService {
           .toString());
       final product = ProductModel.fromJson(productJson);
 
-      final qty = (j['quantity'] is num)
+      final qty = j['quantity'] is num
           ? (j['quantity'] as num).toDouble()
-          : 1.0;
+          : double.tryParse(j['quantity']?.toString() ?? '') ?? 1.0;
 
       final variantId =
           (j['variantId'] ?? j['variant_id'])?.toString();

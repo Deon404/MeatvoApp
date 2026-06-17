@@ -6,6 +6,7 @@ import '../../services/socket_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../auth/phone_screen.dart';
+import 'rider_analytics_screen.dart';
 
 /// Rider Profile Screen - Rider profile and settings
 class RiderProfileScreen extends StatefulWidget {
@@ -109,6 +110,8 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                               _buildVehicleDetails(),
                               SizedBox(height: R.sh(2, context)),
                               _buildEarningsSummary(),
+                              SizedBox(height: R.sh(2, context)),
+                              _buildAnalyticsLink(),
                               SizedBox(height: R.sh(2, context)),
                               _buildKYCStatus(),
                               SizedBox(height: R.sh(3, context)),
@@ -590,6 +593,39 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
     );
   }
 
+  Widget _buildAnalyticsLink() {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => const RiderAnalyticsScreen(),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: EdgeInsets.all(R.sw(4, context)),
+          child: Row(
+            children: [
+              const Icon(Icons.insights_outlined, color: AppColors.primary),
+              SizedBox(width: R.sw(3, context)),
+              const Expanded(
+                child: Text(
+                  'View earnings analytics',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEarningsRow(String label, double amount, IconData icon,
       {bool isTotal = false}) {
     return Row(
@@ -782,125 +818,129 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
         currentVehicleType.isNotEmpty ? currentVehicleType : 'Bike';
     bool isSaving = false;
 
-    await showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Edit Vehicle Details'),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedVehicleType,
-                    decoration: const InputDecoration(
-                      labelText: 'Vehicle Type',
-                      prefixIcon: Icon(Icons.directions_bike),
-                      border: OutlineInputBorder(),
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: const Text('Edit Vehicle Details'),
+            content: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selectedVehicleType,
+                      decoration: const InputDecoration(
+                        labelText: 'Vehicle Type',
+                        prefixIcon: Icon(Icons.directions_bike),
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: 'Bike', child: Text('Bike')),
+                        DropdownMenuItem(
+                            value: 'Scooter', child: Text('Scooter')),
+                        DropdownMenuItem(
+                            value: 'Motorcycle', child: Text('Motorcycle')),
+                        DropdownMenuItem(value: 'Car', child: Text('Car')),
+                        DropdownMenuItem(value: 'Auto', child: Text('Auto')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          setDialogState(() {
+                            selectedVehicleType = value;
+                          });
+                        }
+                      },
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Please select vehicle type';
+                        }
+                        return null;
+                      },
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 'Bike', child: Text('Bike')),
-                      DropdownMenuItem(
-                          value: 'Scooter', child: Text('Scooter')),
-                      DropdownMenuItem(
-                          value: 'Motorcycle', child: Text('Motorcycle')),
-                      DropdownMenuItem(value: 'Car', child: Text('Car')),
-                      DropdownMenuItem(value: 'Auto', child: Text('Auto')),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) {
-                        setDialogState(() {
-                          selectedVehicleType = value;
-                        });
-                      }
-                    },
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Please select vehicle type';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: R.sh(2, context)),
-                  TextFormField(
-                    controller: vehicleNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'Vehicle Number',
-                      hintText: 'e.g., MH12AB1234',
-                      prefixIcon: Icon(Icons.confirmation_number),
-                      border: OutlineInputBorder(),
+                    SizedBox(height: R.sh(2, dialogContext)),
+                    TextFormField(
+                      controller: vehicleNumberController,
+                      decoration: const InputDecoration(
+                        labelText: 'Vehicle Number',
+                        hintText: 'e.g., MH12AB1234',
+                        prefixIcon: Icon(Icons.confirmation_number),
+                        border: OutlineInputBorder(),
+                      ),
+                      textCapitalization: TextCapitalization.characters,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter vehicle number';
+                        }
+                        return null;
+                      },
                     ),
-                    textCapitalization: TextCapitalization.characters,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Please enter vehicle number';
-                      }
-                      return null;
-                    },
-                  ),
-                  SizedBox(height: R.sh(2, context)),
-                  TextFormField(
-                    controller: licenseNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'License Number',
-                      hintText: 'Enter your driving license number',
-                      prefixIcon: Icon(Icons.badge),
-                      border: OutlineInputBorder(),
+                    SizedBox(height: R.sh(2, dialogContext)),
+                    TextFormField(
+                      controller: licenseNumberController,
+                      decoration: const InputDecoration(
+                        labelText: 'License Number',
+                        hintText: 'Enter your driving license number',
+                        prefixIcon: Icon(Icons.badge),
+                        border: OutlineInputBorder(),
+                      ),
+                      textCapitalization: TextCapitalization.characters,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter license number';
+                        }
+                        return null;
+                      },
                     ),
-                    textCapitalization: TextCapitalization.characters,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Please enter license number';
-                      }
-                      return null;
-                    },
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed:
-                  isSaving ? null : () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: isSaving
-                  ? null
-                  : () async {
-                      if (!formKey.currentState!.validate()) {
-                        return;
-                      }
-
-                      setDialogState(() {
-                        isSaving = true;
-                      });
-
-                      try {
-                        await _riderService.updateVehicleDetails(
-                          vehicleType: selectedVehicleType,
-                          vehicleNumber: vehicleNumberController.text,
-                          licenseNumber: licenseNumberController.text,
-                        );
-
-                        if (context.mounted) {
-                          Navigator.pop(context);
-                          await _loadProfile();
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                    'Vehicle details updated successfully'),
-                                backgroundColor: AppColors.success,
-                              ),
-                            );
-                          }
+            actions: [
+              TextButton(
+                onPressed: isSaving
+                    ? null
+                    : () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) {
+                          return;
                         }
-                      } catch (e) {
-                        if (context.mounted) {
+
+                        setDialogState(() {
+                          isSaving = true;
+                        });
+
+                        try {
+                          await _riderService.updateVehicleDetails(
+                            vehicleType: selectedVehicleType,
+                            vehicleNumber: vehicleNumberController.text,
+                            licenseNumber: licenseNumberController.text,
+                          );
+
+                          if (!dialogContext.mounted) return;
+                          Navigator.of(dialogContext).pop();
+
+                          if (!mounted) return;
+                          await _loadProfile();
+
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Vehicle details updated successfully',
+                              ),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        } catch (e) {
+                          if (!dialogContext.mounted) return;
                           setDialogState(() {
                             isSaving = false;
                           });
@@ -911,29 +951,29 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                             ),
                           );
                         }
-                      }
-                    },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Save'),
               ),
-              child: isSaving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('Save'),
-            ),
-          ],
+            ],
+          ),
         ),
-      ),
-    );
-
-    vehicleNumberController.dispose();
-    licenseNumberController.dispose();
+      );
+    } finally {
+      vehicleNumberController.dispose();
+      licenseNumberController.dispose();
+    }
   }
 }

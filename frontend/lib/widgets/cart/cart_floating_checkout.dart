@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../theme/app_theme.dart';
-import 'premium_cart_card.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
 
-/// Inline checkout section with premium red CTA, placed below bill summary in cart scroll.
+/// Inline checkout section with brand CTA, placed below bill summary in cart scroll.
 class CartFloatingCheckout extends StatelessWidget {
   const CartFloatingCheckout({
     super.key,
@@ -19,20 +19,15 @@ class CartFloatingCheckout extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(mv.spacing.md),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            offset: const Offset(0, -2),
-            blurRadius: 8,
-          ),
-        ],
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.lg),
+        boxShadow: mv.shadowMd,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -43,22 +38,18 @@ class CartFloatingCheckout extends StatelessWidget {
             children: [
               Text(
                 'To pay',
-                style: textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF6B6B6B),
-                  fontSize: 12,
-                ),
+                style: textTheme.bodySmall?.copyWith(color: mv.textSecondary),
               ),
               Text(
                 '₹${total.toStringAsFixed(0)}',
-                style: textTheme.bodyLarge?.copyWith(
-                  color: const Color(0xFFC8102E),
-                  fontSize: 16,
+                style: textTheme.titleMedium?.copyWith(
+                  color: mv.brandPrimary,
                   fontWeight: FontWeight.w700,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          SizedBox(height: mv.spacing.xs),
           SizedBox(
             height: 54,
             width: double.infinity,
@@ -70,10 +61,12 @@ class CartFloatingCheckout extends StatelessWidget {
                       onCheckout?.call();
                     },
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFC8102E),
-                foregroundColor: Colors.white,
+                backgroundColor: mv.brandPrimary,
+                foregroundColor: MeatvoColors.white,
+                disabledBackgroundColor: MeatvoColors.surfaceMuted,
+                disabledForegroundColor: mv.textMuted,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(mv.radii.md),
                 ),
                 elevation: 0,
               ),
@@ -83,13 +76,13 @@ class CartFloatingCheckout extends StatelessWidget {
                       height: 22,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.2,
-                        color: Colors.white,
+                        color: MeatvoColors.white,
                       ),
                     )
-                  : const Text(
+                  : Text(
                       'Proceed to Checkout',
-                      style: TextStyle(
-                        fontSize: 16,
+                      style: textTheme.titleSmall?.copyWith(
+                        color: MeatvoColors.white,
                         fontWeight: FontWeight.w600,
                       ),
                     ),

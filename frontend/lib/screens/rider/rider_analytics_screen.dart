@@ -42,8 +42,8 @@ class _RiderAnalyticsScreenState extends ConsumerState<RiderAnalyticsScreen> {
         );
         last7Days.add({
           'date': date,
-          'earnings': earnings?.today ?? 0.0,
-          'deliveries': earnings?.deliveryCount ?? 0,
+          'earnings': earnings.today,
+          'deliveries': earnings.totalDeliveries,
         });
       }
       

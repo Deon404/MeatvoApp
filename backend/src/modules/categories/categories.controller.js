@@ -2,6 +2,14 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
+const { signStoredImageUrl } = require('../../utils/uploadSigning');
+
+const requestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+
+const formatCategory = (category, baseUrl) => ({
+  ...category,
+  image_url: signStoredImageUrl(category.image_url || '', baseUrl),
+});
 
 const ALLOWED_CATEGORY_COLUMNS = ['name', 'image_url', 'active'];
 
@@ -31,7 +39,9 @@ const listCategories = asyncHandler(async (req, res) => {
     `SELECT id, name, image_url, active FROM categories ${where} ORDER BY id DESC`,
     params
   );
-  return ok(res, { categories: rows }, 'Categories');
+  const baseUrl = requestBaseUrl(req);
+  const categories = rows.map((row) => formatCategory(row, baseUrl));
+  return ok(res, { categories }, 'Categories');
 });
 
 const createCategory = asyncHandler(async (req, res) => {
@@ -40,7 +50,8 @@ const createCategory = asyncHandler(async (req, res) => {
     'INSERT INTO categories (name, image_url, active) VALUES ($1,$2,$3) RETURNING id, name, image_url, active',
     [name, image_url, active]
   );
-  return created(res, { category: rows[0] }, 'Category created');
+  const baseUrl = requestBaseUrl(req);
+  return created(res, { category: formatCategory(rows[0], baseUrl) }, 'Category created');
 });
 
 const updateCategory = asyncHandler(async (req, res) => {
@@ -56,7 +67,8 @@ const updateCategory = asyncHandler(async (req, res) => {
     params
   );
   if (!rows[0]) return fail(res, 404, 'Category not found');
-  return ok(res, { category: rows[0] }, 'Category updated');
+  const baseUrl = requestBaseUrl(req);
+  return ok(res, { category: formatCategory(rows[0], baseUrl) }, 'Category updated');
 });
 
 const deleteCategory = asyncHandler(async (req, res) => {

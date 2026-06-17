@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../../utils/media_url_resolver.dart';
 import '../../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../../design_system/tokens/meatvo_colors.dart';
 import '../../../models/home_category_item.dart';
@@ -183,7 +184,7 @@ class _CategoryChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final isActive = HomeCategoryRow._isActive(item.name);
     final isComingSoon = HomeCategoryRow._isComingSoon(item.name);
-    final url = item.imageUrl;
+    final url = MediaUrlResolver.resolve(item.imageUrl);
     final hasImage = url != null && url.isNotEmpty;
 
     return GestureDetector(

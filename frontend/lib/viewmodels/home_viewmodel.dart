@@ -12,6 +12,7 @@ import '../services/address_service.dart';
 import '../services/auth_service.dart';
 import '../services/banner_service.dart';
 import '../services/cart_service.dart';
+import '../services/delivery_service.dart';
 import '../services/notification_service.dart';
 import '../services/product_service.dart';
 import 'home_state.dart';
@@ -64,14 +65,14 @@ class HomeViewModel extends StateNotifier<HomeState> {
       isFeaturedLoading: state.featuredProducts.isEmpty,
       isRecommendedLoading: state.recommendedProducts.isEmpty,
       isBestSellersLoading: state.bestSellingProducts.isEmpty,
+      isAllProductsLoading: state.allProducts.isEmpty,
     );
 
     await Future.wait([
       _loadHeaderData(),
       _loadBanners(forceRefresh: forceRefresh),
       fetchCategories(forceRefresh: forceRefresh),
-      fetchFeaturedProducts(forceRefresh: forceRefresh),
-      fetchBestSellers(forceRefresh: forceRefresh),
+      fetchAllProducts(forceRefresh: forceRefresh),
       refreshCart(),
     ]);
 
@@ -88,6 +89,7 @@ class HomeViewModel extends StateNotifier<HomeState> {
     if (!state.hasContent) {
       final errors = [
         state.categoriesError,
+        state.allProductsError,
         state.featuredError,
       ].whereType<String>().toList(growable: false);
       pageError = errors.isNotEmpty ? errors.first : HomeStrings.genericHomeLoadError;
@@ -123,7 +125,57 @@ class HomeViewModel extends StateNotifier<HomeState> {
     }
   }
 
+  Future<void> fetchAllProducts({bool forceRefresh = false}) async {
+    state = state.copyWith(
+      isAllProductsLoading: true,
+      isFeaturedLoading: state.featuredProducts.isEmpty,
+      isRecommendedLoading: state.recommendedProducts.isEmpty,
+      isBestSellersLoading: state.bestSellingProducts.isEmpty,
+      allProductsError: null,
+      featuredError: null,
+      recommendedError: null,
+      bestSellersError: null,
+    );
+
+    try {
+      final products = await _productService.getAllActiveProducts(
+        useCache: !forceRefresh,
+        swallowErrors: false,
+      );
+      final bestSellers = products.take(10).toList(growable: false);
+      final featured = products.length > 10
+          ? products.skip(10).take(10).toList(growable: false)
+          : products.take(10).toList(growable: false);
+
+      state = state.copyWith(
+        allProducts: products,
+        categoryProductSections: _groupProductsByCategory(products),
+        bestSellingProducts: bestSellers,
+        featuredProducts: featured,
+        recommendedProducts: featured,
+        reorderProducts: products.take(3).toList(growable: false),
+        isAllProductsLoading: false,
+        isFeaturedLoading: false,
+        isRecommendedLoading: false,
+        isBestSellersLoading: false,
+      );
+    } catch (error) {
+      final message = _friendlyError(error, HomeStrings.allProductsLoadError);
+      state = state.copyWith(
+        isAllProductsLoading: false,
+        isFeaturedLoading: false,
+        isRecommendedLoading: false,
+        isBestSellersLoading: false,
+        allProductsError: message,
+        featuredError: message,
+        recommendedError: message,
+        bestSellersError: message,
+      );
+    }
+  }
+
   Future<void> fetchFeaturedProducts({bool forceRefresh = false}) async {
+    if (state.allProducts.isNotEmpty) return;
     state = state.copyWith(
       isFeaturedLoading: true,
       isRecommendedLoading: true,
@@ -158,6 +210,7 @@ class HomeViewModel extends StateNotifier<HomeState> {
       fetchFeaturedProducts(forceRefresh: forceRefresh);
 
   Future<void> fetchBestSellers({bool forceRefresh = false}) async {
+    if (state.allProducts.isNotEmpty) return;
     state = state.copyWith(
       isBestSellersLoading: true,
       bestSellersError: null,
@@ -239,10 +292,20 @@ class HomeViewModel extends StateNotifier<HomeState> {
         _authService.getCurrentUserProfile(),
         _notificationService.getUnreadCount(),
       ]);
+      final address = results[0] as AddressModel?;
+      bool? serviceable;
+      if (address?.latitude != null && address?.longitude != null) {
+        final validation = await DeliveryService().validateDeliveryAddress(
+          latitude: address!.latitude!,
+          longitude: address.longitude!,
+        );
+        serviceable = validation.isValid;
+      }
       state = state.copyWith(
-        defaultAddress: results[0] as AddressModel?,
+        defaultAddress: address,
         user: results[1] as UserModel?,
         unreadNotificationCount: results[2] as int,
+        isDeliveryServiceable: serviceable,
       );
     } catch (_) {}
   }
@@ -278,6 +341,55 @@ class HomeViewModel extends StateNotifier<HomeState> {
         .whereType<HomeCategoryItem>()
         .take(8)
         .toList(growable: false);
+  }
+
+  List<HomeCategoryProducts> _groupProductsByCategory(
+    List<ProductWithVariants> products,
+  ) {
+    if (products.isEmpty) return const [];
+
+    final grouped = <String, List<ProductWithVariants>>{};
+    for (final product in products) {
+      final categoryName = product.product.categoryName?.trim();
+      final key = categoryName == null || categoryName.isEmpty
+          ? 'More Products'
+          : categoryName;
+      grouped.putIfAbsent(key, () => []).add(product);
+    }
+
+    final orderedNames = <String>[];
+    for (final category in state.categories) {
+      final name = category.name.trim();
+      if (name.isEmpty || !grouped.containsKey(name)) continue;
+      orderedNames.add(name);
+    }
+
+    for (final name in grouped.keys) {
+      if (!orderedNames.contains(name)) {
+        orderedNames.add(name);
+      }
+    }
+
+    return orderedNames
+        .map((name) {
+          final items = grouped[name];
+          if (items == null || items.isEmpty) return null;
+          return HomeCategoryProducts(
+            category: _categoryItemForName(name),
+            products: items,
+          );
+        })
+        .whereType<HomeCategoryProducts>()
+        .toList(growable: false);
+  }
+
+  HomeCategoryItem _categoryItemForName(String name) {
+    for (final category in state.categories) {
+      if (category.name.toLowerCase() == name.toLowerCase()) {
+        return category;
+      }
+    }
+    return HomeCategoryItem(id: name.toLowerCase(), name: name);
   }
 
   List<HomeCategoryItem> _deriveCategories(List<ProductWithVariants> products) {

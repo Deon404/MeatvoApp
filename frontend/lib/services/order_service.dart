@@ -1,8 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
-import '../config/api_config.dart' show ApiOrderPaths;
+import '../config/api_config.dart' show ApiOrderPaths, ApiUserPaths;
 import '../models/order_model.dart';
 import '../models/cart_model.dart';
+import '../utils/address_display_util.dart';
 import '../utils/order_status_util.dart';
 import 'api_service.dart';
 import 'error_tracking_service.dart';
@@ -67,8 +68,8 @@ class OrderService {
   }
 
   String _formatDeliveryAddress(Map<String, dynamic> address) {
-    final formatted = _normalizeAddress(address);
-    if (formatted == null || formatted.trim().isEmpty) {
+    final formatted = formatAddressForDisplay(address);
+    if (formatted == 'Address not available') {
       throw Exception('Delivery address is missing. Please select a saved address.');
     }
     return formatted;
@@ -172,6 +173,11 @@ class OrderService {
     if (m['rider_id'] != null) {
       m['rider_id'] = m['rider_id'].toString();
     }
+    m['rider_name'] ??= m['riderName'];
+    m['rider_phone'] ??= m['riderPhone'];
+    m['rider_latitude'] ??= m['riderLatitude'];
+    m['rider_longitude'] ??= m['riderLongitude'];
+    m['delivery_slot_label'] ??= m['deliverySlotLabel'];
     m['status'] = _normalizeStatus(m['status']?.toString());
     m['items'] = rawItems.map(_normalizeOrderItem).toList();
 
@@ -181,7 +187,6 @@ class OrderService {
   OrderModel _mergeAssignment(OrderModel order, dynamic assignment) {
     if (assignment is! Map) return order;
     final map = Map<String, dynamic>.from(assignment);
-    final partnerId = map['delivery_partner_id'] ?? map['deliveryPartnerId'];
     final lat = map['current_lat'] ?? map['currentLat'];
     final lng = map['current_lng'] ?? map['currentLng'];
     final riderLat = lat is num
@@ -190,13 +195,18 @@ class OrderService {
     final riderLng = lng is num
         ? lng.toDouble()
         : double.tryParse('$lng');
+    final riderUserId = map['user_id'] ?? map['userId'];
 
     return order.copyWith(
-      riderId: partnerId?.toString(),
-      riderName: map['user_name']?.toString() ?? map['userName']?.toString(),
-      riderPhone: map['user_phone']?.toString() ?? map['userPhone']?.toString(),
-      riderLatitude: riderLat,
-      riderLongitude: riderLng,
+      riderId: (riderUserId ?? order.riderId)?.toString(),
+      riderName: map['user_name']?.toString() ??
+          map['userName']?.toString() ??
+          order.riderName,
+      riderPhone: map['user_phone']?.toString() ??
+          map['userPhone']?.toString() ??
+          order.riderPhone,
+      riderLatitude: riderLat ?? order.riderLatitude,
+      riderLongitude: riderLng ?? order.riderLongitude,
     );
   }
 
@@ -222,12 +232,9 @@ class OrderService {
   Future<OrderModel> createOrder({
     required CartModel cart,
     required Map<String, dynamic> deliveryAddress,
-    required String deliverySlot,
     required String paymentMethod,
     String? couponCode,
     String? specialInstructions,
-    int? deliverySlotId,
-    Map<String, dynamic>? deliverySlotMeta,
   }) async {
     if (cart.isEmpty) throw Exception('Cart is empty');
 
@@ -254,12 +261,9 @@ class OrderService {
     try {
       return await placeOrder(
         address: deliveryAddress,
-        deliverySlot: deliverySlot,
         paymentMethod: paymentMethod,
         couponCode: couponCode,
         specialInstructions: specialInstructions,
-        deliverySlotId: deliverySlotId,
-        deliverySlotMeta: deliverySlotMeta,
       );
     } on DioException catch (e) {
       await ErrorTrackingService.captureException(
@@ -279,12 +283,9 @@ class OrderService {
   /// POST /orders — order items are read from the server Redis cart.
   Future<OrderModel> placeOrder({
     required Map<String, dynamic> address,
-    required String deliverySlot,
     required String paymentMethod,
     String? couponCode,
     String? specialInstructions,
-    int? deliverySlotId,
-    Map<String, dynamic>? deliverySlotMeta,
   }) async {
     try {
       final addressId = (address['id'] ?? address['addressId'])?.toString();
@@ -303,10 +304,6 @@ class OrderService {
         'deliveryAddress': _formatDeliveryAddress(address),
         if (lat != null) 'lat': lat,
         if (lng != null) 'lng': lng,
-        if (deliverySlotId != null && deliverySlotId > 0)
-          'deliverySlotId': deliverySlotId,
-        if (deliverySlotMeta != null && deliverySlotMeta.isNotEmpty)
-          'deliverySlot': deliverySlotMeta,
         'paymentMethod': normalizedPaymentMethod,
         if (couponCode != null && couponCode.isNotEmpty) 'couponCode': couponCode,
         if (specialInstructions != null && specialInstructions.isNotEmpty)
@@ -340,18 +337,38 @@ class OrderService {
     return getOrders();
   }
 
-  /// Get orders.
-  /// GET /orders
+  /// Get orders (all pages).
+  /// GET /orders?page=&limit=
   Future<List<OrderModel>> getOrders() async {
     try {
-      final res = await _api.get(ApiOrderPaths.orders);
-      if (!_isRequestSuccessful(res.data)) {
-        throw Exception(res.data['message'] ?? 'Failed to fetch orders');
+      const pageLimit = 50;
+      var page = 1;
+      final allOrders = <OrderModel>[];
+
+      while (true) {
+        final res = await _api.get(
+          ApiOrderPaths.orders,
+          queryParameters: {'page': page, 'limit': pageLimit},
+        );
+        if (!_isRequestSuccessful(res.data)) {
+          throw Exception(res.data['message'] ?? 'Failed to fetch orders');
+        }
+
+        final data = _extractData(res.data);
+        final list = _extractOrdersPayload(data);
+        allOrders.addAll(
+          list.map((e) => _parseOrder(e as Map<String, dynamic>)),
+        );
+
+        final total = data is Map ? (data['total'] as num?)?.toInt() : null;
+        final pages = data is Map ? (data['pages'] as num?)?.toInt() : null;
+        if (list.length < pageLimit) break;
+        if (pages != null && page >= pages) break;
+        if (total != null && allOrders.length >= total) break;
+        page += 1;
       }
-      final list = _extractOrdersPayload(_extractData(res.data));
-      return list
-          .map((e) => _parseOrder(e as Map<String, dynamic>))
-          .toList();
+
+      return allOrders;
     } on DioException catch (e) {
       throw Exception(
           'Failed to fetch orders: ${e.response?.data?['message'] ?? e.message}');
@@ -412,7 +429,18 @@ class OrderService {
 
   // ── Review / rating stubs ─────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>?> getOrderReview(String orderId) async => null;
+  Future<Map<String, dynamic>?> getOrderReview(String orderId) async {
+    try {
+      final res = await _api.get(ApiUserPaths.reviewForOrder(orderId));
+      final data = res.data;
+      if (data is Map && data['success'] == true && data['data'] is Map) {
+        final payload = Map<String, dynamic>.from(data['data'] as Map);
+        final review = payload['review'];
+        if (review is Map) return Map<String, dynamic>.from(review);
+      }
+    } catch (_) {}
+    return null;
+  }
 
   Future<void> submitReview({
     required String orderId,
@@ -421,7 +449,16 @@ class OrderService {
     int? deliverySpeedRating,
     String? feedback,
   }) async {
-    debugPrint('⚠️ submitReview: not yet supported by backend');
+    await _api.post(
+      ApiUserPaths.reviews,
+      data: {
+        'order_id': int.tryParse(orderId) ?? orderId,
+        if (riderRating != null) 'rider_rating': riderRating,
+        if (productQualityRating != null) 'product_quality_rating': productQualityRating,
+        if (deliverySpeedRating != null) 'delivery_speed_rating': deliverySpeedRating,
+        if (feedback != null && feedback.trim().isNotEmpty) 'feedback': feedback.trim(),
+      },
+    );
   }
 
   @Deprecated('Use submitReview instead')
@@ -441,6 +478,24 @@ class OrderService {
 
   Future<OrderModel> getOrderTracking(String orderId) async =>
       getOrderById(orderId);
+
+  /// Fetch delivery OTP for customer (fetch once per dispatch — not polled).
+  Future<String?> getDeliveryOtp(String orderId) async {
+    try {
+      final res = await _api.get(ApiOrderPaths.deliveryOtp(orderId));
+      if (!_isRequestSuccessful(res.data)) return null;
+      final data = _extractData(res.data);
+      if (data is Map) {
+        final otp = data['otp'];
+        if (otp != null) return otp.toString();
+      }
+    } on DioException catch (e) {
+      debugPrint('getDeliveryOtp failed: ${e.message}');
+    } catch (e) {
+      debugPrint('getDeliveryOtp failed: $e');
+    }
+    return null;
+  }
 
   // ── Polling-based tracking ───────────────────────────────────────────────
 

@@ -119,6 +119,10 @@ class EnhancedAuthMiddleware {
         audience: 'meatvo-users',
         algorithms: ['HS256']
       });
+
+      if (decoded.type !== 'access') {
+        return fail(res, 401, 'Invalid token type', { code: 'TOKEN_INVALID' });
+      }
       
       // Check if token is blacklisted
       if (await this.isTokenBlacklisted(token)) {
@@ -139,8 +143,12 @@ class EnhancedAuthMiddleware {
         return fail(res, 401, 'User not found', { code: 'USER_NOT_FOUND' });
       }
 
-      // Add user to request object
-      req.user = rows[0];
+      // Add user to request object (never expose MFA secret to handlers)
+      const { mfaSecret, ...safeUser } = rows[0];
+      req.user = safeUser;
+      if (mfaSecret) {
+        req.user._mfaSecret = mfaService.resolveStoredSecret(mfaSecret);
+      }
       req.token = token;
 
       // Add authentication breadcrumb
@@ -182,7 +190,11 @@ class EnhancedAuthMiddleware {
       }
 
       // Verify MFA token
-      const isValid = mfaService.verifyToken(mfaToken, req.user.mfaSecret);
+      const mfaSecret = req.user._mfaSecret;
+      if (!mfaSecret) {
+        return fail(res, 401, 'MFA configuration error', { code: 'MFA_INVALID' });
+      }
+      const isValid = mfaService.verifyToken(mfaToken, mfaSecret);
       
       if (!isValid) {
         logger.warn('mfa_verification_failed', {
@@ -249,7 +261,11 @@ class EnhancedAuthMiddleware {
           return fail(res, 401, 'MFA token is required for this operation', { code: 'MFA_REQUIRED' });
         }
 
-        const isValid = mfaService.verifyToken(mfaToken, req.user.mfaSecret);
+        const mfaSecret = req.user._mfaSecret;
+        if (!mfaSecret) {
+          return fail(res, 401, 'MFA configuration error', { code: 'MFA_INVALID' });
+        }
+        const isValid = mfaService.verifyToken(mfaToken, mfaSecret);
         
         if (!isValid) {
           return fail(res, 401, 'Invalid MFA token', { code: 'MFA_INVALID' });

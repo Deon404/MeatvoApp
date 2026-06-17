@@ -54,14 +54,8 @@ class _LoginScreenState extends State<LoginScreen> {
     if (lower.contains('too many') || lower.contains('rate limit')) {
       return 'Too many requests. Please try again in a few minutes.';
     }
-    if (lower.contains('server tak') ||
-        lower.contains('meatvo_api_root') ||
-        lower.contains('cannot reach') ||
-        lower.contains('connection')) {
-      return BackendResolver.connectionHelpMessage();
-    }
-    if (lower.contains('network')) {
-      return BackendResolver.connectionHelpMessage();
+    if (BackendResolver.isConnectionError(raw)) {
+      return BackendResolver.connectionUserMessage();
     }
     return raw.isEmpty ? 'Failed to send OTP. Please try again.' : raw;
   }
@@ -79,7 +73,7 @@ class _LoginScreenState extends State<LoginScreen> {
       _feedbackText = null;
     });
     try {
-      final devOtp = await _authService.sendOTP(phoneE164);
+      final result = await _authService.sendOTP(phoneE164);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -91,7 +85,10 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       Navigator.of(context).push(
         AppTransitions.slideFade(
-          OTPVerificationScreen(phoneNumber: phoneE164, prefilledOtp: devOtp),
+          OTPVerificationScreen(
+            phoneNumber: phoneE164,
+            prefilledOtp: result,
+          ),
         ),
       );
     } catch (error) {

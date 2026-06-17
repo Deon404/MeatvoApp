@@ -8,6 +8,7 @@ import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/tokens/meatvo_durations.dart';
 import '../../design_system/tokens/meatvo_spacing.dart';
 import '../../models/product_model.dart';
+import '../../utils/media_url_resolver.dart';
 import '../atoms/meatvo_badge.dart';
 import '../atoms/scale_tap.dart';
 import '../molecules/price_row.dart';
@@ -80,6 +81,7 @@ class MeatvoProductCard extends StatelessWidget {
     this.quantity = 0,
     this.isBusy = false,
     this.inStock = true,
+    this.orderingPaused = false,
     this.showFreshBadge = true,
     this.badgeLabel,
     this.badgeVariant = MeatvoBadgeVariant.popular,
@@ -98,6 +100,7 @@ class MeatvoProductCard extends StatelessWidget {
   final int quantity;
   final bool isBusy;
   final bool inStock;
+  final bool orderingPaused;
   final bool showFreshBadge;
   final String? badgeLabel;
   final MeatvoBadgeVariant badgeVariant;
@@ -107,15 +110,16 @@ class MeatvoProductCard extends StatelessWidget {
   final VoidCallback? onIncrement;
   final VoidCallback? onDecrement;
 
-  /// Fixed CTA pill geometry. Why hard-coded?
+  /// Fixed CTA slot geometry. Why hard-coded?
   ///   • AnimatedSwitcher must NEVER let its child request infinity.
-  ///   • Both states ("ADD" and "QuantityStepper") must fit inside the
-  ///     same 116×40 box so the surrounding card layout is stable across
+  ///   • Both states ("ADD" pill and QuantityStepper) must fit inside the
+  ///     same 112×32 box so the surrounding card layout is stable across
   ///     transitions. Without a fixed box the Stack-based switcher
   ///     would mark the parent dirty mid-frame → "_debugRelayout
   ///     BoundaryAlreadyMarkedNeedsLayout" + blank grid.
-  static const double ctaHeight = 40;
-  static const double _kCtaWidth = 116;
+  static const double ctaHeight = 32;
+  static const double _kCtaWidth = 112;
+  static const double _kAddPillWidth = 32;
 
   static const double _cardRadius = 22;
 
@@ -124,12 +128,21 @@ class MeatvoProductCard extends StatelessWidget {
   // we fall back to this finite width instead of crashing.
   static const double _kFallbackWidth = 172;
 
-  static double gridCardHeight(double screenWidth) {
-    final cellWidth =
-        (screenWidth - MeatvoSpacing.md * 2 - MeatvoSpacing.sm) / 2;
-    // Extra headroom for 2-line titles, unit row, price row, and ADD CTA.
-    return (cellWidth * 1.72).clamp(288.0, 328.0);
+  /// Fixed body height below the 1:1 image: name + unit + price + CTA + padding.
+  static const double _kBodyHeight = 124;
+
+  static double gridCellWidth(double screenWidth) {
+    return (screenWidth - MeatvoSpacing.md * 2 - MeatvoSpacing.sm) / 2;
   }
+
+  static double gridCardHeight(double screenWidth) {
+    final cellWidth = gridCellWidth(screenWidth);
+    return cellWidth + _kBodyHeight;
+  }
+
+  /// Height for fixed-width carousel rails (e.g. home horizontal sections).
+  static double carouselCardHeight(double cardWidth) =>
+      cardWidth + _kBodyHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -153,9 +166,15 @@ class MeatvoProductCard extends StatelessWidget {
         final width = (constraints.hasBoundedWidth && rawW.isFinite && rawW > 0)
             ? rawW
             : _kFallbackWidth;
-        final imageHeight = layout == MeatvoProductCardLayout.carousel
-            ? width * 0.74
-            : width * 0.7;
+
+        final discount = discountPercent;
+        final orig = originalPrice;
+        final resolvedDiscount = (discount != null && discount >= 1 && discount < 100)
+            ? discount
+            : (orig != null && orig > displayPrice + 0.01)
+                ? ((orig - displayPrice) / orig * 100).clamp(1, 99).toDouble()
+                : null;
+        final showDiscountBadge = resolvedDiscount != null;
 
         return SizedBox(
           // SEAL the width — every child below now lays out inside finite
@@ -177,111 +196,79 @@ class MeatvoProductCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SizedBox(
-                      height: imageHeight,
+                    AspectRatio(
+                      aspectRatio: 1,
                       child: _ImageBlock(
                         imageUrl: product.primaryImageUrl,
-                        showFresh:
-                            showFreshBadge && inStock && badgeLabel == null,
-                        badgeLabel: badgeLabel,
+                        discountPercent: resolvedDiscount,
+                        showFresh: showFreshBadge && inStock && badgeLabel == null,
+                        badgeLabel: showDiscountBadge ? null : badgeLabel,
                         badgeVariant: badgeVariant,
                         inStock: inStock,
-                      ),
-                    ),
-                    // Body — Flexible (not Expanded). Lets the Column shrink
-                    // when the parent height is tight (small phones, landscape,
-                    // large system font scaling) instead of overflowing.
-                    Flexible(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          mv.spacing.md,
-                          mv.spacing.sm,
-                          mv.spacing.md,
-                          mv.spacing.xs,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Title — Flexible so it can shrink without
-                            // overflowing if the user has large system font
-                            // scaling enabled.
-                            Flexible(
-                              child: Text(
-                                product.name,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                softWrap: true,
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleSmall
-                                    ?.copyWith(
-                                      color: mv.textPrimary,
-                                      fontWeight: FontWeight.w700,
-                                      height: 1.25,
-                                      letterSpacing: -0.2,
-                                    ),
-                              ),
-                            ),
-                            SizedBox(height: mv.spacing.xxs),
-                            Text(
-                              displayUnit,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              softWrap: false,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(
-                                    color: mv.textSecondary,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                            ),
-                            SizedBox(height: mv.spacing.xs),
-                            // PriceRow internally wraps in FittedBox(scaleDown)
-                            // so even very long "₹9,999 ₹12,999 25% off"
-                            // combinations never overflow the card width.
-                            PriceRow(
-                              price: displayPrice,
-                              originalPrice: originalPrice,
-                              discountPercent: discountPercent,
-                              compact:
-                                  layout == MeatvoProductCardLayout.carousel,
-                            ),
-                          ],
-                        ),
+                        orderingPaused: orderingPaused,
                       ),
                     ),
                     Padding(
-                      padding: EdgeInsets.fromLTRB(
-                        mv.spacing.md,
-                        0,
-                        mv.spacing.md,
-                        mv.spacing.md,
-                      ),
-                      // The CTA row sits right-aligned. We DELIBERATELY size
-                      // the CTA box to a fixed 116×40 (`_kCtaWidth × ctaHeight`)
-                      // and align it to the trailing edge so the
-                      // AnimatedSwitcher inside `_CartCta` always paints into
-                      // a deterministic box. This is the SINGLE most important
-                      // fix for the "blank catalog grid" bug — before this,
-                      // the switcher resized between the wider "ADD" pill and
-                      // the narrower stepper, marking the parent dirty
-                      // mid-frame ("_debugRelayoutBoundaryAlreadyMarkedNeedsLayout").
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: SizedBox(
-                          width: _kCtaWidth,
-                          height: ctaHeight,
-                          child: _CartCta(
-                            inStock: inStock,
-                            quantity: quantity,
-                            isBusy: isBusy,
-                            onAdd: onAdd,
-                            onIncrement: onIncrement,
-                            onDecrement: onDecrement,
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            product.name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: true,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: mv.textPrimary,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.25,
+                                  letterSpacing: -0.2,
+                                ),
                           ),
-                        ),
+                          const SizedBox(height: 2),
+                          Text(
+                            displayUnit,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            softWrap: false,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: mv.textMuted,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                          ),
+                          const SizedBox(height: 6),
+                          PriceRow(
+                            price: displayPrice,
+                            originalPrice: originalPrice,
+                            discountPercent: resolvedDiscount,
+                            compact: true,
+                            showDiscountText: !showDiscountBadge,
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: SizedBox(
+                              width: _kCtaWidth,
+                              height: ctaHeight,
+                              child: _CartCta(
+                                inStock: inStock,
+                                orderingPaused: orderingPaused,
+                                quantity: quantity,
+                                isBusy: isBusy,
+                                onAdd: onAdd,
+                                onIncrement: onIncrement,
+                                onDecrement: onDecrement,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -318,6 +305,7 @@ class MeatvoProductCard extends StatelessWidget {
 class _CartCta extends StatelessWidget {
   const _CartCta({
     required this.inStock,
+    required this.orderingPaused,
     required this.quantity,
     required this.isBusy,
     this.onAdd,
@@ -326,6 +314,7 @@ class _CartCta extends StatelessWidget {
   });
 
   final bool inStock;
+  final bool orderingPaused;
   final int quantity;
   final bool isBusy;
   final VoidCallback? onAdd;
@@ -340,7 +329,7 @@ class _CartCta extends StatelessWidget {
       // Hand-rolled "Sold out" pill. We deliberately do NOT use
       // `OutlinedButton` here — Material's button infra wraps the label
       // in a `_RenderInputPadding` to enforce a 48×48 min tap target,
-      // which throws "RenderBox was not laid out" when our 40-px tall
+      // which throws "RenderBox was not laid out" when our 32-px tall
       // CTA box is tighter than the min tap target.
       return DecoratedBox(
         decoration: BoxDecoration(
@@ -363,13 +352,47 @@ class _CartCta extends StatelessWidget {
       );
     }
 
+    if (orderingPaused && quantity == 0) {
+      return Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onAdd == null
+              ? null
+              : () {
+                  HapticFeedback.lightImpact();
+                  onAdd?.call();
+                },
+          borderRadius: BorderRadius.circular(mv.radii.sm),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: mv.surfaceCard,
+              border: Border.all(color: mv.border),
+              borderRadius: BorderRadius.circular(mv.radii.sm),
+            ),
+            child: Center(
+              child: Text(
+                'Closed',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                softWrap: false,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: mv.textMuted,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
     return AnimatedSwitcher(
       duration: MeatvoDurations.normal,
       switchInCurve: MeatvoDurations.curve,
       switchOutCurve: MeatvoDurations.curve,
       // CRITICAL: see the class-level comment above. `StackFit.expand`
       // forces TIGHT constraints to every non-positioned child so the
-      // outgoing + incoming children share the exact same 116×40 box.
+      // outgoing + incoming children share the exact same 112×32 box.
       // Without this, the catalog grid went blank on every category open.
       layoutBuilder: (currentChild, previousChildren) {
         return Stack(
@@ -438,7 +461,7 @@ class _StepperSlot extends StatelessWidget {
       child: QuantityStepper(
         quantity: quantity,
         isBusy: isBusy,
-        height: 36,
+        height: MeatvoProductCard.ctaHeight,
         expanded: false,
         onIncrement: onIncrement,
         onDecrement: onDecrement,
@@ -469,53 +492,48 @@ class _AddButton extends StatelessWidget {
     final localOnAdd = onAdd;
     final canTap = !isBusy && localOnAdd != null;
 
-    return ScaleTap(
-      onTap: canTap
-          ? () {
-              HapticFeedback.lightImpact();
-              // `?.call()` not `localOnAdd!()` — if the parent rebuilds
-              // with onAdd=null between scheduling and invocation, the
-              // tap is silently swallowed instead of throwing.
-              localOnAdd.call();
-            }
-          : null,
-      enabled: canTap,
-      child: DecoratedBox(
-        // No explicit SizedBox needed — `Positioned.fill` from the parent
-        // Stack already provides tight 116×40 constraints. DecoratedBox
-        // happily renders into whatever box it is given.
-        decoration: BoxDecoration(
-          color: mv.brandPrimary,
-          borderRadius: BorderRadius.circular(mv.radii.sm),
-          boxShadow: [
-            BoxShadow(
-              color: mv.brandPrimary.withValues(alpha: 0.28),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Center(
-          child: isBusy
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
-                  ),
-                )
-              : Text(
-                  'ADD',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  softWrap: false,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 1.2,
-                      ),
+    return Align(
+      alignment: Alignment.centerRight,
+      child: ScaleTap(
+        onTap: canTap
+            ? () {
+                HapticFeedback.lightImpact();
+                localOnAdd.call();
+              }
+            : null,
+        enabled: canTap,
+        child: SizedBox(
+          width: MeatvoProductCard._kAddPillWidth,
+          height: MeatvoProductCard.ctaHeight,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: mv.brandPrimary,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: mv.brandPrimary.withValues(alpha: 0.22),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
                 ),
+              ],
+            ),
+            child: Center(
+              child: isBusy
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Icon(
+                      Icons.add_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+            ),
+          ),
         ),
       ),
     );
@@ -529,8 +547,8 @@ class _AddButton extends StatelessWidget {
 /// code did `imageUrl!.isEmpty` which threw "Null check operator used on
 /// a null value" the moment a product without an image entered the grid.
 Widget _buildImage(String? imageUrl) {
-  // Capture into a local so smart-cast `safeUrl.isEmpty` works without `!`.
-  final safeUrl = imageUrl ?? '';
+  final resolved = MediaUrlResolver.resolve(imageUrl);
+  final safeUrl = resolved ?? '';
   if (safeUrl.isEmpty) {
     return Container(
       color: MeatvoColors.surfaceMuted,
@@ -577,16 +595,20 @@ class _ImageBlock extends StatelessWidget {
   const _ImageBlock({
     required this.imageUrl,
     required this.inStock,
+    this.orderingPaused = false,
+    this.discountPercent,
     this.showFresh = false,
     this.badgeLabel,
     this.badgeVariant = MeatvoBadgeVariant.popular,
   });
 
   final String? imageUrl;
+  final double? discountPercent;
   final bool showFresh;
   final String? badgeLabel;
   final MeatvoBadgeVariant badgeVariant;
   final bool inStock;
+  final bool orderingPaused;
 
   @override
   Widget build(BuildContext context) {
@@ -595,11 +617,28 @@ class _ImageBlock extends StatelessWidget {
     // Local capture for smart-cast — no `badge!` bang anywhere.
     final badge = badgeLabel;
     final showBadge = badge != null && badge.isNotEmpty;
+    final discount = discountPercent;
+    final showDiscount =
+        discount != null && discount >= 1 && discount < 100;
+    final shouldDimImage = !inStock || orderingPaused;
 
     return Stack(
       fit: StackFit.expand,
       children: [
-        _buildImage(imageUrl),
+        ColorFiltered(
+          colorFilter: shouldDimImage
+              ? const ColorFilter.matrix(<double>[
+                  0.2126, 0.7152, 0.0722, 0, 0,
+                  0.2126, 0.7152, 0.0722, 0, 0,
+                  0.2126, 0.7152, 0.0722, 0, 0,
+                  0, 0, 0, 1, 0,
+                ])
+              : const ColorFilter.mode(Colors.transparent, BlendMode.dst),
+          child: Opacity(
+            opacity: shouldDimImage ? 0.75 : 1,
+            child: _buildImage(imageUrl),
+          ),
+        ),
         // Subtle gradient overlay so the badge stays readable on bright
         // product photos.
         Positioned(
@@ -620,7 +659,16 @@ class _ImageBlock extends StatelessWidget {
             ),
           ),
         ),
-        if (showBadge)
+        if (showDiscount)
+          Positioned(
+            top: mv.spacing.sm,
+            left: mv.spacing.sm,
+            child: MeatvoBadge(
+              label: '${discount.round()}% OFF',
+              variant: MeatvoBadgeVariant.discount,
+            ),
+          )
+        else if (showBadge)
           Positioned(
             top: mv.spacing.sm,
             left: mv.spacing.sm,
@@ -638,12 +686,36 @@ class _ImageBlock extends StatelessWidget {
               variant: MeatvoBadgeVariant.fresh,
             ),
           ),
+        if (showDiscount && showFresh)
+          Positioned(
+            top: mv.spacing.sm,
+            right: mv.spacing.sm,
+            child: const MeatvoBadge(
+              label: 'FRESH',
+              variant: MeatvoBadgeVariant.fresh,
+            ),
+          ),
         if (!inStock)
           Container(
             color: Colors.black.withValues(alpha: 0.45),
             alignment: Alignment.center,
             child: Text(
               'Out of stock',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              softWrap: false,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          )
+        else if (orderingPaused)
+          Container(
+            color: Colors.black.withValues(alpha: 0.35),
+            alignment: Alignment.center,
+            child: Text(
+              'Ordering paused',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               softWrap: false,

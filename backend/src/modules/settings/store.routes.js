@@ -6,10 +6,11 @@
 const express = require('express');
 const router = express.Router();
 
-const { getStoreStatus, checkDelivery } = require('../settings/settings.controller');
+const { getStoreStatus, checkDelivery, estimateDelivery } = require('../settings/settings.controller');
 
 // Public routes — no auth required
 router.get('/status', getStoreStatus);
 router.post('/check-delivery', checkDelivery);
+router.post('/estimate-delivery', estimateDelivery);
 
 module.exports = router;

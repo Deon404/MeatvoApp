@@ -5,10 +5,11 @@ import '../../services/address_service.dart';
 import '../../services/delivery_service.dart';
 import '../../services/maps_service.dart';
 import '../../core/constants/app_constants.dart';
+import '../../utils/address_display_util.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/location/location_flow_helper.dart';
 import '../../widgets/location/inline_location_map_panel.dart';
-import '../../widgets/location/location_search_sheet.dart';
+import '../../screens/address/search_locality_screen.dart';
 import '../../widgets/maps/map_picker_widget.dart';
 
 /// Address Form Screen - Add or Edit address
@@ -76,21 +77,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
         
         // If initial address data provided, populate fields
         if (widget.initialAddress != null) {
-          final address = widget.initialAddress!;
-          final placeName = address['place_name'] as String? ?? '';
-          final addressLine1 = address['address_line1'] as String? ?? '';
-          final combinedAddress = placeName.isNotEmpty && addressLine1.isNotEmpty
-              ? '$placeName, $addressLine1'
-              : placeName.isNotEmpty
-                  ? placeName
-                  : addressLine1;
-          
-          _addressLine1Controller.text = combinedAddress.isNotEmpty ? combinedAddress : '';
-          _addressLine2Controller.text = address['address_line2'] as String? ?? '';
-          _landmarkController.text = address['landmark'] as String? ?? '';
-          _cityController.text = address['city'] as String? ?? '';
-          _stateController.text = address['state'] as String? ?? '';
-          _pincodeController.text = address['pincode'] as String? ?? '';
+          _applyGeocodedFields(widget.initialAddress!, mutateState: false);
         } else {
           // Auto-fetch address from coordinates if not provided
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -117,26 +104,23 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
 
   String _saveErrorMessage(Object error) {
     final raw = error.toString().replaceFirst('Exception:', '').trim();
-    final lower = raw.toLowerCase();
-    if (lower.contains('server tak') ||
-        lower.contains('meatvo_api_root') ||
-        lower.contains('cannot reach') ||
-        lower.contains('connection refused') ||
-        lower.contains('connection timeout') ||
-        lower.contains('connection error') ||
-        lower.contains('connection')) {
-      return BackendResolver.connectionHelpMessage();
-    }
-    if (lower.contains('network')) {
-      return BackendResolver.connectionHelpMessage();
+    final withoutPrefix = raw
+        .replaceFirst(RegExp(r'^Failed to (add|update) address:\s*'), '')
+        .trim();
+    if (BackendResolver.isConnectionError(withoutPrefix) ||
+        BackendResolver.isConnectionError(raw)) {
+      return BackendResolver.connectionUserMessage();
     }
     if (raw.isEmpty) {
       return 'Could not save address. Please try again.';
     }
-    return raw.startsWith('Failed to add address:') ||
-            raw.startsWith('Failed to update address:')
-        ? raw
-        : 'Could not save address. $raw';
+    if (raw.startsWith('Failed to add address:') ||
+        raw.startsWith('Failed to update address:')) {
+      return withoutPrefix.isNotEmpty
+          ? withoutPrefix
+          : 'Could not save address. Please try again.';
+    }
+    return 'Could not save address. $raw';
   }
 
   Future<void> _saveAddress() async {
@@ -166,21 +150,32 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
       _isSaving = true;
     });
 
-    var saved = false;
+    AddressModel? savedAddress;
     try {
       await _deliveryService.ensureDeliveryAvailable(
         latitude: lat,
         longitude: lng,
       );
 
+      final flat = cleanAddressPart(_addressLine1Controller.text.trim());
+      final street = cleanAddressPart(_addressLine2Controller.text.trim());
+      final city = _cityController.text.trim();
+      final line1 = ensureAddressLine1MinLength(
+        flatOrPrimary: flat,
+        street: street.isEmpty ? null : street,
+        locality: city.isEmpty ? null : city,
+      );
+      final line2 = secondaryAddressLineIfDistinct(
+        line1,
+        street.isEmpty ? null : street,
+      );
+
       final address = AddressModel(
         id: widget.address?.id ?? '',
         userId: widget.address?.userId ?? '',
         label: _selectedLabel,
-        addressLine1: _addressLine1Controller.text.trim(),
-        addressLine2: _addressLine2Controller.text.trim().isEmpty
-            ? null
-            : _addressLine2Controller.text.trim(),
+        addressLine1: line1,
+        addressLine2: line2,
         landmark: _landmarkController.text.trim().isEmpty
             ? null
             : _landmarkController.text.trim(),
@@ -198,15 +193,12 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
         updatedAt: widget.address?.updatedAt,
       );
 
-      if (widget.address != null) {
-        await _addressService.updateAddress(address);
-      } else {
-        await _addressService.addAddress(address);
-      }
+      savedAddress = widget.address != null
+          ? await _addressService.updateAddress(address)
+          : await _addressService.addAddress(address);
 
-      saved = true;
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(savedAddress);
     } on DeliveryException catch (e) {
       if (!context.mounted) return;
       messenger?.showSnackBar(
@@ -225,7 +217,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
         ),
       );
     } finally {
-      if (mounted && !saved) {
+      if (mounted && savedAddress == null) {
         setState(() {
           _isSaving = false;
         });
@@ -234,7 +226,9 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
   }
 
   Future<void> _openLocationSearch() async {
-    final result = await LocationSearchSheet.show(context);
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(builder: (_) => const SearchLocalityScreen()),
+    );
     if (result == null || !mounted) return;
 
     final lat = (result['latitude'] as num?)?.toDouble();
@@ -250,7 +244,32 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
 
     final formatted = result['formatted_address'] as String?;
     if (formatted != null && formatted.isNotEmpty) {
-      _addressLine1Controller.text = formatted;
+      _addressLine2Controller.text = stripPlusCode(formatted);
+    }
+  }
+
+  void _applyGeocodedFields(
+    Map<String, dynamic> address, {
+    bool mutateState = true,
+  }) {
+    final fields = GeocodedAddressFields.fromMap(address);
+
+    void apply() {
+      _addressLine2Controller.text = fields.street;
+      _landmarkController.text = fields.landmark ?? _landmarkController.text;
+      _cityController.text =
+          fields.locality.isNotEmpty ? fields.locality : _cityController.text;
+      _stateController.text =
+          fields.state.isNotEmpty ? fields.state : _stateController.text;
+      _pincodeController.text = fields.pincode.isNotEmpty
+          ? fields.pincode
+          : _pincodeController.text;
+    }
+
+    if (mutateState) {
+      setState(apply);
+    } else {
+      apply();
     }
   }
 
@@ -260,28 +279,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
   }
 
   void _applyAddressFields(Map<String, dynamic> address) {
-    final placeName = address['place_name'] as String? ?? '';
-    final addressLine1 = address['address_line1'] as String? ?? '';
-    final combinedAddress = placeName.isNotEmpty && addressLine1.isNotEmpty
-        ? '$placeName, $addressLine1'
-        : placeName.isNotEmpty
-            ? placeName
-            : addressLine1;
-
-    setState(() {
-      if (combinedAddress.isNotEmpty) {
-        _addressLine1Controller.text = combinedAddress;
-      }
-      _addressLine2Controller.text =
-          address['address_line2'] as String? ?? _addressLine2Controller.text;
-      _landmarkController.text =
-          address['landmark'] as String? ?? _landmarkController.text;
-      _cityController.text = address['city'] as String? ?? _cityController.text;
-      _stateController.text =
-          address['state'] as String? ?? _stateController.text;
-      _pincodeController.text =
-          address['pincode'] as String? ?? _pincodeController.text;
-    });
+    _applyGeocodedFields(address);
   }
 
   Future<void> _openMapPicker() async {
@@ -289,15 +287,8 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => MapPickerWidget(
-          initialLatitude: widget.address?.latitude,
-          initialLongitude: widget.address?.longitude,
-          onLocationSelected: (latitude, longitude, address) {
-            Navigator.pop(context, {
-              'latitude': latitude,
-              'longitude': longitude,
-              'address': address,
-            });
-          },
+          initialLatitude: _selectedLatitude ?? widget.address?.latitude,
+          initialLongitude: _selectedLongitude ?? widget.address?.longitude,
         ),
       ),
     );
@@ -312,22 +303,8 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
           setState(() {
             _selectedLatitude = latitude;
             _selectedLongitude = longitude;
-            // Combine place name with address line 1 if place name exists
-            final placeName = address['place_name'] as String? ?? '';
-            final addressLine1 = address['address_line1'] as String? ?? '';
-            final combinedAddress = placeName.isNotEmpty && addressLine1.isNotEmpty
-                ? '$placeName, $addressLine1'
-                : placeName.isNotEmpty
-                    ? placeName
-                    : addressLine1;
-            _addressLine1Controller.text = combinedAddress;
-            _addressLine2Controller.text =
-                address['address_line2'] as String? ?? '';
-            _landmarkController.text = address['landmark'] as String? ?? '';
-            _cityController.text = address['city'] as String? ?? '';
-            _stateController.text = address['state'] as String? ?? '';
-            _pincodeController.text = address['pincode'] as String? ?? '';
           });
+          _applyGeocodedFields(address);
         } else {
           await _applyCoordinates(latitude: latitude, longitude: longitude);
         }
@@ -378,30 +355,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
     );
 
     if (address != null && mounted) {
-      setState(() {
-        // Combine place name with address line 1 if place name exists
-        final placeName = address['place_name'] as String? ?? '';
-        final addressLine1 = address['address_line1'] as String? ?? '';
-        final combinedAddress = placeName.isNotEmpty && addressLine1.isNotEmpty
-            ? '$placeName, $addressLine1'
-            : placeName.isNotEmpty
-                ? placeName
-                : addressLine1;
-        
-        _addressLine1Controller.text = combinedAddress.isNotEmpty
-            ? combinedAddress
-            : _addressLine1Controller.text;
-        _addressLine2Controller.text =
-            address['address_line2'] as String? ?? _addressLine2Controller.text;
-        _landmarkController.text =
-            address['landmark'] as String? ?? _landmarkController.text;
-        _cityController.text =
-            address['city'] as String? ?? _cityController.text;
-        _stateController.text =
-            address['state'] as String? ?? _stateController.text;
-        _pincodeController.text =
-            address['pincode'] as String? ?? _pincodeController.text;
-      });
+      _applyGeocodedFields(address);
     }
   }
 
@@ -455,18 +409,18 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
           children: [
             // Map Section at Top
             Expanded(
-              flex: compact ? 1 : 2,
+              flex: 1,
               child: Column(
                 children: [
                   Expanded(
-                    child: InlineLocationMapPanel(
-                      latitude: _selectedLatitude,
-                      longitude: _selectedLongitude,
-                      onLatitudeChanged: (lat) =>
-                          setState(() => _selectedLatitude = lat),
-                      onLongitudeChanged: (lng) =>
-                          setState(() => _selectedLongitude = lng),
-                      onAddressResolved: _applyResolvedAddress,
+                    child: RepaintBoundary(
+                      child: InlineLocationMapPanel(
+                        latitude: _selectedLatitude,
+                        longitude: _selectedLongitude,
+                        onLatitudeChanged: (lat) => _selectedLatitude = lat,
+                        onLongitudeChanged: (lng) => _selectedLongitude = lng,
+                        onAddressResolved: _applyResolvedAddress,
+                      ),
                     ),
                   ),
                   TextButton.icon(
@@ -491,6 +445,11 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                   ),
                 ),
                 child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  keyboardDismissBehavior:
+                      ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: EdgeInsets.fromLTRB(
                     16,
                     16,
@@ -508,8 +467,10 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                           color: AppColors.textPrimary,
                         ),
                       ),
+                      const SizedBox(height: 16),
+                      _buildLabelSection(),
                       const SizedBox(height: 24),
-                      
+
                       // House/Flat No.
                       TextFormField(
                         controller: _addressLine1Controller,
@@ -633,9 +594,6 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                       ),
                       const SizedBox(height: 32),
 
-                      _buildLabelSection(),
-                      const SizedBox(height: 32),
-                      
                       // Save Address Button
                       SizedBox(
                         width: double.infinity,
@@ -726,7 +684,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
         decoration: BoxDecoration(
           color: isSelected
               ? AppColors.primary.withValues(alpha: 0.1)
-              : Colors.white,
+              : AppColors.surfaceMuted,
           border: Border.all(
             color: isSelected ? AppColors.primary : AppColors.divider,
             width: 2,
@@ -737,7 +695,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
           children: [
             Icon(
               icon,
-              color: isSelected ? AppColors.primary : AppColors.surface,
+              color: isSelected ? AppColors.primary : AppColors.textSecondary,
               size: 24,
             ),
             const SizedBox(height: 4),

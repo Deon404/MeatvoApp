@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../design_system/tokens/meatvo_durations.dart';
 import '../../theme/app_theme.dart';
 
@@ -23,27 +25,29 @@ class CheckoutSelectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
+
     return AnimatedContainer(
       duration: MeatvoDurations.normal,
       curve: MeatvoDurations.curve,
       decoration: BoxDecoration(
-        color: AppThemeColors.white,
-        borderRadius: BorderRadius.circular(AppRadius.radiusXl),
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.xl),
         border: Border.all(
           color: isSelected
-              ? AppThemeColors.primary
-              : AppThemeColors.border.withValues(alpha: 0.7),
+              ? mv.brandPrimary
+              : mv.border.withValues(alpha: 0.7),
           width: isSelected ? 1.5 : 1,
         ),
         boxShadow: isSelected
             ? [
                 BoxShadow(
-                  color: AppThemeColors.primary.withValues(alpha: 0.08),
+                  color: mv.brandPrimary.withValues(alpha: 0.08),
                   blurRadius: 16,
                   offset: const Offset(0, 4),
                 ),
               ]
-            : AppShadows.card,
+            : mv.shadowCard,
       ),
       child: Material(
         color: Colors.transparent,
@@ -54,13 +58,10 @@ class CheckoutSelectionCard extends StatelessWidget {
                   onTap!();
                 }
               : null,
-          borderRadius: BorderRadius.circular(AppRadius.radiusXl),
+          borderRadius: BorderRadius.circular(mv.radii.xl),
           child: Opacity(
             opacity: enabled ? 1 : 0.55,
-            child: Padding(
-              padding: padding,
-              child: child,
-            ),
+            child: Padding(padding: padding, child: child),
           ),
         ),
       ),
@@ -79,6 +80,8 @@ class CheckoutSelectionIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
+
     return AnimatedContainer(
       duration: MeatvoDurations.fast,
       curve: MeatvoDurations.curve,
@@ -87,17 +90,13 @@ class CheckoutSelectionIndicator extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: isSelected ? AppThemeColors.primary : AppThemeColors.textMuted,
+          color: isSelected ? mv.brandPrimary : mv.textMuted,
           width: 2,
         ),
-        color: isSelected ? AppThemeColors.primary : AppThemeColors.white,
+        color: isSelected ? mv.brandPrimary : mv.surfaceCard,
       ),
       child: isSelected
-          ? const Icon(
-              Icons.check_rounded,
-              size: 14,
-              color: AppThemeColors.white,
-            )
+          ? Icon(Icons.check_rounded, size: 14, color: MeatvoColors.white)
           : null,
     );
   }

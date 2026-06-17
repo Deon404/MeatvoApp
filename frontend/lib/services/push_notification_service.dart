@@ -1,16 +1,21 @@
 import 'dart:io';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../app_navigator_key.dart';
+import '../firebase_options.dart';
 import '../screens/orders/order_detail_screen.dart';
 import 'api_client.dart';
 import 'storage_service.dart';
 import 'notification_service.dart';
 
-/// Background message handler (must be top-level function)
+/// Background message handler (must be top-level function).
 @pragma('vm:entry-point')
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   debugPrint('📩 Background message: ${message.messageId}');
   debugPrint('Background data: ${message.data}');
 }
@@ -28,6 +33,12 @@ class PushNotificationService {
   
   String? _fcmToken;
   bool _isInitialized = false;
+  bool _tokenListenerAttached = false;
+
+  /// Must be called from [main] before [runApp] (Firebase requirement).
+  static void registerBackgroundHandler() {
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+  }
 
   static const _orderUpdatesChannel = AndroidNotificationChannel(
     'order_updates',
@@ -64,10 +75,10 @@ class PushNotificationService {
       // 2. Initialize local notifications
       await _initializeLocalNotifications();
 
-      // 3. Set up FCM background handler
-      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+      // 3. Ensure FCM auto-init is on (helps MIUI / delayed Play Services).
+      await _fcm.setAutoInitEnabled(true);
 
-      // 4. Get FCM token and send to backend
+      // 4. Get FCM token and send to backend (retries SERVICE_NOT_AVAILABLE).
       await _registerFCMToken();
 
       // 5. Handle foreground messages
@@ -83,8 +94,12 @@ class PushNotificationService {
       }
 
       _isInitialized = true;
-      debugPrint('✅ FCM Push notifications initialized successfully');
-      debugPrint('🔑 FCM Token: $_fcmToken');
+      debugPrint('✅ FCM push notification handlers ready');
+      if (_fcmToken != null) {
+        debugPrint('🔑 FCM token registered');
+      } else {
+        debugPrint('⚠️ FCM token pending — will retry on login or refresh');
+      }
     } catch (e, stackTrace) {
       debugPrint('❌ Error initializing push notifications: $e');
       debugPrint('Stack trace: $stackTrace');
@@ -145,28 +160,77 @@ class PushNotificationService {
     }
   }
 
+  /// Upload the current FCM token to the backend (requires auth).
+  /// Safe to call after login or on cold start with an existing session.
+  Future<void> syncTokenWithBackend() async {
+    try {
+      if (!_isInitialized) {
+        // Attempt lightweight init — permissions may still be denied.
+        await initialize();
+      }
+      _fcmToken ??= await _getTokenWithRetry(maxAttempts: 3);
+      _attachTokenRefreshListener();
+      if (_fcmToken == null) {
+        debugPrint('⚠️ No FCM token available to sync');
+        return;
+      }
+      await _sendTokenToBackend(_fcmToken!);
+    } catch (e) {
+      debugPrint('❌ Error syncing FCM token: $e');
+    }
+  }
+
+  /// Fetch FCM token with retries — SERVICE_NOT_AVAILABLE is common on MIUI
+  /// when Google Play Services is not ready at cold start.
+  Future<String?> _getTokenWithRetry({int maxAttempts = 5}) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final token = await _fcm.getToken();
+        if (token != null && token.isNotEmpty) return token;
+      } catch (e) {
+        lastError = e;
+        final msg = e.toString();
+        final retryable = msg.contains('SERVICE_NOT_AVAILABLE') ||
+            msg.contains('IOException') ||
+            msg.contains('unknown');
+        if (!retryable || attempt == maxAttempts) {
+          rethrow;
+        }
+        final delay = Duration(seconds: attempt * 2);
+        debugPrint(
+          '⏳ FCM token unavailable (attempt $attempt/$maxAttempts) — '
+          'retrying in ${delay.inSeconds}s',
+        );
+        await Future.delayed(delay);
+      }
+    }
+    if (lastError != null) throw lastError;
+    return null;
+  }
+
+  void _attachTokenRefreshListener() {
+    if (_tokenListenerAttached) return;
+    _tokenListenerAttached = true;
+    _fcm.onTokenRefresh.listen((newToken) {
+      if (kDebugMode) debugPrint('🔄 FCM token refreshed');
+      _fcmToken = newToken;
+      _sendTokenToBackend(newToken);
+    });
+  }
+
   /// Register FCM token and send to backend
   Future<void> _registerFCMToken() async {
     try {
-      // Get FCM token
-      _fcmToken = await _fcm.getToken();
-      
+      _fcmToken = await _getTokenWithRetry();
+
       if (_fcmToken == null) {
         debugPrint('⚠️ Failed to get FCM token');
         return;
       }
 
-      debugPrint('🔑 FCM Token obtained: $_fcmToken');
-
-      // Send token to backend
+      _attachTokenRefreshListener();
       await _sendTokenToBackend(_fcmToken!);
-
-      // Listen for token refresh
-      _fcm.onTokenRefresh.listen((newToken) {
-        debugPrint('🔄 FCM Token refreshed: $newToken');
-        _fcmToken = newToken;
-        _sendTokenToBackend(newToken);
-      });
     } catch (e) {
       debugPrint('❌ Error registering FCM token: $e');
     }
@@ -342,6 +406,52 @@ class PushNotificationService {
     } catch (e) {
       debugPrint('❌ Error refreshing FCM token: $e');
     }
+  }
+
+  static const int _ongoingTrackingNotificationId = 9001;
+
+  /// Android ongoing notification for active order tracking.
+  Future<void> showOngoingTrackingNotification({
+    required String orderId,
+    required String statusLabel,
+    String? etaLabel,
+  }) async {
+    if (!Platform.isAndroid) return;
+    if (!_isInitialized) {
+      try {
+        await initialize();
+      } catch (_) {
+        return;
+      }
+    }
+
+    final body = etaLabel != null && etaLabel.isNotEmpty
+        ? '$statusLabel · $etaLabel'
+        : statusLabel;
+
+    await _localNotifications.show(
+      _ongoingTrackingNotificationId,
+      'Meatvo order update',
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _orderUpdatesChannel.id,
+          _orderUpdatesChannel.name,
+          channelDescription: _orderUpdatesChannel.description,
+          importance: Importance.low,
+          priority: Priority.low,
+          ongoing: true,
+          onlyAlertOnce: true,
+          showWhen: false,
+        ),
+        iOS: const DarwinNotificationDetails(),
+      ),
+      payload: 'order_status:$orderId',
+    );
+  }
+
+  Future<void> dismissOngoingTrackingNotification() async {
+    await _localNotifications.cancel(_ongoingTrackingNotificationId);
   }
 }
 

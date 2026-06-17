@@ -3,11 +3,53 @@ const redis = require('../db/redis');
 const { haversineDistanceKm } = require('../utils/distance.util');
 const { addressToText } = require('../utils/address');
 const { logger } = require('../utils/logger');
+const { tryJoinBatchWindow, scheduleBatchAssignment } = require('./order-batcher');
+const { ensureDeliveryOTP } = require('./deliveryProof.service');
 
 const ATTEMPT_TTL_SECONDS = 24 * 60 * 60;
 const MAX_ASSIGNMENT_ATTEMPTS = 3;
-const ASSIGNMENT_TIMEOUT_MS = 30_000;
+const ASSIGNMENT_TIMEOUT_MS = Number(process.env.ASSIGNMENT_TIMEOUT_MS || 10_000);
+const SMALL_FLEET_THRESHOLD = Number(process.env.SMALL_FLEET_THRESHOLD || 3);
 const pendingAssignmentTimeouts = new Map();
+
+const assignableOrderStatuses = new Set(['PACKED']);
+const activeAssignmentStatuses = new Set(['ASSIGNED', 'ACCEPTED', 'PICKED']);
+
+const persistPartnerAssignment = async (orderId, partnerId) => {
+  await withTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at)
+       VALUES ($1, $2, 'ASSIGNED', NOW())
+       ON CONFLICT (order_id)
+       DO UPDATE SET delivery_partner_id = EXCLUDED.delivery_partner_id, status = 'ASSIGNED', assigned_at = NOW()`,
+      [orderId, partnerId]
+    );
+  });
+};
+
+const getFirstApprovedPartner = async (excludePartnerId = null) => {
+  const { rows } = await query(
+    `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, u.name, u.phone
+     FROM delivery_partners dp
+     JOIN users u ON u.id = dp.user_id
+     WHERE dp.approved = TRUE
+     ORDER BY dp.is_online DESC, dp.id ASC`
+  );
+
+  for (const row of rows) {
+    if (excludePartnerId && Number(row.id) === Number(excludePartnerId)) continue;
+    return {
+      id: Number(row.id),
+      userId: Number(row.user_id),
+      name: row.name || '',
+      phone: row.phone || '',
+      current_lat: row.current_lat,
+      current_lng: row.current_lng,
+      distanceKm: 0,
+    };
+  }
+  return null;
+};
 
 const getDeliveryTarget = async (order) => {
   const rawAddress = order?.address;
@@ -91,8 +133,7 @@ const getEligiblePartners = async (order, maxDistanceKm = 5, excludePartnerId = 
      FROM delivery_partners dp
      JOIN users u ON u.id = dp.user_id
      WHERE dp.is_online = TRUE
-       AND dp.approved = TRUE
-       AND u.role = 'delivery'`
+       AND dp.approved = TRUE`
   );
 
   const filtered = [];
@@ -222,6 +263,172 @@ const buildPartnerAssignmentPayload = (order, partner) => {
   };
 };
 
+const getStoreLocation = async () => {
+  try {
+    const { rows } = await query(
+      `SELECT center_lat, center_lng
+       FROM store_settings
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    );
+    return {
+      lat: Number(rows[0]?.center_lat || 0),
+      lng: Number(rows[0]?.center_lng || 0),
+    };
+  } catch {
+    return { lat: 0, lng: 0 };
+  }
+};
+
+const emitOrderAutoAccepted = (io, order, partner) => {
+  if (!io || !order || !partner) return;
+  const payload = {
+    orderId: Number(order.id),
+    autoAccepted: true,
+    reason: 'nearest_store_rider',
+    partner: {
+      id: Number(partner.id),
+      name: partner.name || '',
+      phone: partner.phone || '',
+    },
+    timestamp: new Date().toISOString(),
+  };
+  const userId = Number(partner.userId);
+  if (userId) {
+    io.to(`user:${userId}`).emit('order:auto_accepted', payload);
+    io.to(`delivery_${userId}`).emit('order:auto_accepted', payload);
+  }
+};
+
+/**
+ * After popup timeout: auto-accept order for the online rider nearest to store.
+ */
+const autoAcceptNearestStoreRider = async ({
+  orderId,
+  io,
+  previousPartnerId = null,
+  previousPartnerUserId = null,
+}) => {
+  const { rows: orderRows } = await query(
+    `SELECT id, customer_id, status, address, total_amount, payment_mode
+     FROM orders WHERE id = $1`,
+    [orderId]
+  );
+  const order = orderRows[0];
+  if (!order) return { autoAccepted: false, reason: 'order_not_found' };
+  if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
+    return { autoAccepted: false, reason: 'order_not_assignable' };
+  }
+
+  const { rows: assignmentRows } = await query(
+    `SELECT status, delivery_partner_id FROM order_assignments WHERE order_id = $1`,
+    [orderId]
+  );
+  const assignment = assignmentRows[0];
+  if (!assignment || assignment.status !== 'ASSIGNED') {
+    return { autoAccepted: false, reason: 'not_pending_acceptance' };
+  }
+
+  const store = await getStoreLocation();
+  if (!store.lat || !store.lng) {
+    return { autoAccepted: false, reason: 'no_store_location' };
+  }
+
+  const { rows: riders } = await query(
+    `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, u.name, u.phone
+     FROM delivery_partners dp
+     JOIN users u ON u.id = dp.user_id
+     WHERE dp.is_online = TRUE
+       AND dp.approved = TRUE`
+  );
+
+  let nearest = null;
+  let nearestKm = Infinity;
+  for (const rider of riders) {
+    let plat = Number(rider.current_lat);
+    let plng = Number(rider.current_lng);
+    if (!Number.isFinite(plat) || !Number.isFinite(plng)) {
+      plat = store.lat;
+      plng = store.lng;
+    }
+    const km = haversineDistanceKm(plat, plng, store.lat, store.lng);
+    if (km < nearestKm) {
+      nearestKm = km;
+      nearest = {
+        id: Number(rider.id),
+        userId: Number(rider.user_id),
+        name: rider.name || '',
+        phone: rider.phone || '',
+        current_lat: plat,
+        current_lng: plng,
+        distanceKm: km,
+      };
+    }
+  }
+
+  if (!nearest) {
+    return { autoAccepted: false, reason: 'no_online_riders' };
+  }
+
+  await withTransaction(async (client) => {
+    const { rowCount } = await client.query(
+      `UPDATE order_assignments
+       SET delivery_partner_id = $1, status = 'ACCEPTED', updated_at = NOW()
+       WHERE order_id = $2 AND status = 'ASSIGNED'`,
+      [nearest.id, orderId]
+    );
+    if (!rowCount) {
+      const err = new Error('Assignment no longer pending');
+      err.code = 'NOT_PENDING';
+      throw err;
+    }
+    await client.query(
+      `UPDATE orders SET status = 'OUT_FOR_DELIVERY', updated_at = NOW() WHERE id = $1`,
+      [orderId]
+    );
+  });
+
+  clearAssignmentTimeout(orderId);
+
+  const previousId = Number(previousPartnerId ?? assignment.delivery_partner_id);
+  if (previousId && previousId !== nearest.id && previousPartnerUserId) {
+    emitAssignmentCancelled(io, orderId, previousPartnerUserId, 'auto_reassigned');
+  } else if (previousPartnerUserId && previousId === nearest.id) {
+    emitAssignmentCancelled(io, orderId, previousPartnerUserId, 'timeout');
+  }
+
+  emitOrderAutoAccepted(io, order, nearest);
+  emitCustomerPartnerAssigned(io, order, nearest);
+
+  ensureDeliveryOTP(orderId).catch(() => {});
+
+  if (io) {
+    io.to('admin_room').emit('order:updated', {
+      orderId: Number(orderId),
+      status: 'OUT_FOR_DELIVERY',
+      autoAccepted: true,
+      updatedAt: new Date().toISOString(),
+    });
+    if (order.customer_id) {
+      const statusPayload = {
+        orderId: Number(orderId),
+        status: 'OUT_FOR_DELIVERY',
+        updatedAt: new Date().toISOString(),
+      };
+      io.to(`customer_${Number(order.customer_id)}`).emit('order:status_updated', statusPayload);
+      io.to(`customer_${Number(order.customer_id)}`).emit('order:status_update', statusPayload);
+    }
+  }
+
+  logger.info('order_auto_accepted_nearest_store', {
+    orderId,
+    partnerId: nearest.id,
+    distanceKm: Number(nearestKm.toFixed(2)),
+  });
+
+  return { autoAccepted: true, partner: nearest, distanceKm: nearestKm };
+};
+
 const clearAssignmentTimeout = (orderId) => {
   const key = String(orderId);
   const timeoutId = pendingAssignmentTimeouts.get(key);
@@ -236,6 +443,33 @@ const scheduleAssignmentTimeout = ({ orderId, partnerId, partnerUserId, io }) =>
 
   const timeoutId = setTimeout(async () => {
     pendingAssignmentTimeouts.delete(String(orderId));
+    try {
+      const { rows } = await query(
+        `SELECT status, delivery_partner_id
+         FROM order_assignments
+         WHERE order_id = $1`,
+        [orderId]
+      );
+      const assignment = rows[0];
+      if (!assignment || assignment.status !== 'ASSIGNED') return;
+      if (Number(assignment.delivery_partner_id) !== Number(partnerId)) return;
+
+      const autoResult = await autoAcceptNearestStoreRider({
+        orderId,
+        io,
+        previousPartnerId: partnerId,
+        previousPartnerUserId: partnerUserId,
+      });
+
+      if (autoResult.autoAccepted) return;
+    } catch (err) {
+      if (err.code === 'NOT_PENDING') return;
+      logger.error('assignment_auto_accept_failed', {
+        orderId,
+        error: err.message,
+      });
+    }
+
     try {
       const { rows } = await query(
         `SELECT status, delivery_partner_id
@@ -324,6 +558,65 @@ const emitAssignmentSuccess = (io, order, partner) => {
   emitPartnerAssigned(io, order, partner);
 };
 
+const assignWithBatching = async ({
+  orderId,
+  selected,
+  io,
+  attempts,
+  tier,
+  distanceKm = 0,
+  score,
+}) => {
+  const onAssigned = (assignedOrderIds) => {
+    for (const assignedOrderId of assignedOrderIds) {
+      scheduleAssignmentTimeout({
+        orderId: assignedOrderId,
+        partnerId: selected.id,
+        partnerUserId: selected.userId,
+        io,
+      });
+    }
+  };
+
+  const result = await scheduleBatchAssignment({
+    triggerOrderId: orderId,
+    riderId: selected.id,
+    riderUserId: selected.userId,
+    io,
+    onAssigned,
+  });
+
+  if (result.immediate) {
+    if (!result.assignedOrderIds?.length) {
+      return { assigned: true, reason: 'already_assigned', attempts };
+    }
+
+    return {
+      assigned: true,
+      partner: selected,
+      attempts,
+      tier,
+      distanceKm,
+      score,
+      batchOrderIds: result.assignedOrderIds,
+      batchSize: result.assignedOrderIds.length,
+    };
+  }
+
+  return {
+    assigned: true,
+    partner: selected,
+    attempts,
+    tier,
+    distanceKm,
+    score,
+    batchPending: true,
+    batchAnchor: result.anchorOrderId,
+    batchWaitMs: result.waitMs,
+    batchJoined: Boolean(result.joined),
+  };
+};
+
 const emitRouteZoneAssigned = (io, { zoneId, riderUserId, riderId, orderIds, routeOrder }) => {
   if (!io || !riderUserId) return;
   const payload = {
@@ -359,15 +652,38 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
   }
 
   const { rows: orderRows } = await query(
-    `SELECT id, customer_id, status, address, total_amount, payment_mode, zone_id
+    `SELECT id, customer_id, status, address, total_amount, payment_mode
      FROM orders
      WHERE id = $1`,
     [orderId]
   );
   const order = orderRows[0];
   if (!order) return { assigned: false, reason: 'order_not_found', attempts };
-  if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
+  if (!assignableOrderStatuses.has(order.status)) {
     return { assigned: false, reason: 'order_not_assignable', attempts };
+  }
+
+  const { rows: existingAssignmentRows } = await query(
+    'SELECT status FROM order_assignments WHERE order_id = $1 LIMIT 1',
+    [orderId]
+  );
+  const existingAssignment = existingAssignmentRows[0];
+  if (
+    existingAssignment &&
+    activeAssignmentStatuses.has(existingAssignment.status)
+  ) {
+    return { assigned: true, reason: 'already_assigned', attempts };
+  }
+
+  const batchJoin = await tryJoinBatchWindow(orderId);
+  if (batchJoin) {
+    return {
+      assigned: true,
+      reason: 'batch_pending',
+      batchAnchor: batchJoin.anchorOrderId,
+      batchStatus: batchJoin.status,
+      attempts,
+    };
   }
 
   // Fallback tier system
@@ -389,34 +705,62 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
     }
   }
 
-  // Tier 4: Broadcast to all online riders if no one found
+  // Tier 4: Broadcast to all online riders if no one found in distance tiers
   if (!candidates.length) {
-    // Get all online riders regardless of distance
     const { rows } = await query(
       `SELECT dp.id, dp.user_id, u.name, u.phone
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
        WHERE dp.is_online = TRUE
-         AND dp.approved = TRUE
-         AND u.role = 'delivery'`
+         AND dp.approved = TRUE`
     );
 
     if (rows.length > 0) {
-      // Broadcast to all riders
+      // Startup / small fleet: auto-assign directly when only a few riders are online.
+      if (rows.length <= SMALL_FLEET_THRESHOLD) {
+        const selected = {
+          id: Number(rows[0].id),
+          userId: Number(rows[0].user_id),
+          name: rows[0].name || '',
+          phone: rows[0].phone || '',
+          distanceKm: 0,
+        };
+
+        return assignWithBatching({
+          orderId,
+          selected,
+          io,
+          attempts,
+          tier: 'small_fleet',
+          distanceKm: 0,
+        });
+      }
+
       const broadcastPayload = {
         orderId: Number(order.id),
         totalAmount: order.total_amount ? Number(order.total_amount) : undefined,
-        address: order.address,
+        amount: order.total_amount ? Number(order.total_amount) : undefined,
+        total_amount: order.total_amount ? Number(order.total_amount) : undefined,
+        total_price: order.total_amount ? Number(order.total_amount) : undefined,
+        address: addressToText(order.address),
+        customerAddress: addressToText(order.address),
+        delivery_address: addressToText(order.address),
         paymentMode: order.payment_mode,
         broadcast: true,
         timestamp: new Date().toISOString(),
       };
 
       if (io) {
+        for (const rider of rows) {
+          const riderUserId = Number(rider.user_id);
+          if (!Number.isFinite(riderUserId)) continue;
+          io.to(`user:${riderUserId}`).emit('order:assigned', broadcastPayload);
+          io.to(`delivery_${riderUserId}`).emit('order:assigned', broadcastPayload);
+          io.to(`user:${riderUserId}`).emit('order:broadcast', broadcastPayload);
+        }
         io.to('riders').emit('order:broadcast', broadcastPayload);
       }
 
-      // Also emit to admin
       if (io) {
         io.to('admin_room').emit('order:broadcast_sent', {
           orderId: Number(orderId),
@@ -425,33 +769,102 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
         });
       }
 
-      return { 
-        assigned: false, 
-        reason: 'broadcasted_to_all_riders', 
+      return {
+        assigned: false,
+        reason: 'broadcasted_to_all_riders',
         attempts,
-        riderCount: rows.length 
+        riderCount: rows.length,
       };
     }
 
-    // No riders available at all
+    // No online riders in broadcast tier — fallback to any approved partner
+    const fallbackPartner = await getFirstApprovedPartner(excludePartnerId);
+    if (fallbackPartner) {
+      return assignWithBatching({
+        orderId,
+        selected: fallbackPartner,
+        io,
+        attempts,
+        tier: 'fallback_approved',
+        distanceKm: 0,
+      });
+    }
+
     if (attempts >= MAX_ASSIGNMENT_ATTEMPTS) {
       emitAssignmentFailure(io, orderId, attempts);
     }
     return { assigned: false, reason: 'no_eligible_partners', attempts };
   }
 
-  // Assign to best candidate
   const selected = candidates[0];
-  await withTransaction(async (client) => {
-    await client.query(
-      `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at)
-       VALUES ($1, $2, 'ASSIGNED', NOW())
-       ON CONFLICT (order_id)
-       DO UPDATE SET delivery_partner_id = EXCLUDED.delivery_partner_id, status = 'ASSIGNED', assigned_at = NOW()`,
-      [orderId, selected.id]
-    );
+  return assignWithBatching({
+    orderId,
+    selected,
+    io,
+    attempts,
+    tier: usedTier,
+    distanceKm: selected.distanceKm,
+    score: selected.score,
   });
+};
 
+const retryAssignOrderToPartner = async ({
+  orderId,
+  io,
+  excludePartnerId = null,
+  resetAttempts = false,
+}) => {
+  if (resetAttempts) {
+    await redis.del(`assign:attempts:${orderId}`);
+  }
+  return assignOrderToPartner({ orderId, io, excludePartnerId });
+};
+
+const manualAssignOrderToPartner = async ({
+  orderId,
+  deliveryPartnerId,
+  io,
+}) => {
+  const partnerId = Number(deliveryPartnerId);
+  if (!Number.isFinite(partnerId) || partnerId <= 0) {
+    return { assigned: false, reason: 'invalid_partner_id' };
+  }
+
+  const { rows: orderRows } = await query(
+    `SELECT id, customer_id, status, address, total_amount, payment_mode
+     FROM orders
+     WHERE id = $1`,
+    [orderId]
+  );
+  const order = orderRows[0];
+  if (!order) return { assigned: false, reason: 'order_not_found' };
+  if (!assignableOrderStatuses.has(order.status)) {
+    return { assigned: false, reason: 'order_not_assignable' };
+  }
+
+  const { rows: partnerRows } = await query(
+    `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, dp.approved, u.name, u.phone
+     FROM delivery_partners dp
+     JOIN users u ON u.id = dp.user_id
+     WHERE dp.id = $1`,
+    [partnerId]
+  );
+  const partnerRow = partnerRows[0];
+  if (!partnerRow) return { assigned: false, reason: 'partner_not_found' };
+  if (!partnerRow.approved) return { assigned: false, reason: 'partner_not_approved' };
+
+  const selected = {
+    id: Number(partnerRow.id),
+    userId: Number(partnerRow.user_id),
+    name: partnerRow.name || '',
+    phone: partnerRow.phone || '',
+    current_lat: partnerRow.current_lat,
+    current_lng: partnerRow.current_lng,
+    distanceKm: 0,
+  };
+
+  await persistPartnerAssignment(orderId, selected.id);
+  await redis.del(`assign:attempts:${orderId}`);
   emitAssignmentSuccess(io, order, selected);
   scheduleAssignmentTimeout({
     orderId,
@@ -459,19 +872,40 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
     partnerUserId: selected.userId,
     io,
   });
-  
-  return { 
-    assigned: true, 
-    partner: selected, 
-    attempts,
-    tier: usedTier,
-    distanceKm: selected.distanceKm,
-    score: selected.score
+
+  return {
+    assigned: true,
+    partner: selected,
+    tier: 'manual',
+    distanceKm: 0,
   };
+};
+
+const ensureOrderAssigned = async ({ orderId, io }) => {
+  const { rows } = await query(
+    'SELECT id, status FROM order_assignments WHERE order_id = $1 LIMIT 1',
+    [orderId]
+  );
+  const existing = rows[0];
+  if (existing && activeAssignmentStatuses.has(existing.status)) {
+    return { assigned: true, reason: 'already_assigned' };
+  }
+
+  const attemptsRaw = await redis.get(`assign:attempts:${orderId}`);
+  const attempts = attemptsRaw ? Number(attemptsRaw) : 0;
+  if (attempts >= MAX_ASSIGNMENT_ATTEMPTS) {
+    return retryAssignOrderToPartner({ orderId, io, resetAttempts: true });
+  }
+  return assignOrderToPartner({ orderId, io });
 };
 
 module.exports = {
   assignOrderToPartner,
+  retryAssignOrderToPartner,
+  manualAssignOrderToPartner,
+  ensureOrderAssigned,
+  assignableOrderStatuses,
+  autoAcceptNearestStoreRider,
   emitAssignmentSuccess,
   emitCustomerPartnerAssigned,
   emitPartnerAssigned,

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
-import '../core/constants/app_constants.dart';
+import 'package:flutter/services.dart';
+import '../design_system/tokens/meatvo_colors.dart';
+import '../utils/order_status_util.dart';
 
-const _stepRed = AppColors.primary;
-const _stepPending = Color(0xFFEEEEEE);
-const _stepPendingIcon = Color(0xFF9CA3AF);
+const _stepRed = MeatvoColors.brandPrimary;
+const _stepPending = MeatvoColors.surfaceMuted;
+const _stepPendingIcon = MeatvoColors.textMuted;
 
 /// Live order status indicator with pulsing animation
 class OrderStatusLiveIndicator extends StatefulWidget {
@@ -59,6 +61,7 @@ class _OrderStatusLiveIndicatorState extends State<OrderStatusLiveIndicator>
   void _showStatusChangeNotification() {
     if (!mounted) return;
 
+    HapticFeedback.lightImpact();
     final statusLabel = _getStatusLabel(widget.status);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -74,7 +77,7 @@ class _OrderStatusLiveIndicatorState extends State<OrderStatusLiveIndicator>
             ),
           ],
         ),
-        backgroundColor: AppColors.success,
+        backgroundColor: MeatvoColors.success,
         duration: const Duration(seconds: 3),
         behavior: SnackBarBehavior.floating,
       ),
@@ -122,7 +125,7 @@ class _OrderStatusLiveIndicatorState extends State<OrderStatusLiveIndicator>
                 margin: const EdgeInsets.only(right: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.success.withValues(alpha: _pulseAnimation.value),
+                  color: MeatvoColors.success.withValues(alpha: _pulseAnimation.value),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
@@ -162,14 +165,14 @@ class _OrderStatusLiveIndicatorState extends State<OrderStatusLiveIndicator>
 class _TrackingStepCircle extends StatefulWidget {
   final bool isCompleted;
   final bool isActive;
-  final String imageAsset;
+  final IconData icon;
 
-  static const double size = 48;
+  static const double _size = 32;
 
   const _TrackingStepCircle({
     required this.isCompleted,
     required this.isActive,
-    required this.imageAsset,
+    required this.icon,
   });
 
   @override
@@ -199,7 +202,7 @@ class _TrackingStepCircleState extends State<_TrackingStepCircle>
     if (!widget.isActive) return;
     _pulseController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 800),
     )..repeat(reverse: true);
   }
 
@@ -214,137 +217,134 @@ class _TrackingStepCircleState extends State<_TrackingStepCircle>
     super.dispose();
   }
 
-  Widget _buildStepImage({required bool isEnabled}) {
-    Widget image = Image.asset(
-      widget.imageAsset,
-      width: _TrackingStepCircle.size,
-      height: _TrackingStepCircle.size,
-      fit: BoxFit.cover,
-      errorBuilder: (context, error, stackTrace) => Container(
-        width: _TrackingStepCircle.size,
-        height: _TrackingStepCircle.size,
-        color: _stepPending,
-        child: Icon(
-          Icons.image_not_supported_outlined,
-          size: _TrackingStepCircle.size * 0.4,
-          color: _stepPendingIcon,
-        ),
-      ),
-    );
-
-    if (!isEnabled) {
-      image = Opacity(opacity: 0.42, child: image);
-    }
-
-    return ClipOval(child: image);
-  }
-
-  Widget _buildCircle({
-    required bool isEnabled,
-    required double borderOpacity,
-    double scale = 1.0,
-  }) {
-    return Transform.scale(
-      scale: scale,
-      child: Container(
-        width: _TrackingStepCircle.size,
-        height: _TrackingStepCircle.size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: widget.isActive
-                ? _stepRed.withValues(alpha: borderOpacity)
-                : widget.isCompleted
-                    ? _stepRed.withValues(alpha: 0.45)
-                    : const Color(0xFFE0E0E0),
-            width: widget.isActive ? 2.5 : 1.5,
-          ),
-          boxShadow: widget.isActive
-              ? [
-                  BoxShadow(
-                    color: _stepRed.withValues(alpha: 0.18 + (borderOpacity * 0.2)),
-                    blurRadius: 10,
-                    spreadRadius: 1,
-                  ),
-                ]
-              : null,
-        ),
-        child: _buildStepImage(isEnabled: isEnabled),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isEnabled = widget.isCompleted || widget.isActive;
+    final circle = Container(
+      width: _TrackingStepCircle._size,
+      height: _TrackingStepCircle._size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: widget.isCompleted || widget.isActive
+            ? _stepRed
+            : _stepPending,
+      ),
+      child: Icon(
+        widget.icon,
+        size: _TrackingStepCircle._size * 0.5,
+        color: widget.isCompleted || widget.isActive
+            ? Colors.white
+            : _stepPendingIcon,
+      ),
+    );
 
     if (!widget.isActive || _pulseController == null) {
-      return _buildCircle(isEnabled: isEnabled, borderOpacity: 1.0);
+      return circle;
     }
 
     return AnimatedBuilder(
       animation: _pulseController!,
       builder: (context, child) {
-        final borderOpacity = 0.35 + (_pulseController!.value * 0.65);
-        return _buildCircle(
-          isEnabled: isEnabled,
-          borderOpacity: borderOpacity,
-          scale: 1.0 + (_pulseController!.value * 0.06),
-        );
+        final scale = 1.0 + (_pulseController!.value * 0.15);
+        return Transform.scale(scale: scale, child: child);
       },
+      child: circle,
     );
   }
 }
 
-/// Returns the order-tracking illustration for a given order status.
+/// Returns the order-tracking illustration asset for a given order status.
 String orderTrackingImageForStatus(String status) {
-  final index = _resolveTrackingStepIndex(status);
-  return _trackingSteps[index]['image'] as String;
-}
-
-int _resolveTrackingStepIndex(String status) {
-  final s = status.toLowerCase();
-  if (s == 'pending') return 0;
-  if (s == 'placed') return 0;
-  if (s == 'confirmed' || s == 'accepted') return 1;
-  if (s == 'preparing' ||
-      s == 'packed' ||
-      s == 'assigned' ||
-      s == 'picked_up') {
-    return 2;
+  final index = resolveTrackingStepIndex(status);
+  final step = _trackingSteps[index];
+  final image = step['image'];
+  if (image is String && image.isNotEmpty) return image;
+  final stepStatus = step['status'];
+  if (stepStatus is String) {
+    return 'assets/images/order_tracking/order_$stepStatus.png';
   }
-  if (s == 'out_for_delivery' || s == 'on_way') return 3;
-  if (s == 'delivered') return 4;
-  return 0;
+  return 'assets/images/order_tracking/order_placed.png';
 }
 
-const _orderTrackingImageBase = 'assets/images/order_tracking';
+/// Icon for the tracking header when illustration assets are unavailable.
+IconData orderTrackingIconForStatus(String status) {
+  final index = resolveTrackingStepIndex(status);
+  final icon = _trackingSteps[index]['icon'];
+  return icon is IconData ? icon : Icons.receipt;
+}
+
+/// Headline shown in the map-first tracking header.
+String orderTrackingHeadlineForStatus(String status, {String? riderName}) {
+  final s = normalizeOrderStatus(status);
+  switch (s) {
+    case 'delivered':
+      return 'Delivered';
+    case 'cancelled':
+    case 'failed_delivery':
+      return 'Order cancelled';
+    case 'rider_nearby':
+      return 'Rider is nearby';
+    case 'out_for_delivery':
+      return 'On the way to you';
+    case 'assigned':
+      return riderName != null ? '$riderName is assigned' : 'Rider assigned';
+    case 'picked_up':
+      return 'Order picked up';
+    case 'preparing':
+      return 'Preparing your order';
+    case 'confirmed':
+      return 'Order confirmed';
+    case 'placed':
+    case 'pending':
+      return 'Order placed';
+    default:
+      return 'Tracking your order';
+  }
+}
+
+/// Status chip label for the bottom sheet header row.
+String orderTrackingChipLabelForStatus(String status) {
+  final s = normalizeOrderStatus(status);
+  if (s == 'delivered') return 'Delivered';
+  if (s == 'cancelled' || s == 'failed_delivery') return 'Cancelled';
+  return 'Active';
+}
 
 const _trackingSteps = [
   {
     'status': 'placed',
     'label': 'Placed',
-    'image': '$_orderTrackingImageBase/order_placed.png',
+    'icon': Icons.receipt,
+    'image': 'assets/images/order_tracking/order_placed.png',
   },
   {
     'status': 'confirmed',
     'label': 'Confirmed',
-    'image': '$_orderTrackingImageBase/order_confirmed.png',
+    'icon': Icons.check_circle,
+    'image': 'assets/images/order_tracking/order_confirmed.png',
   },
   {
     'status': 'preparing',
     'label': 'Preparing',
-    'image': '$_orderTrackingImageBase/order_preparing.png',
+    'icon': Icons.restaurant,
+    'image': 'assets/images/order_tracking/order_preparing.png',
+  },
+  {
+    'status': 'assigned',
+    'label': 'Assigned',
+    'icon': Icons.person_pin_circle,
+    'image': 'assets/images/order_tracking/order_assigned.png',
   },
   {
     'status': 'out_for_delivery',
-    'label': 'On the way',
-    'image': '$_orderTrackingImageBase/order_on_the_way.png',
+    'label': 'On the\nway',
+    'icon': Icons.delivery_dining,
+    'image': 'assets/images/order_tracking/order_on_the_way.png',
   },
   {
     'status': 'delivered',
     'label': 'Delivered',
-    'image': '$_orderTrackingImageBase/order_delivered.png',
+    'icon': Icons.home,
+    'image': 'assets/images/order_tracking/order_delivered.png',
   },
 ];
 
@@ -361,8 +361,8 @@ class StatusTimelineWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final currentIndex = _resolveTrackingStepIndex(currentStatus);
-    final isFullyComplete = currentStatus.toLowerCase() == 'delivered';
+    final currentIndex = resolveTrackingStepIndex(currentStatus);
+    final isFullyComplete = normalizeOrderStatus(currentStatus) == 'delivered';
 
     return Column(
       children: List.generate(_trackingSteps.length, (index) {
@@ -377,13 +377,13 @@ class StatusTimelineWidget extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(
-                width: _TrackingStepCircle.size,
+                width: _TrackingStepCircle._size,
                 child: Column(
                   children: [
                     _TrackingStepCircle(
                       isCompleted: isCompleted,
                       isActive: isActive,
-                      imageAsset: step['image'] as String,
+                      icon: step['icon'] as IconData,
                     ),
                     if (index < _trackingSteps.length - 1)
                       Expanded(
@@ -411,8 +411,8 @@ class StatusTimelineWidget extends StatelessWidget {
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: isCompleted || isActive
-                              ? AppColors.textDark
-                              : AppColors.textMuted,
+                              ? MeatvoColors.textPrimary
+                              : MeatvoColors.textMuted,
                         ),
                       ),
                       if (timestamp != null) ...[
@@ -421,7 +421,7 @@ class StatusTimelineWidget extends StatelessWidget {
                           _formatTimestamp(timestamp),
                           style: const TextStyle(
                             fontSize: 12,
-                            color: AppColors.textSecondary,
+                            color: MeatvoColors.textSecondary,
                           ),
                         ),
                       ],
@@ -456,62 +456,265 @@ class StatusTimelineWidget extends StatelessWidget {
   }
 }
 
-/// Horizontal stepper for map-first order tracking.
-class CompactStatusTimeline extends StatelessWidget {
-  final String currentStatus;
+class _TrackingStepImage extends StatefulWidget {
+  const _TrackingStepImage({
+    required this.imagePath,
+    required this.fallbackIcon,
+    required this.isCompleted,
+    required this.isActive,
+    this.size = 56,
+  });
 
-  const CompactStatusTimeline({super.key, required this.currentStatus});
+  final String imagePath;
+  final IconData fallbackIcon;
+  final bool isCompleted;
+  final bool isActive;
+  final double size;
+
+  @override
+  State<_TrackingStepImage> createState() => _TrackingStepImageState();
+}
+
+class _TrackingStepImageState extends State<_TrackingStepImage>
+    with SingleTickerProviderStateMixin {
+  AnimationController? _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _initPulse();
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrackingStepImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isActive != widget.isActive) {
+      _disposePulse();
+      _initPulse();
+    }
+  }
+
+  void _initPulse() {
+    if (!widget.isActive) return;
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  void _disposePulse() {
+    _pulseController?.dispose();
+    _pulseController = null;
+  }
+
+  @override
+  void dispose() {
+    _disposePulse();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final currentIndex = _resolveTrackingStepIndex(currentStatus);
-    final isFullyComplete = currentStatus.toLowerCase() == 'delivered';
+    final opacity = widget.isCompleted || widget.isActive ? 1.0 : 0.35;
+    final iconSize = widget.size;
+    final cachePx = (iconSize * 3).round();
 
-    return Row(
-      children: [
-        for (int index = 0; index < _trackingSteps.length; index++) ...[
-          if (index > 0)
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 42),
-                child: Container(
-                  height: 2,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(1),
-                    color: (isFullyComplete || index <= currentIndex)
-                        ? _stepRed
-                        : _stepPending,
-                  ),
-                ),
-              ),
+    Widget image = Opacity(
+      opacity: opacity,
+      child: Image.asset(
+        widget.imagePath,
+        width: iconSize,
+        height: iconSize,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.medium,
+        cacheWidth: cachePx,
+        cacheHeight: cachePx,
+        errorBuilder: (_, __, ___) => Container(
+          width: iconSize,
+          height: iconSize,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: widget.isCompleted || widget.isActive
+                ? _stepRed.withValues(alpha: 0.12)
+                : _stepPending,
+          ),
+          child: Icon(
+            widget.fallbackIcon,
+            size: iconSize * 0.4,
+            color: widget.isCompleted || widget.isActive
+                ? _stepRed
+                : _stepPendingIcon,
+          ),
+        ),
+      ),
+    );
+
+    if (widget.isActive) {
+      image = Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: _stepRed.withValues(alpha: 0.28),
+              blurRadius: 16,
+              spreadRadius: 4,
             ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
+          ],
+        ),
+        child: image,
+      );
+    }
+
+    if (!widget.isActive || _pulseController == null) return image;
+
+    return AnimatedBuilder(
+      animation: _pulseController!,
+      builder: (context, child) {
+        final scale = 1.0 + (_pulseController!.value * 0.06);
+        return Transform.scale(scale: scale, child: child);
+      },
+      child: image,
+    );
+  }
+}
+
+/// Horizontal PNG stepper for map-first order tracking.
+class OrderTrackingStepper extends StatelessWidget {
+  final String currentStatus;
+
+  const OrderTrackingStepper({super.key, required this.currentStatus});
+
+  static const double _iconSize = 44;
+
+  @override
+  Widget build(BuildContext context) {
+    final currentIndex = resolveTrackingStepIndex(currentStatus);
+    final isFullyComplete = normalizeOrderStatus(currentStatus) == 'delivered';
+    final isCancelled = isOrderCancelled(currentStatus);
+    final stepCount = _trackingSteps.length;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final stepWidth = constraints.maxWidth / stepCount;
+        const connectorTop = _iconSize / 2 - 1;
+
+        return SizedBox(
+          width: constraints.maxWidth,
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              _TrackingStepCircle(
-                isCompleted: isFullyComplete || index < currentIndex,
-                isActive: !isFullyComplete && index == currentIndex,
-                imageAsset: _trackingSteps[index]['image'] as String,
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _trackingSteps[index]['label'] as String,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: index == currentIndex
-                      ? FontWeight.w600
-                      : FontWeight.w400,
-                  color: index == currentIndex
-                      ? _stepRed
-                      : index < currentIndex || isFullyComplete
-                          ? AppColors.textDark
-                          : AppColors.textMuted,
+              Positioned(
+                top: connectorTop,
+                left: stepWidth / 2,
+                right: stepWidth / 2,
+                child: Row(
+                  children: [
+                    for (int i = 0; i < stepCount - 1; i++)
+                      Expanded(
+                        child: Container(
+                          height: 2,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(1),
+                            color: _connectorColor(
+                              index: i + 1,
+                              currentIndex: currentIndex,
+                              isFullyComplete: isFullyComplete,
+                              isCancelled: isCancelled,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
+              ),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (int index = 0; index < stepCount; index++)
+                    SizedBox(
+                      width: stepWidth,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Center(
+                            child: _TrackingStepImage(
+                              size: _iconSize,
+                              imagePath:
+                                  _trackingSteps[index]['image'] as String,
+                              fallbackIcon:
+                                  _trackingSteps[index]['icon'] as IconData,
+                              isCompleted:
+                                  isFullyComplete || index < currentIndex,
+                              isActive: !isFullyComplete &&
+                                  !isCancelled &&
+                                  index == currentIndex,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          SizedBox(
+                            width: stepWidth,
+                            height: 28,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                _trackingSteps[index]['label'] as String,
+                                textAlign: TextAlign.center,
+                                maxLines: 2,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  height: 1.15,
+                                  fontWeight: index == currentIndex &&
+                                          !isFullyComplete
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                  color: _labelColor(
+                                    index: index,
+                                    currentIndex: currentIndex,
+                                    isFullyComplete: isFullyComplete,
+                                    isCancelled: isCancelled,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
-        ],
-      ],
+        );
+      },
     );
   }
+
+  Color _connectorColor({
+    required int index,
+    required int currentIndex,
+    required bool isFullyComplete,
+    required bool isCancelled,
+  }) {
+    if (isFullyComplete || index <= currentIndex) return _stepRed;
+    if (isCancelled && index <= currentIndex + 1) return _stepPending;
+    return _stepPending;
+  }
+
+  Color _labelColor({
+    required int index,
+    required int currentIndex,
+    required bool isFullyComplete,
+    required bool isCancelled,
+  }) {
+    if (isFullyComplete) return MeatvoColors.textPrimary;
+    if (index == currentIndex && !isCancelled) return _stepRed;
+    if (index < currentIndex) return MeatvoColors.textPrimary;
+    return MeatvoColors.textMuted;
+  }
+}
+
+/// @deprecated Use [OrderTrackingStepper] instead.
+class CompactStatusTimeline extends OrderTrackingStepper {
+  const CompactStatusTimeline({super.key, required super.currentStatus});
 }

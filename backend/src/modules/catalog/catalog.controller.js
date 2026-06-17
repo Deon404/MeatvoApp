@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok } = require('../../utils/response');
+const { signStoredImageUrl } = require('../../utils/uploadSigning');
 
 const listCategories = asyncHandler(async (req, res) => {
   let rows;
@@ -22,10 +23,11 @@ const listCategories = asyncHandler(async (req, res) => {
     rows = rows.map((c) => ({ ...c, sort_order: 0 }));
   }
 
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
   const out = rows.map((c) => ({
     id: String(c.id),
     name: c.name,
-    imageUrl: c.image_url || '',
+    imageUrl: signStoredImageUrl(c.image_url || '', baseUrl),
     isActive: Boolean(c.active),
     sortOrder: Number(c.sort_order || 0),
   }));
@@ -69,11 +71,12 @@ const listProducts = asyncHandler(async (req, res) => {
     params
   );
 
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
   const out = rows.map((p) => ({
     id: String(p.id),
     name: p.name,
     description: p.description || '',
-    imageUrl: p.image_url || '',
+    imageUrl: signStoredImageUrl(p.image_url || '', baseUrl),
     unit: p.unit || '',
     price: Number(p.price),
     categoryId: p.category_id ? String(p.category_id) : null,

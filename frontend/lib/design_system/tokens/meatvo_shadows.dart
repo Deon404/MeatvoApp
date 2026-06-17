@@ -39,4 +39,36 @@ abstract final class MeatvoShadows {
       offset: Offset(0, 4),
     ),
   ];
+
+  /// Claymorphism embossed — light highlight top-left, soft shadow bottom-right.
+  static const List<BoxShadow> clay = [
+    BoxShadow(
+      color: Color(0x66FFFFFF),
+      offset: Offset(-6, -6),
+      blurRadius: 16,
+      spreadRadius: 0,
+    ),
+    BoxShadow(
+      color: Color(0x181A1210),
+      offset: Offset(8, 8),
+      blurRadius: 20,
+      spreadRadius: 0,
+    ),
+  ];
+
+  /// Claymorphism pressed/inset — reversed light direction.
+  static const List<BoxShadow> clayInset = [
+    BoxShadow(
+      color: Color(0x141A1210),
+      offset: Offset(4, 4),
+      blurRadius: 12,
+      spreadRadius: -2,
+    ),
+    BoxShadow(
+      color: Color(0x40FFFFFF),
+      offset: Offset(-3, -3),
+      blurRadius: 10,
+      spreadRadius: -2,
+    ),
+  ];
 }

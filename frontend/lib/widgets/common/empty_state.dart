@@ -85,6 +85,33 @@ class EmptyStateWidget extends StatelessWidget {
     );
   }
 
+  factory EmptyStateWidget.comingSoon({
+    Key? key,
+    required String categoryName,
+    bool fullScreen = false,
+  }) {
+    return EmptyStateWidget(
+      key: key,
+      title: '$categoryName — Coming Soon',
+      message:
+          'Fresh $categoryName items are on the way. Swipe to browse other categories or check back soon.',
+      fullScreen: fullScreen,
+      illustration: Container(
+        width: 88,
+        height: 88,
+        decoration: BoxDecoration(
+          color: AppThemeColors.primary.withValues(alpha: 0.08),
+          shape: BoxShape.circle,
+        ),
+        child: const Icon(
+          Icons.schedule_rounded,
+          size: 40,
+          color: AppThemeColors.primary,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Local captures so the bangs (`message!`, `buttonLabel!`) disappear.

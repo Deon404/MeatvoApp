@@ -59,6 +59,7 @@ dependencies:
   
   # Payments
   # phonepe_payment_sdk: ^2.0.1  # PhonePe payment gateway - Temporarily disabled, enable when PhonePe business account ready
+  flutter_cashfree_pg_sdk: ^2.4.0+52
   
   # Notifications
   flutter_local_notifications: ^17.0.0
@@ -136,10 +137,14 @@ flutter:
   # Assets
   assets:
     - assets/env.defaults
+    - assets/env.local
     - assets/images/
     - assets/images/order_tracking/
     - assets/icons/
     - assets/animations/
+    - assets/animations/order_confirmed.json
+    - assets/animations/order_packing.json
+    - assets/animations/order_delivered.json
     - assets/sounds/
 
   # An image asset can refer to one or more resolution-specific "variants", see

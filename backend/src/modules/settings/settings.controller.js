@@ -5,6 +5,8 @@ const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { emitToAll } = require('../../socket/socket');
 const { isWithinDeliveryZone } = require('../../utils/distance.util');
+const { calculateExpressETA } = require('../../utils/eta-calculator');
+const { getMergedStoreSettings } = require('../../utils/storeSettings.util');
 
 const DEFAULT_THEME = {
   colors: {
@@ -26,6 +28,19 @@ const DEFAULT_BANNER = {
   imageUrl: '',
   gradientStart: '#667eea',
   gradientEnd: '#764ba2',
+};
+
+const DEFAULT_APP_INFO = {
+  appVersion: process.env.APP_VERSION || '1.0.0',
+};
+
+const resolveAppInfo = (raw) => {
+  const version = String(
+    raw?.appVersion ?? raw?.app_version ?? DEFAULT_APP_INFO.appVersion,
+  ).trim();
+  return {
+    appVersion: version || DEFAULT_APP_INFO.appVersion,
+  };
 };
 
 /** Default store settings used when DB row doesn't exist yet */
@@ -124,24 +139,9 @@ const putSetting = async (key, value) => {
 // ─── Store settings helpers (store_settings table) ────────────────────────────
 
 /**
- * Reads the single store_settings row. Falls back to DEFAULT_STORE_SETTINGS if missing.
+ * Reads merged store settings (admin app_settings + store_settings geo row).
  */
-const getStoreSettings = async () => {
-  try {
-    const { rows } = await query(
-      `SELECT delivery_radius_km, center_lat, center_lng,
-              min_order_amount, delivery_fee, is_open
-       FROM store_settings
-       LIMIT 1`
-    );
-    if (rows[0]) return rows[0];
-    return DEFAULT_STORE_SETTINGS;
-  } catch (err) {
-    // Table may not exist yet
-    if (err?.code === '42P01') return DEFAULT_STORE_SETTINGS;
-    throw err;
-  }
-};
+const getStoreSettings = async () => getMergedStoreSettings();
 
 // ─── Existing theme / banner controllers ─────────────────────────────────────
 
@@ -167,6 +167,16 @@ const getBanner = asyncHandler(async (req, res) => {
   return ok(res, v, 'Banner');
 });
 
+const getAppInfo = asyncHandler(async (req, res) => {
+  let v = null;
+  try {
+    v = await getSetting('appInfo');
+  } catch (err) {
+    logger.warn('settings_get_failed', { key: 'appInfo', message: err?.message, code: err?.code });
+  }
+  return ok(res, resolveAppInfo(v), 'App info');
+});
+
 const putTheme = asyncHandler(async (req, res) => {
   const saved = await putSetting('theme', req.validated.body);
   emitToAll('settings:theme', { theme: saved });
@@ -177,6 +187,12 @@ const putBanner = asyncHandler(async (req, res) => {
   const saved = await putSetting('banner', req.validated.body);
   emitToAll('settings:banner', { banner: saved });
   return ok(res, saved, 'Banner updated');
+});
+
+const putAppInfo = asyncHandler(async (req, res) => {
+  const saved = await putSetting('appInfo', resolveAppInfo(req.validated.body));
+  emitToAll('settings:appInfo', { appInfo: saved });
+  return ok(res, saved, 'App info updated');
 });
 
 // ─── NEW: Store status (public) ───────────────────────────────────────────────
@@ -190,6 +206,13 @@ const getStoreStatus = asyncHandler(async (req, res) => {
   const settings = await getStoreSettings();
   return ok(res, {
     isOpen: Boolean(settings.is_open),
+    manualOpen: Boolean(settings.manual_open),
+    withinHours: Boolean(settings.within_hours),
+    storeOpenTime: settings.store_open_time ?? null,
+    storeCloseTime: settings.store_close_time ?? null,
+    closedReason: settings.closed_reason ?? null,
+    closedMessage: settings.closed_message ?? null,
+    nextOpenDisplay: settings.next_open_display ?? null,
     deliveryRadiusKm: Number(settings.delivery_radius_km || DEFAULT_STORE_SETTINGS.delivery_radius_km),
     centerLat: Number(settings.center_lat || 0),
     centerLng: Number(settings.center_lng || 0),
@@ -237,6 +260,89 @@ const checkDelivery = asyncHandler(async (req, res) => {
   }
 
   return ok(res, { deliverable: true, distanceKm }, 'Delivery available');
+});
+
+/**
+ * POST /api/store/estimate-delivery
+ * Body: { lat: number, lng: number, items?: [{ quantity: number }] }
+ * Returns express ETA preview for checkout.
+ */
+const estimateDelivery = asyncHandler(async (req, res) => {
+  const { lat, lng, items: rawItems } = req.body;
+
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return fail(res, 400, 'lat and lng are required numbers');
+  }
+
+  const settings = await getStoreSettings();
+  if (!Boolean(settings.is_open)) {
+    return fail(
+      res,
+      400,
+      settings.closed_message || 'Store is closed — orders resume when we open',
+      {
+        code: 'STORE_CLOSED',
+        closedReason: settings.closed_reason ?? null,
+        closedMessage: settings.closed_message ?? null,
+      }
+    );
+  }
+
+  const radiusKm = Number(settings.delivery_radius_km || DEFAULT_STORE_SETTINGS.delivery_radius_km);
+  const centerLat = Number(settings.center_lat || DEFAULT_STORE_SETTINGS.center_lat);
+  const centerLng = Number(settings.center_lng || DEFAULT_STORE_SETTINGS.center_lng);
+
+  let distanceKm = 0;
+  if (centerLat !== 0 || centerLng !== 0) {
+    const zone = isWithinDeliveryZone(centerLat, centerLng, lat, lng, radiusKm);
+    if (!zone.deliverable) {
+      return fail(res, 400, 'Not available in your area — expanding soon!', {
+        code: 'OUTSIDE_DELIVERY_ZONE',
+        distanceKm: zone.distanceKm,
+        radiusKm,
+      });
+    }
+    distanceKm = zone.distanceKm;
+  } else {
+    distanceKm = haversineKm(centerLat, centerLng, lat, lng);
+  }
+
+  const items = Array.isArray(rawItems)
+    ? rawItems
+        .map((item) => ({ quantity: Math.max(1, Number(item?.quantity) || 1) }))
+        .filter((item) => item.quantity > 0)
+    : [];
+
+  let queueDepth = 0;
+  try {
+    const { rows } = await query(
+      `SELECT COUNT(*)::int AS count
+       FROM orders
+       WHERE status IN ('CONFIRMED', 'PACKING_STARTED', 'PACKED')`
+    );
+    queueDepth = Number(rows[0]?.count || 0);
+  } catch (err) {
+    logger.warn('estimate_delivery_queue_failed', { message: err?.message });
+  }
+
+  const etaResult = calculateExpressETA({
+    placedAt: new Date(),
+    items,
+    queueDepth,
+    distanceKm,
+  });
+
+  return ok(
+    res,
+    {
+      etaMinutes: etaResult.etaMinutes,
+      etaDisplay: etaResult.etaDisplay,
+      estimatedTime: etaResult.etaTime.toISOString(),
+      distanceKm: etaResult.breakdown.distanceKm,
+      breakdown: etaResult.breakdown,
+    },
+    'Delivery estimate'
+  );
 });
 
 // ─── NEW: Admin — update delivery zone ───────────────────────────────────────
@@ -313,60 +419,47 @@ const updateDeliveryZone = asyncHandler(async (req, res) => {
  * Auth: Admin JWT required.
  */
 const toggleStoreOpen = asyncHandler(async (req, res) => {
-  let newState;
-  try {
-    const { rows } = await query(
-      `UPDATE store_settings SET is_open = NOT is_open, updated_at = NOW()
-       RETURNING is_open`
-    );
-    if (!rows[0]) {
-      // No row exists — create default as OPEN=false (closing)
-      await query(
-        `INSERT INTO store_settings (is_open) VALUES (false)
-         ON CONFLICT DO NOTHING`
-      );
-      newState = false;
-    } else {
-      newState = Boolean(rows[0].is_open);
-    }
-  } catch (err) {
-    if (err?.code === '42P01') {
-      // Table missing — create and insert
-      await query(
-        `CREATE TABLE IF NOT EXISTS store_settings (
-          id SERIAL PRIMARY KEY,
-          delivery_radius_km DECIMAL(5,2) DEFAULT 5.0,
-          center_lat DECIMAL(10,7) DEFAULT 0,
-          center_lng DECIMAL(10,7) DEFAULT 0,
-          min_order_amount DECIMAL(10,2) DEFAULT 150.0,
-          delivery_fee DECIMAL(10,2) DEFAULT 30.0,
-          is_open BOOLEAN DEFAULT true,
-          updated_at TIMESTAMPTZ DEFAULT NOW()
-        )`
-      );
-      await query(`INSERT INTO store_settings DEFAULT VALUES`);
-      newState = true;
-    } else {
-      throw err;
-    }
-  }
+  const { toggleManualStoreOpen } = require('../../utils/storeSettings.util');
+  const settings = await toggleManualStoreOpen();
 
-  emitToAll('store:status_changed', { isOpen: newState });
-  logger.info('store_toggle', { isOpen: newState, adminId: req.user?.id });
+  emitToAll('store:status_changed', {
+    isOpen: settings.is_open,
+    manualOpen: settings.manual_open,
+    closedMessage: settings.closed_message,
+  });
+  logger.info('store_toggle', {
+    manualOpen: settings.manual_open,
+    isOpen: settings.is_open,
+    adminId: req.user?.id,
+  });
 
-  return ok(res, { isOpen: newState }, `Store is now ${newState ? 'OPEN' : 'CLOSED'}`);
+  return ok(
+    res,
+    {
+      isOpen: settings.is_open,
+      manualOpen: settings.manual_open,
+      closedMessage: settings.closed_message,
+    },
+    settings.manual_open
+      ? 'Store manual switch is ON — orders allowed during open hours'
+      : 'Store manual switch is OFF — orders paused until reopened'
+  );
 });
 
 module.exports = {
   getTheme,
   getBanner,
+  getAppInfo,
   putTheme,
   putBanner,
+  putAppInfo,
   DEFAULT_THEME,
   DEFAULT_BANNER,
+  DEFAULT_APP_INFO,
   // New store endpoints
   getStoreStatus,
   checkDelivery,
+  estimateDelivery,
   updateDeliveryZone,
   toggleStoreOpen,
   // Helpers

@@ -1,20 +1,22 @@
 import 'package:flutter/material.dart';
 
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../domain/order_pricing.dart';
 import '../../models/cart_model.dart';
 import '../../services/cart_service.dart';
 import '../../services/coupon_service.dart';
-import '../../services/express_delivery_service.dart';
+import '../../services/store_status_service.dart';
 import '../../theme/app_theme.dart';
 import '../../ui/shells/meatvo_layout.dart';
 import '../../widgets/cart/cart_bill_summary.dart';
 import '../../widgets/cart/cart_coupon_section.dart';
 import '../../widgets/cart/cart_floating_checkout.dart';
 import '../../widgets/cart/cart_item_tile.dart';
-import '../../widgets/cart/premium_cart_card.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
 import '../../widgets/common/shimmer_loader.dart';
+import '../../widgets/store/store_closed_sheet.dart';
 import '../checkout/checkout_screen.dart';
 
 class CartScreen extends StatefulWidget {
@@ -34,6 +36,7 @@ class CartScreen extends StatefulWidget {
 class _CartScreenState extends State<CartScreen> {
   final CartService _cartService = CartService();
   final CouponService _couponService = CouponService();
+  final StoreStatusService _storeStatusService = StoreStatusService();
 
   CartModel? _cart;
   bool _isLoading = true;
@@ -43,12 +46,24 @@ class _CartScreenState extends State<CartScreen> {
   String? _appliedCouponCode;
   double _couponDiscount = 0;
   String? _couponErrorMessage;
+  double _deliveryFeeAmount = OrderPricingCalculator.defaultDeliveryChargeAmount;
 
   @override
   void initState() {
     super.initState();
     CartService.cartNotifier.addListener(_onGlobalCartChanged);
     _loadCartData();
+    _loadStoreSettings();
+  }
+
+  Future<void> _loadStoreSettings() async {
+    try {
+      final status = await _storeStatusService.fetchStatus();
+      if (!mounted) return;
+      setState(() => _deliveryFeeAmount = status.deliveryFee);
+    } catch (_) {
+      // Keep default delivery fee when store settings are unavailable.
+    }
   }
 
   @override
@@ -103,9 +118,9 @@ class _CartScreenState extends State<CartScreen> {
     final lineKey = _cartLineKey(item);
     if (lineKey == null) {
       messenger.showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('Cart item id missing'),
-          backgroundColor: AppThemeColors.primaryDark,
+          backgroundColor: context.meatvo.brandPrimaryDark,
         ),
       );
       return;
@@ -143,7 +158,7 @@ class _CartScreenState extends State<CartScreen> {
       messenger.showSnackBar(
         SnackBar(
           content: Text('Cart update failed: ${e.toString().replaceFirst('Exception: ', '')}'),
-          backgroundColor: AppThemeColors.primaryDark,
+          backgroundColor: context.meatvo.brandPrimaryDark,
         ),
       );
     } finally {
@@ -178,6 +193,7 @@ class _CartScreenState extends State<CartScreen> {
   OrderPricingBreakdown get _pricing => OrderPricingCalculator.calculate(
         subtotal: _subtotal,
         discount: _productDiscount + _couponDiscount,
+        deliveryChargeAmount: _deliveryFeeAmount,
       );
 
   double get _deliveryFee => _pricing.deliveryCharge;
@@ -218,34 +234,30 @@ class _CartScreenState extends State<CartScreen> {
     final currentCart = _cart;
     if (currentCart == null || currentCart.isEmpty) {
       messenger.showSnackBar(
-        const SnackBar(
-          content: Text('Cart is empty'),
-          backgroundColor: AppThemeColors.primaryDark,
-        ),
-      );
-      return;
-    }
-
-    final closedMessage = ExpressDeliveryService.storeClosedMessage();
-    if (closedMessage != null) {
-      messenger.showSnackBar(
         SnackBar(
-          content: Text(closedMessage),
-          backgroundColor: AppThemeColors.primaryDark,
+          content: Text('Cart is empty'),
+          backgroundColor: context.meatvo.brandPrimaryDark,
         ),
       );
       return;
     }
 
     try {
+      final storeStatus = await _storeStatusService.fetchStatus();
+      if (!mounted) return;
+      if (!storeStatus.isOpen) {
+        await StoreClosedSheet.show(context, storeStatus);
+        return;
+      }
+
       final freshCart = await _cartService.getCart();
       if (!mounted) return;
       if (freshCart.isEmpty) {
         setState(() => _cart = freshCart);
         messenger.showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text('Cart is empty'),
-            backgroundColor: AppThemeColors.primaryDark,
+            backgroundColor: context.meatvo.brandPrimaryDark,
           ),
         );
         return;
@@ -270,7 +282,7 @@ class _CartScreenState extends State<CartScreen> {
       messenger.showSnackBar(
         SnackBar(
           content: Text('Could not sync cart: $e'),
-          backgroundColor: AppThemeColors.error,
+          backgroundColor: context.meatvo.error,
         ),
       );
     }
@@ -287,13 +299,14 @@ class _CartScreenState extends State<CartScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     // Local copy enables Dart smart-cast → no `!` operator below.
     final cart = _cart;
     final hasItems = cart != null && cart.isNotEmpty;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: AppThemeColors.background,
+      backgroundColor: mv.surfaceWarm,
       body: _isLoading
           ? _buildLoadingState()
           : _errorMessage != null
@@ -310,27 +323,28 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildCartContent() {
+    final mv = context.meatvo;
     // _buildCartContent is only reached when hasItems == true (guarded in
     // build()), but capturing once removes the lingering `_cart!` bang.
     final cart = _cart;
     final items = cart?.items ?? const [];
     return RefreshIndicator(
       onRefresh: _loadCartData,
-      color: AppThemeColors.primary,
+      color: mv.brandPrimary,
       edgeOffset: 8,
       child: ListView(
         padding: EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          AppSpacing.sm,
-          AppSpacing.md,
-          AppSpacing.lg +
+          mv.spacing.md,
+          mv.spacing.sm,
+          mv.spacing.md,
+          mv.spacing.lg +
               (widget.inTabShell
                   ? MeatvoLayout.tabScrollBottomPadding(context)
                   : MediaQuery.paddingOf(context).bottom),
         ),
         children: [
           ...items.map(_buildDismissibleItem),
-          const SizedBox(height: AppSpacing.md),
+          SizedBox(height: mv.spacing.md),
           CartCouponSection(
             appliedCode: _appliedCouponCode,
             appliedDiscount: _couponDiscount,
@@ -338,7 +352,7 @@ class _CartScreenState extends State<CartScreen> {
             onApply: _applyCoupon,
             onRemove: _removeCoupon,
           ),
-          const SizedBox(height: AppSpacing.md),
+          SizedBox(height: mv.spacing.md),
           CartBillSummary(
             itemTotal: _subtotal,
             productDiscount: _productDiscount,
@@ -348,7 +362,7 @@ class _CartScreenState extends State<CartScreen> {
             itemCount: _itemCount,
             isFreeDelivery: _pricing.isFreeDelivery,
           ),
-          const SizedBox(height: AppSpacing.md),
+          SizedBox(height: mv.spacing.md),
           CartFloatingCheckout(
             total: _total,
             isLoading: _isUpdating,
@@ -360,20 +374,21 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildDismissibleItem(CartItem item) {
+    final mv = context.meatvo;
     return Dismissible(
       key: ValueKey(
         item.itemId ?? '${item.productId}_${item.variantId ?? 'default'}',
       ),
       direction: DismissDirection.endToStart,
       background: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6),
+        margin: EdgeInsets.symmetric(vertical: mv.spacing.xxs + 2),
         decoration: BoxDecoration(
-          color: const Color(0xFFC8102E),
-          borderRadius: BorderRadius.circular(16),
+          color: mv.brandPrimary,
+          borderRadius: BorderRadius.circular(mv.radii.lg),
         ),
         alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        child: const Icon(Icons.delete_rounded, color: Colors.white, size: 24),
+        padding: EdgeInsets.only(right: mv.spacing.lg),
+        child: Icon(Icons.delete_rounded, color: MeatvoColors.white, size: 24),
       ),
       onDismissed: (_) => _removeItem(item),
       child: CartItemTile(
@@ -391,19 +406,20 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildHeader() {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Container(
       width: double.infinity,
-      color: AppThemeColors.background,
+      color: mv.surfaceWarm,
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.sm,
-            AppSpacing.md,
-            AppSpacing.sm,
+          padding: EdgeInsets.fromLTRB(
+            mv.spacing.md,
+            mv.spacing.sm,
+            mv.spacing.md,
+            mv.spacing.sm,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -411,16 +427,16 @@ class _CartScreenState extends State<CartScreen> {
               Text(
                 'Your Cart',
                 style: textTheme.headlineSmall?.copyWith(
-                  color: AppThemeColors.textPrimary,
+                  color: mv.textPrimary,
                   fontWeight: FontWeight.w600,
                   letterSpacing: -0.4,
                 ),
               ),
-              const SizedBox(height: 4),
+              SizedBox(height: mv.spacing.xxs),
               Text(
                 '($_itemCount ${_itemCount == 1 ? 'item' : 'items'})',
                 style: textTheme.bodyMedium?.copyWith(
-                  color: const Color(0xFF6B6B6B),
+                  color: mv.textSecondary,
                 ),
               ),
             ],
@@ -454,12 +470,13 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   Widget _buildLoadingState() {
+    final mv = context.meatvo;
     return Column(
       children: [
         _buildHeader(),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.all(AppSpacing.md),
+            padding: EdgeInsets.all(mv.spacing.md),
             children: const [
               ShimmerLoader.listTile(),
               SizedBox(height: AppSpacing.sm),

@@ -8,9 +8,10 @@
 
 const { query } = require('../postgres');
 const { LEGACY_STATUS_MIGRATION } = require('../../utils/orderStatus');
+const { logger } = require('../../utils/logger');
 
 async function migrateOrderStatuses() {
-  console.log('Starting order status migration...');
+  logger.info('order_status_migration_start');
   
   try {
     // Start transaction
@@ -24,7 +25,7 @@ async function migrateOrderStatuses() {
       GROUP BY status
     `);
     
-    console.log('Legacy statuses found:', countRows);
+    logger.info('order_status_migration_legacy', { rows: countRows });
     
     // Migrate PICKED_UP and ON_THE_WAY to OUT_FOR_DELIVERY
     for (const [legacyStatus, newStatus] of Object.entries(LEGACY_STATUS_MIGRATION)) {
@@ -36,12 +37,12 @@ async function migrateOrderStatuses() {
       );
       
       if (rowCount > 0) {
-        console.log(`✓ Migrated ${rowCount} orders from ${legacyStatus} to ${newStatus}`);
+        logger.info('order_status_migration_batch', { legacyStatus, newStatus, rowCount });
       }
     }
     
     // Add new status values to enum if they don't exist
-    console.log('Checking order_status enum...');
+    logger.info('order_status_enum_check');
     
     const newStatuses = [
       'PAYMENT_PENDING',
@@ -69,11 +70,10 @@ async function migrateOrderStatuses() {
       if (!existingValues.has(status)) {
         try {
           await query(`ALTER TYPE order_status ADD VALUE IF NOT EXISTS '${status}'`);
-          console.log(`✓ Added ${status} to order_status enum`);
+          logger.info('order_status_enum_added', { status });
         } catch (err) {
           if (err.code === '42710') {
-            // Value already exists, ignore
-            console.log(`  ${status} already exists in enum`);
+            logger.info('order_status_enum_exists', { status });
           } else {
             throw err;
           }
@@ -82,7 +82,7 @@ async function migrateOrderStatuses() {
     }
     
     // Update order_assignments table to reflect new statuses
-    console.log('Updating order_assignments...');
+    logger.info('order_assignments_update_start');
     
     const { rowCount: assignmentCount } = await query(`
       UPDATE order_assignments oa
@@ -100,7 +100,7 @@ async function migrateOrderStatuses() {
     `);
     
     if (assignmentCount > 0) {
-      console.log(`✓ Updated ${assignmentCount} order assignments`);
+      logger.info('order_assignments_updated', { assignmentCount });
     }
     
     // Commit transaction
@@ -114,18 +114,14 @@ async function migrateOrderStatuses() {
       ORDER BY count DESC
     `);
     
-    console.log('\n✓ Migration completed successfully!');
-    console.log('\nCurrent status distribution:');
-    verifyRows.forEach(row => {
-      console.log(`  ${row.status}: ${row.count} orders`);
-    });
+    logger.info('order_status_migration_complete', { distribution: verifyRows });
     
     process.exit(0);
     
   } catch (error) {
     // Rollback on error
     await query('ROLLBACK');
-    console.error('✗ Migration failed:', error);
+    logger.error('order_status_migration_failed', { error: error.message });
     process.exit(1);
   }
 }

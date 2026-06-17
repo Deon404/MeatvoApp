@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../models/product_variant_model.dart';
 import '../../services/product_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../ui/organisms/meatvo_product_card.dart';
+import '../../providers/store_settings_provider.dart';
+import '../../ui/organisms/product_card_bindings.dart';
+import '../../utils/ordering_gate.dart';
+import '../../viewmodels/home_provider.dart';
 import '../../widgets/categories/product_grid_item.dart';
 import '../product/product_detail_screen.dart';
 
 /// Search Screen - Shows search results for products
-class SearchScreen extends StatefulWidget {
+class SearchScreen extends ConsumerStatefulWidget {
   final String? initialQuery;
 
   const SearchScreen({
@@ -18,10 +23,10 @@ class SearchScreen extends StatefulWidget {
   });
 
   @override
-  State<SearchScreen> createState() => _SearchScreenState();
+  ConsumerState<SearchScreen> createState() => _SearchScreenState();
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchScreenState extends ConsumerState<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
   final ProductService _productService = ProductService();
   final FocusNode _searchFocusNode = FocusNode();
@@ -560,6 +565,11 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildProductGrid() {
+    final homeState = ref.watch(homeViewModelProvider);
+    final storeStatus = ref.watch(storeSettingsSyncProvider);
+    final cart = homeState.cart;
+    final busyProductIds = homeState.busyProductIds;
+    final changeQty = ref.read(homeViewModelProvider.notifier).changeCartQuantity;
     final cardHeight =
         MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
 
@@ -573,9 +583,34 @@ class _SearchScreenState extends State<SearchScreen> {
       ),
       itemCount: _products.length,
       itemBuilder: (context, index) {
+        final product = _products[index];
+        final productId = product.product.id;
+        final qty = cart.findItemByProductId(productId)?.quantity.round() ?? 0;
+        final busy = busyProductIds.contains(productId);
+        final bindings = ProductCardBindings.forProduct(
+          storeStatus: storeStatus,
+          product: product,
+          cart: cart,
+          onQuantityChange: (p, next) async {
+            await OrderingGate.guardQuantityChange(
+              context,
+              ref,
+              currentQuantity: qty,
+              nextQuantity: next,
+              action: () => changeQty(p, next),
+            );
+          },
+        );
+
         return ProductGridItem(
-          product: _products[index],
-          onTap: () => _handleProductTap(_products[index]),
+          product: product,
+          quantity: qty,
+          isBusy: busy,
+          orderingPaused: bindings.orderingPaused,
+          onTap: () => _handleProductTap(product),
+          onAdd: bindings.onAdd,
+          onIncrement: bindings.onIncrement,
+          onDecrement: bindings.onDecrement,
         );
       },
     );

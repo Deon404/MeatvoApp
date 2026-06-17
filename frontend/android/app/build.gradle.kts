@@ -9,7 +9,7 @@ plugins {
 
 /**
  * Maps SDK reads the key from AndroidManifest (not Dart .env).
- * Prefer `android/gradle.properties`; fall back to `old_meatvo/.env`.
+ * Prefer `android/gradle.properties`; fall back to `frontend/.env`.
  */
 fun resolveGoogleMapsApiKey(): String {
     val fromGradle =
@@ -65,7 +65,7 @@ android {
         if (mapsApiKey.isEmpty()) {
             logger.warn(
                 "GOOGLE_MAPS_API_KEY is empty — map tiles will not load. " +
-                    "Set GOOGLE_MAPS_API_KEY in old_meatvo/.env or android/gradle.properties",
+                    "Set GOOGLE_MAPS_API_KEY in frontend/.env or android/gradle.properties",
             )
         }
         manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = mapsApiKey

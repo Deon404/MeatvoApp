@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/constants/app_constants.dart';
-import '../../core/widgets/product_card.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../models/product_variant_model.dart';
 import '../../providers/wishlist_provider.dart';
 import '../../screens/product/product_detail_screen.dart';
+import '../../ui/organisms/meatvo_product_card.dart';
+import '../../ui/organisms/product_card_adapter.dart';
+import '../../providers/store_settings_provider.dart';
+import '../../ui/organisms/product_card_bindings.dart';
+import '../../utils/ordering_gate.dart';
+import '../../widgets/store/store_closed_banner.dart';
 import '../../utils/app_transitions.dart';
 import '../../utils/responsive_helper.dart';
+import '../../viewmodels/home_provider.dart';
+import '../../widgets/common/error_state.dart';
 import '../../widgets/empty_states/empty_state_widget.dart';
+import '../../widgets/skeletons/product_card_skeleton.dart';
 
 class WishlistScreen extends ConsumerWidget {
   const WishlistScreen({super.key});
@@ -16,17 +24,18 @@ class WishlistScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     R.init(context);
+    final mv = context.meatvo;
     final wishlistIds = ref.watch(wishlistProvider);
     final productsAsync = ref.watch(wishlistProductsProvider);
     final count = wishlistIds.length;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: AppColors.surface,
+      backgroundColor: mv.surfaceWarm,
       appBar: AppBar(
         title: Text(count > 0 ? 'My Wishlist ($count)' : 'My Wishlist'),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
+        backgroundColor: mv.surfaceCard,
+        foregroundColor: mv.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
@@ -36,40 +45,30 @@ class WishlistScreen extends ConsumerWidget {
             ? EmptyStateWidget(
                 icon: Icons.favorite_border,
                 title: 'No items saved',
-                description: 'Save your favourite cuts here for quick access later.',
+                description:
+                    'Save your favourite cuts here for quick access later.',
                 actionLabel: 'Browse Products',
                 onAction: () {
                   Navigator.of(context).popUntil((route) => route.isFirst);
                 },
-                iconColor: AppColors.primary,
+                iconColor: mv.brandPrimary,
               )
             : productsAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (_, __) => _WishlistGrid(
-                  products: const [],
-                  onRemove: (productId) => _removeFromWishlist(context, ref, productId),
-                  onOpenProduct: (productId) => _openProduct(context, productId),
+                loading: () => const _WishlistLoadingGrid(),
+                error: (_, __) => ErrorStateWidget(
+                  title: 'Could not load wishlist',
+                  message: 'Check your connection and try again.',
+                  onRetry: () => ref.invalidate(wishlistProductsProvider),
+                  fullScreen: false,
+                  icon: Icons.favorite_border,
+                  iconColor: mv.brandPrimary,
                 ),
                 data: (products) => _WishlistGrid(
+                  mv: mv,
                   products: products,
-                  onRemove: (productId) => _removeFromWishlist(context, ref, productId),
                   onOpenProduct: (productId) => _openProduct(context, productId),
                 ),
               ),
-      ),
-    );
-  }
-
-  void _removeFromWishlist(
-    BuildContext context,
-    WidgetRef ref,
-    String productId,
-  ) {
-    ref.read(wishlistProvider.notifier).remove(productId);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Removed'),
-        duration: Duration(seconds: 1),
       ),
     );
   }
@@ -79,19 +78,42 @@ class WishlistScreen extends ConsumerWidget {
   }
 }
 
-class _WishlistGrid extends StatelessWidget {
-  const _WishlistGrid({
-    required this.products,
-    required this.onRemove,
-    required this.onOpenProduct,
-  });
-
-  final List<ProductWithVariants> products;
-  final void Function(String productId) onRemove;
-  final Future<void> Function(String productId) onOpenProduct;
+class _WishlistLoadingGrid extends StatelessWidget {
+  const _WishlistLoadingGrid();
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final cardHeight =
+        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
+
+    return GridView.builder(
+      padding: EdgeInsets.all(mv.spacing.md),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: mv.spacing.md,
+        crossAxisSpacing: mv.spacing.md,
+        mainAxisExtent: cardHeight,
+      ),
+      itemCount: 4,
+      itemBuilder: (_, __) => const ProductCardSkeleton(),
+    );
+  }
+}
+
+class _WishlistGrid extends ConsumerWidget {
+  const _WishlistGrid({
+    required this.mv,
+    required this.products,
+    required this.onOpenProduct,
+  });
+
+  final MeatvoThemeData mv;
+  final List<ProductWithVariants> products;
+  final Future<void> Function(String productId) onOpenProduct;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     if (products.isEmpty) {
       return EmptyStateWidget(
         icon: Icons.favorite_border,
@@ -101,35 +123,71 @@ class _WishlistGrid extends StatelessWidget {
         onAction: () {
           Navigator.of(context).popUntil((route) => route.isFirst);
         },
-        iconColor: AppColors.primary,
+        iconColor: mv.brandPrimary,
       );
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+    final homeState = ref.watch(homeViewModelProvider);
+    final storeStatus = ref.watch(storeSettingsSyncProvider);
+    final cart = homeState.cart;
+    final busyProductIds = homeState.busyProductIds;
+    final changeQty = ref.read(homeViewModelProvider.notifier).changeCartQuantity;
+    final cardHeight =
+        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
+
+    return Column(
+      children: [
+        StoreClosedBanner(status: storeStatus),
+        Expanded(
+          child: GridView.builder(
+      padding: EdgeInsets.all(mv.spacing.md),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        mainAxisSpacing: AppSpacing.md,
-        crossAxisSpacing: AppSpacing.md,
-        childAspectRatio: 0.72,
+        mainAxisSpacing: mv.spacing.md,
+        crossAxisSpacing: mv.spacing.md,
+        mainAxisExtent: cardHeight,
       ),
       itemCount: products.length,
       itemBuilder: (context, index) {
         final item = products[index];
-        final product = item.product;
-        final productId = product.id;
+        final productId = item.product.id;
+        final qty = cart.findItemByProductId(productId)?.quantity.round() ?? 0;
+        final busy = busyProductIds.contains(productId);
+        final bindings = ProductCardBindings.forProduct(
+          storeStatus: storeStatus,
+          product: item,
+          cart: cart,
+          onQuantityChange: (p, next) async {
+            await OrderingGate.guardQuantityChange(
+              context,
+              ref,
+              currentQuantity: qty,
+              nextQuantity: next,
+              action: () => changeQty(p, next),
+            );
+          },
+        );
 
-        return ProductCard(
-          name: product.name,
-          weight: item.getDisplayUnit(),
-          price: item.getPriceDisplayText(),
-          imageUrl: product.primaryImageUrl,
-          showWishlistHeart: true,
-          isWishlisted: true,
-          onWishlistTap: () => onRemove(productId),
+        return MeatvoProductCard(
+          product: item.product,
+          displayPrice: ProductCardAdapter.displayPrice(item),
+          displayUnit: ProductCardAdapter.displayUnit(item),
+          originalPrice: ProductCardAdapter.originalPrice(item),
+          discountPercent: ProductCardAdapter.discountPercent(item),
+          quantity: qty,
+          isBusy: busy,
+          inStock: bindings.inStock,
+          orderingPaused: bindings.orderingPaused,
+          layout: MeatvoProductCardLayout.grid,
           onTap: () => onOpenProduct(productId),
+          onAdd: bindings.onAdd,
+          onIncrement: bindings.onIncrement,
+          onDecrement: bindings.onDecrement,
         );
       },
+          ),
+        ),
+      ],
     );
   }
 }

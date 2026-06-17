@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/order_model.dart';
 import '../../services/contact_action_service.dart';
+import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../common/contact_action_button.dart';
 
@@ -62,13 +63,7 @@ class _CustomerContactCardState extends State<CustomerContactCard> {
 
   String get _deliveryAddress {
     if (widget.order.deliveryAddress != null) {
-      final address = widget.order.deliveryAddress!;
-      // Remove JSON formatting if present
-      final cleanAddress = address
-          .replaceAll(RegExp(r'\{[^}]*\}'), '')
-          .replaceAll(RegExp(r'"'), '')
-          .trim();
-      return cleanAddress.isNotEmpty ? cleanAddress : address;
+      return formatAddressForDisplay(widget.order.deliveryAddress);
     }
     return 'Address not available';
   }

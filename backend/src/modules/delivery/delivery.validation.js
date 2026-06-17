@@ -35,6 +35,8 @@ const updateDeliveryOrderStatusSchema = z.object({
   params: z.object({ id: idParam }),
   body: z.object({
     status: z.enum(['OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED']),
+    proofUrl: z.string().trim().min(1).optional(),
+    deliveryNotes: z.string().trim().max(500).optional(),
   }),
   query: z.object({}).optional(),
 });

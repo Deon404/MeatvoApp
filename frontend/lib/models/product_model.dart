@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../utils/media_url_resolver.dart';
+
 /// Product Nutrients Model
 class ProductNutrients {
   final double? calories; // per 100g
@@ -126,9 +128,9 @@ class ProductModel {
   String? get primaryImageUrl {
     final list = images;
     if (list != null && list.isNotEmpty) {
-      return list.first;
+      return MediaUrlResolver.resolve(list.first);
     }
-    return imageUrl;
+    return MediaUrlResolver.resolve(imageUrl);
   }
 
   /// All available images (images array + imageUrl if not already in it).

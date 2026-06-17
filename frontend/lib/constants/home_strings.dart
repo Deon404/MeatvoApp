@@ -29,6 +29,7 @@ abstract final class HomeStrings {
   static const recommendationsLoadError =
       'Recommendations could not be loaded.';
   static const featuredLoadError = 'Featured products could not be loaded.';
+  static const allProductsLoadError = 'Products could not be loaded.';
   static const popularLoadError = 'Popular products could not be loaded.';
 
   static const noCategoriesTitle = 'No categories available';

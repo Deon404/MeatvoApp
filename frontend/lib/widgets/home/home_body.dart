@@ -1,21 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../constants/home_strings.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../features/connectivity/connectivity_provider.dart';
 import '../../features/home/widgets/home_category_row.dart';
 import '../../features/home/widgets/home_search_bar.dart';
 import '../../features/home/widgets/home_product_section.dart';
 import '../../features/home/widgets/hero_banner_carousel.dart';
+import '../../features/home/widgets/home_all_products_grid.dart';
 import '../../features/home/widgets/home_brand_footer.dart';
 import '../../models/banner_model.dart';
 import '../../models/home_category_item.dart';
 import '../../models/product_variant_model.dart';
 import '../../ui/shells/offline_state_view.dart';
+import '../../widgets/location/unserviceable_location_view.dart';
 import '../../viewmodels/home_state.dart';
 import '../../widgets/error_states/error_state_widget.dart';
 import '../../screens/search/search_screen.dart';
+import '../../providers/store_settings_provider.dart';
+import '../../utils/ordering_gate.dart';
+import '../../widgets/store/store_closed_banner.dart';
 
 class HomeBody extends ConsumerWidget {
   const HomeBody({
@@ -27,10 +31,12 @@ class HomeBody extends ConsumerWidget {
     required this.onRetryCategories,
     required this.onRetryFeatured,
     required this.onRetryPopular,
+    required this.onRetryAllProducts,
     required this.onBannerTap,
     required this.onProductTap,
     required this.onQuantityChange,
     required this.bottomPadding,
+    this.onChangeLocation,
   });
 
   final HomeState state;
@@ -40,11 +46,13 @@ class HomeBody extends ConsumerWidget {
   final VoidCallback onRetryCategories;
   final VoidCallback onRetryFeatured;
   final VoidCallback onRetryPopular;
+  final VoidCallback onRetryAllProducts;
   final ValueChanged<BannerModel> onBannerTap;
   final ValueChanged<ProductWithVariants> onProductTap;
   final Future<void> Function(ProductWithVariants product, int nextQuantity)
       onQuantityChange;
   final double bottomPadding;
+  final VoidCallback? onChangeLocation;
 
   static bool showsSameProducts(
     List<ProductWithVariants> featured,
@@ -57,25 +65,26 @@ class HomeBody extends ConsumerWidget {
         featuredIds.containsAll(popularIds);
   }
 
-  /// Resolve the canonical Eggs category from API (so we ship its real
-  /// numeric id to the catalog filter) and fall back to a name-only item
-  /// when the admin hasn't published an Eggs category yet.
-  static HomeCategoryItem _findEggsCategory(List<HomeCategoryItem> categories) {
-    for (final category in categories) {
-      if (category.name.toLowerCase().contains('egg')) return category;
-    }
-    return const HomeCategoryItem(id: 'eggs', name: 'Eggs');
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mv = context.meatvo;
     final isOffline = ref.watch(isOfflineProvider).value ?? false;
+    final storeStatus = ref.watch(storeSettingsSyncProvider);
     const oroshiBannerHeight = 150.0;
     final hidePopular = showsSameProducts(
       state.featuredProducts,
       state.bestSellingProducts,
     );
+    final categorySections = state.categoryProductSections;
+    final showCategorySections = categorySections.isNotEmpty;
+    final showLoadingSections =
+        state.isAllProductsLoading && state.allProducts.isEmpty;
+
+    if (state.defaultAddress != null && state.isDeliveryServiceable == false) {
+      return UnserviceableLocationView(
+        onChangeLocation: onChangeLocation ?? () {},
+      );
+    }
 
     if (state.pageError != null && !state.hasContent) {
       return SliverFillRemaining(
@@ -93,6 +102,24 @@ class HomeBody extends ConsumerWidget {
       );
     }
 
+    Future<void> guardedQuantityChange(
+      ProductWithVariants product,
+      int nextQuantity,
+    ) async {
+      final current = state.cart
+              .findItemByProductId(product.product.id)
+              ?.quantity
+              .round() ??
+          0;
+      await OrderingGate.guardQuantityChange(
+        context,
+        ref,
+        currentQuantity: current,
+        nextQuantity: nextQuantity,
+        action: () => onQuantityChange(product, nextQuantity),
+      );
+    }
+
     return SliverMainAxisGroup(
       slivers: [
         SliverToBoxAdapter(
@@ -106,6 +133,7 @@ class HomeBody extends ConsumerWidget {
             },
           ),
         ),
+        SliverToBoxAdapter(child: StoreClosedBanner(status: storeStatus)),
         SliverToBoxAdapter(
           child: HeroBannerCarousel(
             banners: state.banners,
@@ -124,37 +152,102 @@ class HomeBody extends ConsumerWidget {
           ),
         ),
         SliverToBoxAdapter(child: SizedBox(height: mv.spacing.md)),
-        SliverToBoxAdapter(
-          child: HomeProductSection(
-            title: 'Best Sellers',
-            products: state.bestSellingProducts,
-            cart: state.cart,
-            busyProductIds: state.busyProductIds,
-            isLoading: state.isBestSellersLoading,
-            errorMessage: state.bestSellersError,
-            onViewAll: onOpenCategories,
-            onRetry: onRetryPopular,
-            onProductTap: onProductTap,
-            onQuantityChange: onQuantityChange,
-          ),
-        ),
-        if (!hidePopular)
+        if (showLoadingSections) ...[
           SliverToBoxAdapter(
             child: HomeProductSection(
-              title: 'Fresh Today',
-              products: state.featuredProducts,
+              title: 'Best Sellers',
+              products: const [],
               cart: state.cart,
               busyProductIds: state.busyProductIds,
-              isLoading: state.isFeaturedLoading,
-              errorMessage: state.featuredError,
+              isLoading: true,
               onViewAll: onOpenCategories,
-              onRetry: onRetryFeatured,
+              onRetry: onRetryAllProducts,
               onProductTap: onProductTap,
-              onQuantityChange: onQuantityChange,
+              onQuantityChange: guardedQuantityChange,
+              storeStatus: storeStatus,
             ),
           ),
+          SliverToBoxAdapter(
+            child: HomeAllProductsGrid(
+              products: const [],
+              cart: state.cart,
+              busyProductIds: state.busyProductIds,
+              isLoading: true,
+              onRetry: onRetryAllProducts,
+              onProductTap: onProductTap,
+              onQuantityChange: guardedQuantityChange,
+              storeStatus: storeStatus,
+            ),
+          ),
+        ] else ...[
+          if (state.bestSellingProducts.isNotEmpty)
+            SliverToBoxAdapter(
+              child: HomeProductSection(
+                title: 'Best Sellers',
+                products: state.bestSellingProducts,
+                cart: state.cart,
+                busyProductIds: state.busyProductIds,
+                isLoading: state.isBestSellersLoading,
+                errorMessage: state.bestSellersError,
+                onViewAll: onOpenCategories,
+                onRetry: onRetryPopular,
+                onProductTap: onProductTap,
+                onQuantityChange: guardedQuantityChange,
+                storeStatus: storeStatus,
+              ),
+            ),
+          if (!hidePopular && state.featuredProducts.isNotEmpty)
+            SliverToBoxAdapter(
+              child: HomeProductSection(
+                title: 'Fresh Today',
+                products: state.featuredProducts,
+                cart: state.cart,
+                busyProductIds: state.busyProductIds,
+                isLoading: state.isFeaturedLoading,
+                errorMessage: state.featuredError,
+                onViewAll: onOpenCategories,
+                onRetry: onRetryFeatured,
+                onProductTap: onProductTap,
+                onQuantityChange: guardedQuantityChange,
+                storeStatus: storeStatus,
+              ),
+            ),
+          if (showCategorySections)
+            ...categorySections.map(
+              (section) => SliverToBoxAdapter(
+                child: HomeProductSection(
+                  title: section.category.name,
+                  products: section.products,
+                  cart: state.cart,
+                  busyProductIds: state.busyProductIds,
+                  isLoading: false,
+                  onViewAll: () => onOpenCategory(section.category),
+                  onRetry: onRetryAllProducts,
+                  onProductTap: onProductTap,
+                  onQuantityChange: guardedQuantityChange,
+                storeStatus: storeStatus,
+                ),
+              ),
+            ),
+          SliverToBoxAdapter(
+            child: HomeAllProductsGrid(
+              products: state.allProducts,
+              cart: state.cart,
+              busyProductIds: state.busyProductIds,
+              isLoading: state.isAllProductsLoading,
+              errorMessage: state.allProductsError,
+              onRetry: onRetryAllProducts,
+              onProductTap: onProductTap,
+              onQuantityChange: guardedQuantityChange,
+              storeStatus: storeStatus,
+            ),
+          ),
+        ],
         const SliverToBoxAdapter(
-          child: HomeBrandFooter(),
+          child: HomeBrandFooter(
+            align: CrossAxisAlignment.center,
+            textAlign: TextAlign.center,
+          ),
         ),
         SliverPadding(padding: EdgeInsets.only(bottom: bottomPadding)),
       ],

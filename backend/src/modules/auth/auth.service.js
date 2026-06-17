@@ -23,7 +23,7 @@ const generateTokens = (userId) => {
     }, 
     process.env.JWT_REFRESH_SECRET, 
     {
-      expiresIn: process.env.JWT_REFRESH_EXPIRY || '30d',
+      expiresIn: process.env.JWT_REFRESH_EXPIRY || '7d',
       issuer: 'meatvo-app',
       audience: 'meatvo-users',
       algorithm: 'HS256'
@@ -35,7 +35,13 @@ const generateTokens = (userId) => {
 
 const verifyRefreshToken = (token) => {
   try {
-    return jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET, {
+      algorithms: ['HS256'],
+      issuer: 'meatvo-app',
+      audience: 'meatvo-users',
+    });
+    if (decoded.type !== 'refresh') return null;
+    return decoded;
   } catch {
     return null;
   }

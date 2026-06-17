@@ -63,8 +63,49 @@ const validateCoupon = asyncHandler(async (req, res) => {
   );
 });
 
+const updateCoupon = asyncHandler(async (req, res) => {
+  const couponId = Number(req.validated.params.id);
+  const body = req.validated.body;
+
+  const { rows: existing } = await query('SELECT id FROM coupons WHERE id = $1', [couponId]);
+  if (!existing[0]) return fail(res, 404, 'Coupon not found');
+
+  const fields = [];
+  const values = [];
+  let idx = 1;
+  for (const [key, column] of [
+    ['discount_type', 'discount_type'],
+    ['discount_value', 'discount_value'],
+    ['min_order_value', 'min_order_value'],
+    ['max_uses', 'max_uses'],
+    ['active', 'active'],
+  ]) {
+    if (body[key] !== undefined) {
+      fields.push(`${column} = $${idx++}`);
+      values.push(body[key]);
+    }
+  }
+  values.push(couponId);
+
+  const { rows } = await query(
+    `UPDATE coupons SET ${fields.join(', ')} WHERE id = $${idx}
+     RETURNING id, code, discount_type, discount_value, min_order_value, max_uses, used_count, active`,
+    values
+  );
+  return ok(res, { coupon: rows[0] }, 'Coupon updated');
+});
+
+const deleteCoupon = asyncHandler(async (req, res) => {
+  const couponId = Number(req.validated.params.id);
+  const { rowCount } = await query('DELETE FROM coupons WHERE id = $1', [couponId]);
+  if (!rowCount) return fail(res, 404, 'Coupon not found');
+  return ok(res, { id: couponId }, 'Coupon deleted');
+});
+
 module.exports = {
   listCoupons,
   createCoupon,
   validateCoupon,
+  updateCoupon,
+  deleteCoupon,
 };

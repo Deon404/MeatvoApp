@@ -128,7 +128,7 @@ const buildOtpPayload = ({ templateId, mobile, otp, senderId, dltTeId, otpVariab
     template_id: String(templateId).trim(),
     mobile: String(mobile).trim(),
     otp: String(otp),
-    otp_length: Number(process.env.MSG91_OTP_LENGTH || 4),
+    otp_length: Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 4),
     otp_expiry: Number(process.env.MSG91_OTP_EXPIRY || 10),
     sender: String(senderId).trim(),
   };

@@ -1,3 +1,5 @@
+import '../utils/address_display_util.dart';
+
 /// Address model for user delivery addresses
 enum AddressLabel {
   home,
@@ -62,32 +64,10 @@ class AddressModel {
     this.updatedAt,
   });
 
-  static final RegExp _plusCodePattern = RegExp(
-    r'\b[A-Z0-9]{4,}\+[A-Z0-9]{2,}\b',
-    caseSensitive: false,
-  );
+  static String _cleanPart(String value) => cleanAddressPart(value);
 
-  /// Strip Google Plus Codes and collapse duplicate comma-separated parts.
-  static String _cleanPart(String value) {
-    var cleaned = value.trim();
-    if (cleaned.isEmpty) return '';
-    cleaned = cleaned.replaceAll(_plusCodePattern, '').trim();
-    cleaned = cleaned.replaceAll(RegExp(r'\s{2,}'), ' ');
-    cleaned = cleaned.replaceAll(RegExp(r'^,\s*|,\s*$'), '');
-    return cleaned;
-  }
-
-  static List<String> _dedupeParts(Iterable<String> parts) {
-    final seen = <String>{};
-    final result = <String>[];
-    for (final raw in parts) {
-      final part = _cleanPart(raw);
-      if (part.isEmpty) continue;
-      final key = part.toLowerCase();
-      if (seen.add(key)) result.add(part);
-    }
-    return result;
-  }
+  static List<String> _dedupeParts(Iterable<String> parts) =>
+      dedupeAddressParts(parts);
 
   /// Get full address as a formatted string
   String get fullAddress {

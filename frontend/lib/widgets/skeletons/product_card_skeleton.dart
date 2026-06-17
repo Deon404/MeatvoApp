@@ -33,10 +33,9 @@ import 'shimmer_base.dart';
 ///   1. Top-level `LayoutBuilder` guarantees a finite width even if the
 ///      parent (e.g. a horizontal carousel) feeds us unbounded constraints.
 ///   2. Inside the card we use `LayoutBuilder` AGAIN to read the available
-///      HEIGHT, then split it proportionally between the image (≈55%) and
-///      the body (the remainder).  No child can request more pixels than
-///      the parent grants, so the 14-px bottom overflow is mathematically
-///      impossible.
+///      HEIGHT, then split it between the 1:1 image (width == cell width)
+///      and the body (the remainder).  No child can request more pixels than
+///      the parent grants, so bottom overflow is mathematically impossible.
 ///   3. The body section uses `Expanded` + `MainAxisSize.min` + `Flexible`
 ///      around each shimmer line so any spare or missing pixels are
 ///      absorbed gracefully — including font-scale 200%, split-screen,
@@ -51,7 +50,7 @@ class ProductCardSkeleton extends StatelessWidget {
   const ProductCardSkeleton({super.key});
 
   static const double _kFallbackWidth = 168;
-  static const double _kFallbackHeight = 288;
+  static const double _kFallbackHeight = 276;
 
   @override
   Widget build(BuildContext context) {
@@ -68,11 +67,11 @@ class ProductCardSkeleton extends StatelessWidget {
           child: DecoratedBox(
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(22),
               border: Border.all(color: AppColors.divider),
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(22),
               child: LayoutBuilder(
                 builder: (context, inner) {
                   // Resolve a finite height. If parent didn't allocate one
@@ -84,7 +83,8 @@ class ProductCardSkeleton extends StatelessWidget {
                       inner.maxHeight > 0;
                   final height =
                       hasFiniteHeight ? inner.maxHeight : _kFallbackHeight;
-                  final imageHeight = (height * 0.55).clamp(120.0, 180.0);
+                  // 1:1 image: height equals the card's bounded width.
+                  final imageHeight = width.clamp(120.0, height * 0.75);
 
                   return Column(
                     mainAxisSize: MainAxisSize.min,
@@ -109,7 +109,7 @@ class ProductCardSkeleton extends StatelessWidget {
                       // overflow the card.
                       Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -125,14 +125,8 @@ class ProductCardSkeleton extends StatelessWidget {
                                   crossAxisAlignment:
                                       CrossAxisAlignment.start,
                                   children: [
-                                    ShimmerContainer(
-                                      width: 64,
-                                      height: 12,
-                                      borderRadius: 999,
-                                    ),
-                                    SizedBox(height: 8),
                                     _StretchShimmer(height: 14),
-                                    SizedBox(height: 6),
+                                    SizedBox(height: 2),
                                     ShimmerContainer(
                                       width: 80,
                                       height: 10,
@@ -141,28 +135,25 @@ class ProductCardSkeleton extends StatelessWidget {
                                   ],
                                 ),
                               ),
-                              // CTA row — fixed 28×… for the price shimmer
-                              // and a 56×28 trailing pill.  Wrapped in
-                              // Flexible(loose) so it can shrink instead of
-                              // overflowing on landscape / small phones.
+                              // Price + ADD pill row.
                               const Flexible(
                                 fit: FlexFit.loose,
                                 child: Padding(
-                                  padding: EdgeInsets.only(top: 8),
+                                  padding: EdgeInsets.only(top: 6),
                                   child: Row(
                                     children: [
                                       Expanded(
                                         child: ShimmerContainer(
                                           width: double.infinity,
-                                          height: 18,
+                                          height: 16,
                                           borderRadius: 8,
                                         ),
                                       ),
                                       SizedBox(width: 8),
                                       ShimmerContainer(
-                                        width: 52,
-                                        height: 28,
-                                        borderRadius: 12,
+                                        width: 64,
+                                        height: 32,
+                                        borderRadius: 10,
                                       ),
                                     ],
                                   ),

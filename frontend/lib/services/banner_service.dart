@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import '../models/banner_model.dart';
+import '../utils/media_url_resolver.dart';
 import 'api_service.dart';
 import 'cache_service.dart';
 
@@ -28,7 +29,9 @@ class BannerService {
       'id': (json['id'] ?? '').toString(),
       'title': (json['title'] ?? 'Fresh offer').toString(),
       'subtitle': json['subtitle']?.toString(),
-      'image_url': (json['image_url'] ?? json['imageUrl'] ?? '').toString(),
+      'image_url': MediaUrlResolver.resolve(
+        (json['image_url'] ?? json['imageUrl'] ?? '').toString(),
+      ) ?? '',
       'link': json['link']?.toString(),
       'link_type': json['link_type']?.toString(),
       'link_id': json['link_id']?.toString(),

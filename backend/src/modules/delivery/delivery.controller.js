@@ -10,13 +10,17 @@ const {
   emitRouteZoneAssigned,
   clearAssignmentTimeout,
 } = require('../../services/assignment.service');
-const { addressToText, addressToObject } = require('../../utils/address');
+const { addressToText, addressToObject, cleanAddressText } = require('../../utils/address');
+
+const ADMIN_PENDING_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
+const ADMIN_UNASSIGNED_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
 const {
   calculateDeliveryEarnings,
   recordEarningsHistory,
   updateRiderEarnings,
 } = require('../../services/earnings.service');
 const { DELIVERY_STATUS_TRANSITIONS, canTransition } = require('../../utils/orderStatus');
+const { ensureDeliveryOTP } = require('../../services/deliveryProof.service');
 
 // Enhanced tracking service
 const { updateRiderLocation: updateRiderLocationEnhanced } = require('../../services/tracking.service');
@@ -26,6 +30,8 @@ const { optimizeRoute } = require('./route-optimizer');
 const { optimizeMultiRiderRoute } = require('./zone-splitter');
 const { getStoreSettings } = require('../settings/settings.controller');
 const { logger } = require('../../utils/logger');
+const { validateRiderProofUpload } = require('../../utils/uploadSigning');
+const { storeDeliveryProof } = require('../../services/deliveryProof.service');
 
 const getDeliveryPartnerIdForUser = async (userId) => {
   const { rows } = await query('SELECT id FROM delivery_partners WHERE user_id = $1', [userId]);
@@ -241,6 +247,8 @@ const acceptOrder = asyncHandler(async (req, res) => {
 
   clearAssignmentTimeout(orderId);
 
+  ensureDeliveryOTP(orderId).catch(() => {});
+
   // Emit to customer and admin rooms after transaction commits successfully
   const io = req.app.get('io');
   if (io) {
@@ -294,9 +302,18 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
   const orderId = Number(req.validated.params.id);
   const status = req.validated.body.status;
+  const proofUrl = req.validated.body.proofUrl;
+  const deliveryNotes = req.validated.body.deliveryNotes;
 
   const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
+
+  let proofStoragePath = null;
+  if (status === 'DELIVERED' && proofUrl) {
+    const proofCheck = validateRiderProofUpload(proofUrl, userId);
+    if (!proofCheck.valid) return fail(res, 400, proofCheck.reason);
+    proofStoragePath = proofCheck.storagePath;
+  }
 
   await withTransaction(async (client) => {
     const { rows: aRows } = await client.query(
@@ -332,7 +349,27 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
       orderId,
     ]);
     await client.query('UPDATE orders SET status = $1 WHERE id = $2', [status, orderId]);
+
+    // LIFECYCLE FIX: mark COD payment collected when delivery completes
+    if (status === 'DELIVERED') {
+      await client.query(
+        `UPDATE orders
+         SET payment_status = 'COLLECTED', updated_at = NOW()
+         WHERE id = $1 AND payment_mode = 'COD' AND payment_status = 'PENDING'`,
+        [orderId]
+      );
+    }
   });
+
+  if (status === 'DELIVERED' && proofStoragePath) {
+    await storeDeliveryProof({
+      orderId,
+      riderUserId: userId,
+      proofType: 'photo',
+      proofUrl: proofStoragePath,
+      notes: deliveryNotes || null,
+    });
+  }
 
   const { rows } = await query(
     `SELECT id, customer_id, status, total_amount, coupon_id, address, payment_mode, created_at
@@ -496,13 +533,38 @@ const rejectOrder = asyncHandler(async (req, res) => {
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
 
   await withTransaction(async (client) => {
-    const { rows: assignmentRows } = await client.query(
+    let { rows: assignmentRows } = await client.query(
       `SELECT id
        FROM order_assignments
        WHERE order_id = $1 AND delivery_partner_id = $2
        FOR UPDATE`,
       [orderId, deliveryPartnerId]
     );
+
+    if (!assignmentRows[0]) {
+      const { rows: existing } = await client.query(
+        `SELECT delivery_partner_id FROM order_assignments WHERE order_id = $1 FOR UPDATE`,
+        [orderId]
+      );
+      if (existing[0] && Number(existing[0].delivery_partner_id) !== deliveryPartnerId) {
+        const err = new Error('Order assigned to another partner');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (!existing[0]) {
+        await client.query(
+          `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at)
+           VALUES ($1, $2, 'ASSIGNED', NOW())`,
+          [orderId, deliveryPartnerId]
+        );
+      }
+      ({ rows: assignmentRows } = await client.query(
+        `SELECT id FROM order_assignments
+         WHERE order_id = $1 AND delivery_partner_id = $2 FOR UPDATE`,
+        [orderId, deliveryPartnerId]
+      ));
+    }
+
     if (!assignmentRows[0]) {
       const err = new Error('Order not assigned to you');
       err.statusCode = 403;
@@ -542,30 +604,95 @@ const getEarnings = asyncHandler(async (req, res) => {
   const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
 
-  const intervalDays = period === 'week' ? 7 : period === 'month' ? 30 : 1;
+  let intervalDays = 1;
+  let dateFilterSql = `reh.created_at >= NOW() - ($2 || ' days')::interval`;
+  const params = [userId];
 
-  const { rows } = await query(
-    `SELECT o.id AS order_id, o.total_amount, o.created_at
-     FROM order_assignments oa
-     JOIN orders o ON o.id = oa.order_id
-     WHERE oa.delivery_partner_id = $1
-       AND o.status = 'DELIVERED'
-       AND o.created_at >= NOW() - ($2 || ' days')::interval
-     ORDER BY o.created_at DESC`,
-    [deliveryPartnerId, String(intervalDays)]
-  );
+  if (period === 'week') {
+    intervalDays = 7;
+  } else if (period === 'month') {
+    intervalDays = 30;
+  } else if (period.startsWith('date:')) {
+    const dateKey = period.slice(5);
+    dateFilterSql = `reh.created_at::date = $2::date`;
+    params.push(dateKey);
+  } else {
+    params.push(String(intervalDays));
+  }
+
+  let rows = [];
+  try {
+    const historyResult = await query(
+      `SELECT reh.order_id, reh.total_amount, reh.base_amount, reh.distance_bonus,
+              reh.time_bonus, reh.peak_bonus, reh.performance_bonus, reh.created_at,
+              reh.rider_rating, reh.completion_rate
+       FROM rider_earnings_history reh
+       WHERE reh.rider_id = $1
+         AND ${dateFilterSql}
+       ORDER BY reh.created_at DESC`,
+      params
+    );
+    rows = historyResult.rows;
+  } catch (err) {
+    if (err?.code !== '42P01') throw err;
+  }
+
+  if (rows.length === 0) {
+    const fallback = await query(
+      `SELECT o.id AS order_id, o.total_amount, o.created_at
+       FROM order_assignments oa
+       JOIN orders o ON o.id = oa.order_id
+       WHERE oa.delivery_partner_id = $1
+         AND o.status = 'DELIVERED'
+         AND o.created_at >= NOW() - ($2 || ' days')::interval
+       ORDER BY o.created_at DESC`,
+      [deliveryPartnerId, String(intervalDays)]
+    );
+    rows = fallback.rows.map((r) => ({
+      order_id: r.order_id,
+      total_amount: Math.round(Number(r.total_amount || 0) * 0.1),
+      base_amount: Math.round(Number(r.total_amount || 0) * 0.1),
+      distance_bonus: 0,
+      time_bonus: 0,
+      peak_bonus: 0,
+      performance_bonus: 0,
+      created_at: r.created_at,
+      rider_rating: null,
+      completion_rate: null,
+    }));
+  }
 
   const breakdown = rows.map((r) => ({
     orderId: Number(r.order_id),
-    amount: Math.round(Number(r.total_amount || 0) * 0.1),
-    bonus: 0,
+    amount: Math.round(Number(r.total_amount || 0)),
+    base: Math.round(Number(r.base_amount || r.total_amount || 0)),
+    distanceBonus: Math.round(Number(r.distance_bonus || 0)),
+    timeBonus: Math.round(Number(r.time_bonus || 0)),
+    peakBonus: Math.round(Number(r.peak_bonus || 0)),
+    performanceBonus: Math.round(Number(r.performance_bonus || 0)),
+    bonus: Math.round(
+      Number(r.distance_bonus || 0) +
+      Number(r.time_bonus || 0) +
+      Number(r.peak_bonus || 0) +
+      Number(r.performance_bonus || 0)
+    ),
     createdAt: r.created_at,
   }));
-  const total = breakdown.reduce((sum, b) => sum + b.amount + b.bonus, 0);
+  const total = breakdown.reduce((sum, b) => sum + b.amount, 0);
+  const avgRating = rows.find((r) => r.rider_rating != null)?.rider_rating;
 
   return ok(
     res,
-    { total, deliveries: breakdown.length, breakdown, period },
+    {
+      total,
+      deliveries: breakdown.length,
+      breakdown,
+      period,
+      rating: avgRating != null ? Number(avgRating) : 0,
+      completionRate: rows[0]?.completion_rate != null
+        ? Number(rows[0].completion_rate)
+        : 0,
+    },
     'Earnings'
   );
 });
@@ -776,7 +903,6 @@ const getAdminOptimizedRoute = asyncHandler(async (req, res) => {
   const storeLat = Number(storeSettings.center_lat || 23.6583);
   const storeLng = Number(storeSettings.center_lng || 86.1764);
 
-  const params = dateParam !== 'today' ? [dateParam] : [];
   const { rows } = await query(
     `SELECT 
        o.id AS order_id,
@@ -790,16 +916,16 @@ const getAdminOptimizedRoute = asyncHandler(async (req, res) => {
      JOIN users u ON u.id = o.customer_id
      LEFT JOIN order_assignments oa ON oa.order_id = o.id
      WHERE ${dateCondition}
-       AND o.status IN ('CONFIRMED', 'PACKED', 'OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY')
+       AND o.status::text = ANY($${dateParam !== 'today' ? 2 : 1}::text[])
      ORDER BY o.created_at ASC`,
-    params
+    dateParam !== 'today' ? [dateParam, ADMIN_PENDING_STATUSES] : [ADMIN_PENDING_STATUSES]
   );
 
   const deliveryPoints = rows.map(row => ({
     orderId: Number(row.order_id),
     lat: Number(row.lat),
     lng: Number(row.lng),
-    address: row.address || 'Address not available',
+    address: cleanAddressText(row.address) || 'Address not available',
     customerName: row.customer_name || 'Customer',
     customerPhone: row.customer_phone || null,
     status: row.status,
@@ -831,7 +957,6 @@ const assignMultiRiderRoutes = asyncHandler(async (req, res) => {
   const storeLat = Number(storeSettings.center_lat || 23.6583);
   const storeLng = Number(storeSettings.center_lng || 86.1764);
 
-  const params = dateParam !== 'today' ? [dateParam] : [];
   const { rows } = await query(
     `SELECT 
        o.id AS order_id,
@@ -846,10 +971,10 @@ const assignMultiRiderRoutes = asyncHandler(async (req, res) => {
      JOIN users u ON u.id = o.customer_id
      LEFT JOIN order_assignments oa ON oa.order_id = o.id
      WHERE ${dateCondition}
-       AND o.status IN ('CONFIRMED', 'PACKED')
+       AND o.status::text = ANY($${dateParam !== 'today' ? 2 : 1}::text[])
        AND oa.id IS NULL
      ORDER BY o.created_at ASC`,
-    params
+    dateParam !== 'today' ? [dateParam, ADMIN_UNASSIGNED_STATUSES] : [ADMIN_UNASSIGNED_STATUSES]
   );
 
   if (rows.length === 0) {
@@ -865,7 +990,7 @@ const assignMultiRiderRoutes = asyncHandler(async (req, res) => {
     orderId: Number(row.order_id),
     lat: Number(row.lat),
     lng: Number(row.lng),
-    address: row.address || 'Address not available',
+    address: cleanAddressText(row.address) || 'Address not available',
     customerName: row.customer_name || 'Customer',
     customerPhone: row.customer_phone || null,
     status: row.status,

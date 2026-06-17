@@ -2,8 +2,14 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok, fail } = require('../../utils/response');
 const { readCartMap, writeCartMap, clearCart: clearCartService } = require('./cart.service');
+const { signStoredImageUrl } = require('../../utils/uploadSigning');
+const { resolveUnitSalePrice } = require('../../utils/productPricing.util');
 
-const cartMapToArray = async (map) => {
+const PRODUCT_SELECT = `SELECT id, name, price, base_price_per_kg, weight_variants,
+                               unit, image_url, active, stock
+                        FROM products`;
+
+const cartMapToArray = async (map, req) => {
   const entries = Object.entries(map || {})
     .map(([productId, quantity]) => ({ productId: String(productId), quantity: Number(quantity) }))
     .filter((it) => it.productId && Number.isFinite(it.quantity) && it.quantity > 0);
@@ -14,26 +20,28 @@ const cartMapToArray = async (map) => {
   if (productIds.length === 0) return [];
 
   const { rows } = await query(
-    `SELECT id, name, price, unit, image_url, active, stock
-     FROM products
-     WHERE id = ANY($1::bigint[])`,
+    `${PRODUCT_SELECT} WHERE id = ANY($1::bigint[])`,
     [productIds]
   );
 
   const byId = new Map(rows.map((p) => [String(p.id), p]));
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
   return entries
     .map((e) => {
       const p = byId.get(e.productId);
       if (!p) return null;
+      const unitPrice = resolveUnitSalePrice(p);
       return {
         productId: e.productId,
         quantity: e.quantity,
         product: {
           id: String(p.id),
           name: p.name,
-          price: Number(p.price),
+          price: unitPrice,
+          display_price: unitPrice,
+          base_price_per_kg: Number(p.base_price_per_kg || 0) || null,
           unit: p.unit || '',
-          imageUrl: p.image_url || '',
+          imageUrl: signStoredImageUrl(p.image_url || '', baseUrl),
           isActive: Boolean(p.active),
           inStock: Number(p.stock) > 0,
         },
@@ -41,6 +49,9 @@ const cartMapToArray = async (map) => {
     })
     .filter(Boolean);
 };
+
+const sumCartTotal = (items) =>
+  items.reduce((sum, item) => sum + Number(item.product.price) * item.quantity, 0);
 
 const resolveCartProductId = (validated = {}) => {
   const bodyId = validated.body?.productId;
@@ -51,16 +62,10 @@ const resolveCartProductId = (validated = {}) => {
 const getCart = asyncHandler(async (req, res) => {
   const userId = Number(req.user.id);
   const map = await readCartMap(userId);
-  const items = await cartMapToArray(map);
+  const items = await cartMapToArray(map, req);
+  const total = sumCartTotal(items);
 
-  let total = 0;
-  let itemCount = 0;
-  for (const item of items) {
-    total += Number(item.product.price) * item.quantity;
-    itemCount += 1;
-  }
-
-  return ok(res, { items, total: Number(total.toFixed(2)), itemCount });
+  return ok(res, { items, total: Number(total.toFixed(2)), itemCount: items.length });
 });
 
 // Helper for stock check
@@ -95,11 +100,8 @@ const addToCart = asyncHandler(async (req, res) => {
   map[productId] = newQty;
   await writeCartMap(userId, map);
 
-  const items = await cartMapToArray(map);
-  let total = 0;
-  for (const item of items) {
-    total += Number(item.product.price) * item.quantity;
-  }
+  const items = await cartMapToArray(map, req);
+  const total = sumCartTotal(items);
 
   return ok(res, { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } }, 'Added to cart');
 });
@@ -124,12 +126,8 @@ const updateCartItem = asyncHandler(async (req, res) => {
   }
 
   await writeCartMap(userId, map);
-  const items = await cartMapToArray(map);
-
-  let total = 0;
-  for (const item of items) {
-    total += Number(item.product.price) * item.quantity;
-  }
+  const items = await cartMapToArray(map, req);
+  const total = sumCartTotal(items);
 
   return ok(res, { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } });
 });
@@ -146,11 +144,8 @@ const removeFromCart = asyncHandler(async (req, res) => {
   delete map[productId];
   await writeCartMap(userId, map);
 
-  const items = await cartMapToArray(map);
-  let total = 0;
-  for (const item of items) {
-    total += Number(item.product.price) * item.quantity;
-  }
+  const items = await cartMapToArray(map, req);
+  const total = sumCartTotal(items);
 
   return ok(res, { cart: { items, total: Number(total.toFixed(2)), itemCount: items.length } });
 });

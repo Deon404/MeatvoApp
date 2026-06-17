@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
 
 enum RiderKycStatus { pending, verified, rejected }
 
@@ -138,6 +139,10 @@ class _AdminRidersScreenState extends State<AdminRidersScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: AppColors.background,
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.riders,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       appBar: AppBar(
         title: const Text('Manage Riders'),
         backgroundColor: Colors.white,

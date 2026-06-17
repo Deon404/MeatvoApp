@@ -34,7 +34,10 @@ Google Maps setup for Meatvo (enable all on ONE key):
   3. Geocoding API         → Use Current Location → address text
   4. Directions API        → Order tracking road routes & ETA
 
-Set GOOGLE_MAPS_API_KEY in old_meatvo/.env (Gradle copies it into AndroidManifest on build).
+Set GOOGLE_MAPS_API_KEY in frontend/.env, then sync to Flutter assets:
+  dart run tool/sync_env.dart
+
+Gradle also copies the key into AndroidManifest for native map tiles.
 
 Google Cloud → Credentials → your key → Application restrictions:
   Package: $androidApplicationId
@@ -48,7 +51,7 @@ Then: flutter clean && flutter run
     return 'Map tiles are taking too long to load.\n\n'
         'Please check:\n'
         '1. Internet connection\n'
-        '2. GOOGLE_MAPS_API_KEY in old_meatvo/.env (then flutter clean && run)\n'
+        '2. GOOGLE_MAPS_API_KEY in frontend/.env (then flutter clean && run)\n'
         '3. Maps SDK for Android is enabled in Google Cloud Console\n'
         '4. API key is restricted to this app:\n'
         '   Package: $pkg\n'
@@ -58,7 +61,7 @@ Then: flutter clean && flutter run
   static String manifestKeyMissingError() =>
       'Google Maps API key is in .env but NOT in the Android app.\n\n'
       'The native map reads the key from AndroidManifest at build time.\n'
-      'Add GOOGLE_MAPS_API_KEY to old_meatvo/.env and run:\n'
+      'Add GOOGLE_MAPS_API_KEY to frontend/.env and run:\n'
       '  flutter clean\n'
       '  flutter run\n\n'
       'Optional: copy the same key to android/gradle.properties.';

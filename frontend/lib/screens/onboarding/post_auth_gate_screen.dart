@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 
-import '../../core/constants/app_constants.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../main.dart' show MyHomePage;
 import '../../services/address_service.dart';
 import '../../utils/responsive_helper.dart';
-import 'location_permission_screen.dart';
 import 'location_setup_screen.dart';
 
-/// Routes customers through location permission + address setup before home.
+/// Routes customers through address setup before home.
 class PostAuthGateScreen extends StatefulWidget {
   const PostAuthGateScreen({super.key});
 
@@ -39,18 +37,7 @@ class _PostAuthGateScreenState extends State<PostAuthGateScreen> {
         return;
       }
 
-      final permission = await Geolocator.checkPermission();
       if (!mounted) return;
-
-      final needsRationale = permission == LocationPermission.denied ||
-          permission == LocationPermission.unableToDetermine;
-
-      if (needsRationale) {
-        await LocationPermissionScreen.show(context);
-      }
-
-      if (!mounted) return;
-
       await Navigator.of(context).pushReplacement(
         PageRouteBuilder<void>(
           pageBuilder: (_, __, ___) => const LocationSetupScreen(),
@@ -71,8 +58,9 @@ class _PostAuthGateScreenState extends State<PostAuthGateScreen> {
   @override
   Widget build(BuildContext context) {
     R.init(context);
-    return const Scaffold(
-      backgroundColor: AppColors.surface,
+    final mv = context.meatvo;
+    return Scaffold(
+      backgroundColor: mv.surfaceWarm,
       body: SafeArea(
         child: Center(
           child: SizedBox(
@@ -80,7 +68,7 @@ class _PostAuthGateScreenState extends State<PostAuthGateScreen> {
             height: 28,
             child: CircularProgressIndicator(
               strokeWidth: 2.5,
-              color: AppColors.primary,
+              color: mv.brandPrimary,
             ),
           ),
         ),

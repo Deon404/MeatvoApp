@@ -10,8 +10,8 @@ cd backend
 npm install
 npm run dev
 
-# Flutter (configure old_meatvo/.env first)
-cd old_meatvo
+# Flutter (configure frontend/.env first)
+cd frontend
 flutter pub get
 flutter run
 ```

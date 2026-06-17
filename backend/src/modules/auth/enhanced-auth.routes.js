@@ -5,7 +5,7 @@ const { authenticateToken, requireRole } = require('../../middlewares/enhancedAu
 const { protect } = require('../../middlewares/auth.middleware');
 const { mfaRateLimiter } = require('../../middlewares/mfaRateLimiter');
 const { validate } = require('../../middlewares/validate.middleware');
-const { enableMfaSchema } = require('./auth.validation');
+const { enableMfaSchema, verifyMfaSchema, disableMfaSchema } = require('./auth.validation');
 const mfaService = require('./mfa.service');
 const { logger } = require('../../utils/logger');
 const { ok, fail } = require('../../utils/response');
@@ -14,8 +14,12 @@ const { ok, fail } = require('../../utils/response');
 const asyncMiddleware = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // MFA setup routes
-router.post('/mfa/setup', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), async (req, res) => {
+router.post('/mfa/setup', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, async (req, res) => {
   try {
+    const existing = await mfaService.getUserMFA(req.user.id);
+    if (existing && mfaService.isMFAEnabled(existing)) {
+      return fail(res, 400, 'MFA is already enabled', { code: 'MFA_ALREADY_ENABLED' });
+    }
     const mfaData = await mfaService.generateMFAResponse(req.user);
     return ok(res, mfaData, 'MFA setup data generated');
   } catch (error) {
@@ -24,8 +28,12 @@ router.post('/mfa/setup', asyncMiddleware(authenticateToken), requireRole(['cust
   }
 });
 
-router.post('/mfa/enable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), validate(enableMfaSchema), async (req, res) => {
+router.post('/mfa/enable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, validate(enableMfaSchema), async (req, res) => {
   try {
+    const existing = await mfaService.getUserMFA(req.user.id);
+    if (existing && mfaService.isMFAEnabled(existing)) {
+      return fail(res, 400, 'MFA is already enabled', { code: 'MFA_ALREADY_ENABLED' });
+    }
     const { secret, token } = req.body;
     const isValid = mfaService.validateSetup(secret, token);
     if (!isValid) {
@@ -54,10 +62,21 @@ const verifyMfa = async (req, res) => {
   }
 };
 
-router.post('/mfa/verify', protect, mfaRateLimiter, verifyMfa);
+router.post('/mfa/verify', protect, mfaRateLimiter, validate(verifyMfaSchema), verifyMfa);
 
-router.post('/mfa/disable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), async (req, res) => {
+router.post('/mfa/disable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, validate(disableMfaSchema), async (req, res) => {
   try {
+    const { token } = req.body;
+    const user = await mfaService.getUserMFA(req.user.id);
+    if (!user || !mfaService.isMFAEnabled(user)) {
+      return fail(res, 400, 'MFA is not enabled for this account', { code: 'MFA_NOT_ENABLED' });
+    }
+
+    const isValid = mfaService.verifyToken(token, user.mfaSecret);
+    if (!isValid) {
+      return fail(res, 400, 'Invalid MFA token', { code: 'MFA_INVALID' });
+    }
+
     await mfaService.disableMFA(req.user.id);
     return ok(res, {}, 'MFA disabled');
   } catch (error) {

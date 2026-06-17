@@ -2,7 +2,29 @@ import 'package:flutter/material.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/order_model.dart';
 import '../../services/contact_action_service.dart';
-import '../../screens/support/chat_screen.dart';
+
+String formatRiderPhoneNumber(String phone) {
+  final digits = phone.replaceAll(RegExp(r'\D'), '');
+  if (digits.length == 10) {
+    return '+91 ${digits.substring(0, 5)} ${digits.substring(5)}';
+  }
+  if (digits.length > 10) {
+    final countryCode = digits.substring(0, digits.length - 10);
+    final remaining = digits.substring(digits.length - 10);
+    return '+$countryCode ${remaining.substring(0, 5)} ${remaining.substring(5)}';
+  }
+  return phone;
+}
+
+String riderInitials(String? name) {
+  final trimmed = name?.trim() ?? '';
+  if (trimmed.isEmpty) return 'D';
+  return trimmed
+      .split(RegExp(r'\s+'))
+      .take(2)
+      .map((part) => part.isNotEmpty ? part[0].toUpperCase() : '')
+      .join();
+}
 
 /// Card showing delivery partner contact information.
 class DeliveryPartnerContactCard extends StatefulWidget {
@@ -29,6 +51,7 @@ class _DeliveryPartnerContactCardState
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
   bool _isCallLoading = false;
+  bool _isSmsLoading = false;
 
   @override
   void initState() {
@@ -60,9 +83,23 @@ class _DeliveryPartnerContactCardState
 
   @override
   Widget build(BuildContext context) {
-    if (widget.order.riderId == null || widget.order.riderName == null) {
+    final hasRiderName =
+        widget.order.riderName != null && widget.order.riderName!.trim().isNotEmpty;
+
+    if (!hasRiderName) {
       return _buildSearchingState();
     }
+
+    final status = widget.order.status.toLowerCase();
+    final isLive = status == 'out_for_delivery' ||
+        status == 'on_the_way' ||
+        status == 'on_way' ||
+        status == 'picked_up' ||
+        status == 'rider_nearby';
+    final isAssignedOnly = status == 'assigned' ||
+        status == 'rider_assigned' ||
+        status == 'rider_accepted' ||
+        status == 'accepted';
 
     return SlideTransition(
       position: _slideAnimation,
@@ -108,23 +145,34 @@ class _DeliveryPartnerContactCardState
                               vertical: 3,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.success.withValues(alpha: 0.1),
+                              color: (isLive ? AppColors.success : AppColors.warning)
+                                  .withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(6),
                             ),
-                            child: const Row(
+                            child: Row(
                               children: [
                                 Icon(
-                                  Icons.delivery_dining,
+                                  isLive
+                                      ? Icons.delivery_dining
+                                      : Icons.assignment_ind_outlined,
                                   size: 12,
-                                  color: AppColors.success,
+                                  color: isLive
+                                      ? AppColors.success
+                                      : AppColors.warning,
                                 ),
-                                SizedBox(width: 4),
+                                const SizedBox(width: 4),
                                 Text(
-                                  'Delivery Partner',
+                                  isLive
+                                      ? 'On the way'
+                                      : isAssignedOnly
+                                          ? 'Assigned • pickup pending'
+                                          : 'Delivery Partner',
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w600,
-                                    color: AppColors.success,
+                                    color: isLive
+                                        ? AppColors.success
+                                        : AppColors.warning,
                                   ),
                                 ),
                               ],
@@ -195,10 +243,11 @@ class _DeliveryPartnerContactCardState
               children: [
                 Expanded(
                   child: _buildActionButton(
-                    icon: Icons.chat_bubble_outline,
-                    label: 'Chat',
-                    onTap: _handleChat,
+                    icon: Icons.message_outlined,
+                    label: 'SMS',
+                    onTap: _isSmsLoading ? null : _handleSms,
                     isPrimary: false,
+                    isLoading: _isSmsLoading,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -220,15 +269,7 @@ class _DeliveryPartnerContactCardState
   }
 
   Widget _buildAvatar() {
-    final name = widget.order.riderName ?? '';
-    final initials = name.trim().isEmpty
-        ? 'D'
-        : name
-            .trim()
-            .split(RegExp(r'\s+'))
-            .take(2)
-            .map((part) => part.isNotEmpty ? part[0].toUpperCase() : '')
-            .join();
+    final initials = riderInitials(widget.order.riderName);
 
     return Container(
       width: 52,
@@ -322,24 +363,7 @@ class _DeliveryPartnerContactCardState
     );
   }
 
-  String _formatPhoneNumber(String phone) {
-    // Remove any non-digit characters
-    final digits = phone.replaceAll(RegExp(r'\D'), '');
-    
-    // Format based on length
-    if (digits.length == 10) {
-      // Format as: +91 12345 67890
-      return '+91 ${digits.substring(0, 5)} ${digits.substring(5)}';
-    } else if (digits.length > 10) {
-      // Assume it already has country code
-      final countryCode = digits.substring(0, digits.length - 10);
-      final remaining = digits.substring(digits.length - 10);
-      return '+$countryCode ${remaining.substring(0, 5)} ${remaining.substring(5)}';
-    }
-    
-    // Return as-is if can't format
-    return phone;
-  }
+  String _formatPhoneNumber(String phone) => formatRiderPhoneNumber(phone);
 
   Widget _buildSearchingState() {
     return Container(
@@ -402,7 +426,7 @@ class _DeliveryPartnerContactCardState
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'We\'ll assign a partner shortly',
+                  'Name and call options will appear once a rider is assigned',
                   style: TextStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary.withValues(alpha: 0.9),
@@ -437,16 +461,340 @@ class _DeliveryPartnerContactCardState
     }
   }
 
-  void _handleChat() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ChatScreen(
-          orderId: widget.order.id,
-          partnerName: widget.order.riderName ?? 'Delivery Partner',
-          partnerPhone: widget.order.riderPhone,
+  Future<void> _handleSms() async {
+    if (widget.order.riderPhone == null) return;
+
+    setState(() => _isSmsLoading = true);
+
+    final success = await _contactService.sendSMS(widget.order.riderPhone!);
+
+    if (mounted) {
+      setState(() => _isSmsLoading = false);
+
+      if (!success && context.mounted) {
+        _contactService.showContactError(
+          context,
+          'message',
+          widget.order.riderPhone!,
+        );
+      }
+    }
+  }
+
+}
+
+/// Compact Blinkit-style rider row for the pinned tracking sheet area.
+class DeliveryPartnerSheetCard extends StatefulWidget {
+  const DeliveryPartnerSheetCard({
+    super.key,
+    required this.order,
+    this.showAnimation = false,
+  });
+
+  final OrderModel order;
+  final bool showAnimation;
+
+  @override
+  State<DeliveryPartnerSheetCard> createState() =>
+      _DeliveryPartnerSheetCardState();
+}
+
+class _DeliveryPartnerSheetCardState extends State<DeliveryPartnerSheetCard>
+    with SingleTickerProviderStateMixin {
+  final ContactActionService _contactService = ContactActionService();
+  late AnimationController _animationController;
+  late Animation<Offset> _slideAnimation;
+  bool _isCallLoading = false;
+  bool _isSmsLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.15),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+
+    if (widget.showAnimation) {
+      _animationController.forward();
+    } else {
+      _animationController.value = 1.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  bool get _hasRider =>
+      widget.order.riderName != null &&
+      widget.order.riderName!.trim().isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    return SlideTransition(
+      position: _slideAnimation,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+        child: _hasRider ? _buildAssignedRow() : _buildSearchingRow(),
+      ),
+    );
+  }
+
+  Widget _buildSearchingRow() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.warning.withValues(alpha: 0.25),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(
+                  Icons.delivery_dining_rounded,
+                  size: 22,
+                  color: AppColors.warning.withValues(alpha: 0.9),
+                ),
+                Positioned.fill(
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.warning.withValues(alpha: 0.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Finding delivery partner',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Rider details will appear here once assigned',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary.withValues(alpha: 0.95),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAssignedRow() {
+    final phone = widget.order.riderPhone?.trim();
+    final formattedPhone =
+        phone != null && phone.isNotEmpty ? formatRiderPhoneNumber(phone) : null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.primary,
+                  AppColors.primary.withValues(alpha: 0.85),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              riderInitials(widget.order.riderName),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Delivery partner',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: AppColors.textSecondary.withValues(alpha: 0.95),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  widget.order.riderName ?? 'Rider',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                if (formattedPhone != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    formattedPhone,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primary,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          _compactAction(
+            icon: Icons.message_outlined,
+            label: 'SMS',
+            filled: false,
+            onTap: _isSmsLoading || phone == null || phone.isEmpty
+                ? null
+                : _handleSms,
+            loading: _isSmsLoading,
+          ),
+          const SizedBox(width: 6),
+          _compactAction(
+            icon: Icons.phone_rounded,
+            label: 'Call',
+            filled: true,
+            onTap: _isCallLoading || phone == null || phone.isEmpty
+                ? null
+                : _handleCall,
+            loading: _isCallLoading,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _compactAction({
+    required IconData icon,
+    required String label,
+    required bool filled,
+    required VoidCallback? onTap,
+    bool loading = false,
+  }) {
+    return Material(
+      color: filled ? AppColors.primary : Colors.white,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: filled
+                ? null
+                : Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+          ),
+          child: loading
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: filled ? Colors.white : AppColors.primary,
+                  ),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      icon,
+                      size: 18,
+                      color: filled ? Colors.white : AppColors.primary,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: filled ? Colors.white : AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
         ),
       ),
     );
   }
+
+  Future<void> _handleCall() async {
+    final phone = widget.order.riderPhone;
+    if (phone == null || phone.isEmpty) return;
+
+    setState(() => _isCallLoading = true);
+    final success = await _contactService.makeCall(phone);
+    if (!mounted) return;
+    setState(() => _isCallLoading = false);
+
+    if (!success && context.mounted) {
+      _contactService.showContactError(context, 'call', phone);
+    }
+  }
+
+  Future<void> _handleSms() async {
+    final phone = widget.order.riderPhone;
+    if (phone == null || phone.isEmpty) return;
+
+    setState(() => _isSmsLoading = true);
+    final success = await _contactService.sendSMS(phone);
+    if (!mounted) return;
+    setState(() => _isSmsLoading = false);
+
+    if (!success && context.mounted) {
+      _contactService.showContactError(context, 'message', phone);
+    }
+  }
+
 }

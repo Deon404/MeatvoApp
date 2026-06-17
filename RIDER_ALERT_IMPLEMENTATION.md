@@ -6,7 +6,7 @@ Implemented a prominent auto-dismissing bottom sheet alert when riders receive n
 ## What Was Implemented
 
 ### 1. Rider Dashboard Screen Updates
-**File:** `old_meatvo/lib/screens/rider/rider_dashboard_screen.dart`
+**File:** `frontend/lib/screens/rider/rider_dashboard_screen.dart`
 
 #### Added Features:
 - **AudioPlayer integration** for notification sound
@@ -55,7 +55,7 @@ A new bottom sheet widget featuring:
 
 #### Directory Structure:
 ```
-old_meatvo/
+frontend/
   └── assets/
       └── sounds/
           ├── README.md (instructions)
@@ -132,7 +132,7 @@ Already included in `pubspec.yaml`:
 ### 1. Add Notification Sound
 Download or create `new_order.mp3` and place in:
 ```
-old_meatvo/assets/sounds/new_order.mp3
+frontend/assets/sounds/new_order.mp3
 ```
 
 See `assets/sounds/README.md` for sound file requirements and resources.
@@ -179,8 +179,8 @@ Expanded(flex: 2, ...)  // Accept button 2x width
 ## Files Modified
 
 1. ✅ `backend/src/modules/orders/orders.controller.js` (auto-assignment)
-2. ✅ `old_meatvo/lib/screens/rider/rider_dashboard_screen.dart` (alert UI)
-3. ✅ `old_meatvo/assets/sounds/README.md` (sound instructions)
+2. ✅ `frontend/lib/screens/rider/rider_dashboard_screen.dart` (alert UI)
+3. ✅ `frontend/assets/sounds/README.md` (sound instructions)
 
 ## Status
 

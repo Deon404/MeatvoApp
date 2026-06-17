@@ -8,7 +8,8 @@ import '../../services/maps_platform_config.dart';
 import '../../services/maps_service.dart';
 import '../../services/delivery_service.dart';
 import '../../core/constants/app_constants.dart';
-import '../location/permission_dialog.dart';
+import '../../utils/address_display_util.dart';
+import '../location/location_flow_helper.dart';
 import '../location/location_error_dialog.dart';
 
 /// Map Picker Widget - Allows user to pick location on map
@@ -165,112 +166,53 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
 
   Future<void> _getCurrentLocation() async {
     setState(() => _isLoadingLocation = true);
-    
+
     try {
-      // Step 1: Check if permission is already granted
-      final hasPermission = await _mapsService.hasLocationPermission();
-      
-      if (!hasPermission) {
-        // Step 2: Check if denied forever
-        final isDeniedForever = await _mapsService.isPermissionDeniedForever();
-        
-        if (!mounted) {
-          setState(() => _isLoadingLocation = false);
-          return;
-        }
-        
-        if (isDeniedForever) {
-          // Show settings dialog
-          final shouldOpenSettings = await showLocationPermissionDialog(
-            context,
-            title: 'Location Permission Required',
-            message: 'Location access is required to show your current position on the map. Please enable it in app settings.',
-            showSettingsButton: true,
-          );
-          
-          if (!mounted) {
-            setState(() => _isLoadingLocation = false);
-            return;
-          }
-          
-          if (!shouldOpenSettings) {
-            setState(() => _isLoadingLocation = false);
-            return;
-          }
-        } else {
-          // Show permission request dialog
-          final permissionGranted = await showLocationPermissionDialog(
-            context,
-            title: 'Location Permission Required',
-            message: 'We need your location to show your current position on the map.',
-          );
-          
-          if (!mounted) {
-            setState(() => _isLoadingLocation = false);
-            return;
-          }
-          
-          if (!permissionGranted) {
-            setState(() => _isLoadingLocation = false);
-            return;
-          }
-        }
+      final position = await resolveDeliveryLocation(context);
+      if (!mounted) {
+        setState(() => _isLoadingLocation = false);
+        return;
       }
 
-      // Step 3: Get current location with better error handling
-      final position = await _mapsService.getCurrentLocation(
-        forceRequest: false,
-        timeLimit: const Duration(seconds: 15),
-      );
-
-      if (position != null) {
-        final location = LatLng(position.latitude, position.longitude);
+      if (position == null) {
         setState(() {
-          _selectedLocation = location;
-        });
-        await _getAddressForLocation(location);
-        _moveCameraToLocation(location);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Current location loaded'),
-              backgroundColor: AppColors.success,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      } else {
-        // Use default location
-        setState(() {
+          _isLoadingLocation = false;
           _selectedLocation = _defaultLocation;
         });
         _moveCameraToLocation(_defaultLocation);
+        return;
+      }
+
+      final location = LatLng(position.latitude, position.longitude);
+      setState(() {
+        _selectedLocation = location;
+      });
+      await _getAddressForLocation(location);
+      _moveCameraToLocation(location);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Current location loaded'),
+            backgroundColor: AppColors.success,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } on LocationException catch (e) {
       if (mounted) {
         final shouldRetry = await showLocationErrorDialog(context, e);
         if (shouldRetry == true) {
-          // Retry getting location
           await _getCurrentLocation();
           return;
         }
-        // Use default location on error
         setState(() {
           _selectedLocation = _defaultLocation;
         });
         _moveCameraToLocation(_defaultLocation);
       }
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-        // Use default location on error
         setState(() {
           _selectedLocation = _defaultLocation;
         });
@@ -420,14 +362,18 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
   }
 
   void _confirmSelection() {
-    if (_selectedLocation != null) {
-      widget.onLocationSelected?.call(
-        _selectedLocation!.latitude,
-        _selectedLocation!.longitude,
-        _selectedAddress,
-      );
-      Navigator.of(context).pop();
-    }
+    if (_selectedLocation == null) return;
+
+    widget.onLocationSelected?.call(
+      _selectedLocation!.latitude,
+      _selectedLocation!.longitude,
+      _selectedAddress,
+    );
+    Navigator.of(context).pop(<String, dynamic>{
+      'latitude': _selectedLocation!.latitude,
+      'longitude': _selectedLocation!.longitude,
+      'address': _selectedAddress,
+    });
   }
 
   @override
@@ -849,25 +795,7 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
   }
 
   String _buildAddressString(Map<String, dynamic> address) {
-    final parts = <String>[];
-    
-    if (address['address_line1'] != null) {
-      parts.add(address['address_line1'] as String);
-    }
-    if (address['address_line2'] != null) {
-      parts.add(address['address_line2'] as String);
-    }
-    if (address['city'] != null) {
-      parts.add(address['city'] as String);
-    }
-    if (address['state'] != null) {
-      parts.add(address['state'] as String);
-    }
-    if (address['pincode'] != null) {
-      parts.add(address['pincode'] as String);
-    }
-
-    return parts.join(', ');
+    return buildAddressStringFromMap(address);
   }
 
   @override

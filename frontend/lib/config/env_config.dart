@@ -271,6 +271,28 @@ class EnvConfig {
 
     try {
       await dotenv.load(fileName: 'assets/env.defaults');
+      // Optional local overlay — copy frontend/.env → assets/env.local for device builds.
+      try {
+        await dotenv.load(
+          fileName: 'assets/env.local',
+          mergeWith: dotenv.env,
+        );
+      } catch (_) {
+        if (kDebugMode) {
+          debugPrint(
+            'ℹ️ No assets/env.local — run: dart run tool/sync_env.dart '
+            '(copies GOOGLE_MAPS_API_KEY from .env)',
+          );
+        }
+      }
+
+      // On-device override from secure storage (if previously saved).
+      if (!hasGoogleMapsApiKey) {
+        final storedMapsKey = await readSensitive('GOOGLE_MAPS_API_KEY');
+        if (storedMapsKey.isNotEmpty) {
+          _dartDefines['GOOGLE_MAPS_API_KEY'] = storedMapsKey;
+        }
+      }
       _loaded = true;
     } catch (e) {
       _loaded = false;

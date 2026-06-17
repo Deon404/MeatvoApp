@@ -3,19 +3,43 @@
  * OTP verification and delivery proof collection
  */
 
+const crypto = require('crypto');
 const { query, withTransaction } = require('../db/postgres');
 const { logger } = require('../utils/logger');
 const redis = require('../db/redis');
+const {
+  validateRiderProofUpload,
+  signStoredImageUrl,
+} = require('../utils/uploadSigning');
 
 // OTP storage prefix
 const OTP_PREFIX = 'delivery_otp:';
+const OTP_DISPLAY_PREFIX = 'delivery_otp_display:';
 const OTP_EXPIRY = 10 * 60; // 10 minutes in seconds
+
+const timingSafeEqualStr = (a, b) => {
+  const ba = Buffer.from(String(a || ''));
+  const bb = Buffer.from(String(b || ''));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+};
+
+const hashDeliveryOtp = (orderId, otp) => {
+  const secret = process.env.OTP_HASH_SECRET;
+  if (!secret) throw new Error('OTP_HASH_SECRET is required');
+  return crypto
+    .createHmac('sha256', secret)
+    .update(String(orderId))
+    .update(':')
+    .update(String(otp))
+    .digest('hex');
+};
 
 /**
  * Generate delivery OTP
  */
 function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  return String(crypto.randomInt(100000, 1000000));
 }
 
 /**
@@ -25,12 +49,14 @@ async function createDeliveryOTP(orderId) {
   try {
     const otp = generateOTP();
     const key = `${OTP_PREFIX}${orderId}`;
-    
-    // Store in Redis with expiry
-    await redis.setex(key, OTP_EXPIRY, otp);
-    
-    logger.info('delivery_otp_created', { orderId, otp });
-    
+    const displayKey = `${OTP_DISPLAY_PREFIX}${orderId}`;
+    const hashedOtp = hashDeliveryOtp(orderId, otp);
+
+    await redis.set(key, hashedOtp, 'EX', OTP_EXPIRY);
+    await redis.set(displayKey, otp, 'EX', OTP_EXPIRY);
+
+    logger.info('delivery_otp_created', { orderId });
+
     return otp;
   } catch (error) {
     logger.error('create_delivery_otp_failed', {
@@ -47,27 +73,28 @@ async function createDeliveryOTP(orderId) {
 async function verifyDeliveryOTP(orderId, otp) {
   try {
     const key = `${OTP_PREFIX}${orderId}`;
-    const storedOTP = await redis.get(key);
-    
-    if (!storedOTP) {
+    const storedHash = await redis.get(key);
+
+    if (!storedHash) {
       return {
         valid: false,
         reason: 'OTP expired or not found',
       };
     }
-    
-    if (storedOTP !== otp) {
+
+    const incomingHash = hashDeliveryOtp(orderId, otp);
+    if (!timingSafeEqualStr(incomingHash, storedHash)) {
       return {
         valid: false,
         reason: 'Invalid OTP',
       };
     }
-    
-    // Delete OTP after successful verification
+
     await redis.del(key);
-    
+    await redis.del(`${OTP_DISPLAY_PREFIX}${orderId}`);
+
     logger.info('delivery_otp_verified', { orderId });
-    
+
     return {
       valid: true,
     };
@@ -93,28 +120,44 @@ async function storeDeliveryProof({
   customerName = null,
 }) {
   try {
-    // In production, store in database
-    // For now, we'll use Redis
+    const proofCheck = validateRiderProofUpload(proofUrl, riderUserId);
+    if (!proofCheck.valid) {
+      const err = new Error(proofCheck.reason);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const storagePath = proofCheck.storagePath;
+
+    await query(
+      `UPDATE order_assignments
+       SET delivery_image_url = $1,
+           delivery_notes = COALESCE($2, delivery_notes),
+           delivered_at = COALESCE(delivered_at, NOW())
+       WHERE order_id = $3`,
+      [storagePath, notes, orderId]
+    );
+
     const proofData = {
       orderId,
       riderUserId,
       proofType,
-      proofUrl,
+      proofUrl: storagePath,
       notes,
       customerId,
       customerName,
       timestamp: new Date().toISOString(),
     };
-    
+
     const key = `delivery_proof:${orderId}`;
     await redis.set(key, JSON.stringify(proofData));
-    
+
     logger.info('delivery_proof_stored', {
       orderId,
       proofType,
       riderUserId,
     });
-    
+
     return proofData;
   } catch (error) {
     logger.error('store_delivery_proof_failed', {
@@ -128,16 +171,40 @@ async function storeDeliveryProof({
 /**
  * Get delivery proof
  */
-async function getDeliveryProof(orderId) {
+async function getDeliveryProof(orderId, baseUrl = '') {
   try {
     const key = `delivery_proof:${orderId}`;
     const data = await redis.get(key);
-    
-    if (!data) {
+
+    if (data) {
+      const proof = JSON.parse(data);
+      if (proof.proofUrl) {
+        proof.proofUrl = signStoredImageUrl(proof.proofUrl, baseUrl);
+      }
+      return proof;
+    }
+
+    const { rows } = await query(
+      `SELECT oa.delivery_image_url, oa.delivery_notes, oa.delivered_at,
+              dp.user_id AS rider_user_id
+       FROM order_assignments oa
+       JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+       WHERE oa.order_id = $1`,
+      [orderId]
+    );
+
+    if (!rows[0]?.delivery_image_url) {
       return null;
     }
-    
-    return JSON.parse(data);
+
+    return {
+      orderId,
+      riderUserId: rows[0].rider_user_id,
+      proofType: 'photo',
+      proofUrl: signStoredImageUrl(rows[0].delivery_image_url, baseUrl),
+      notes: rows[0].delivery_notes,
+      timestamp: rows[0].delivered_at,
+    };
   } catch (error) {
     logger.error('get_delivery_proof_failed', {
       error: error.message,
@@ -159,11 +226,10 @@ async function verifyCODCollection({
 }) {
   try {
     const difference = Math.abs(amount - collectedAmount);
-    
-    // Allow small differences (e.g., for rounding)
+
     const tolerance = 5;
     const isValid = difference <= tolerance;
-    
+
     if (!isValid) {
       logger.warn('cod_collection_mismatch', {
         orderId,
@@ -172,7 +238,7 @@ async function verifyCODCollection({
         difference,
       });
     }
-    
+
     const verification = {
       orderId,
       riderUserId,
@@ -183,17 +249,16 @@ async function verifyCODCollection({
       notes,
       timestamp: new Date().toISOString(),
     };
-    
-    // Store verification
+
     const key = `cod_verification:${orderId}`;
     await redis.set(key, JSON.stringify(verification));
-    
+
     logger.info('cod_collection_verified', {
       orderId,
       isValid,
       difference,
     });
-    
+
     return verification;
   } catch (error) {
     logger.error('verify_cod_collection_failed', {
@@ -211,11 +276,11 @@ async function getCODVerification(orderId) {
   try {
     const key = `cod_verification:${orderId}`;
     const data = await redis.get(key);
-    
+
     if (!data) {
       return null;
     }
-    
+
     return JSON.parse(data);
   } catch (error) {
     logger.error('get_cod_verification_failed', {
@@ -246,24 +311,22 @@ async function completeDeliveryWithVerification({
       verification: {},
     };
 
-    // Verify OTP if provided
     if (otp) {
       const otpVerification = await verifyDeliveryOTP(orderId, otp);
       result.verification.otp = otpVerification;
-      
+
       if (!otpVerification.valid) {
         result.errors.push('Invalid or expired OTP');
         return result;
       }
     }
 
-    // Store delivery proof if provided
     if (proofType && proofUrl) {
       const { rows: orderRows } = await query(
         'SELECT customer_id FROM orders WHERE id = $1',
         [orderId]
       );
-      
+
       const proof = await storeDeliveryProof({
         orderId,
         riderUserId,
@@ -273,17 +336,16 @@ async function completeDeliveryWithVerification({
         customerId: orderRows[0]?.customer_id,
         customerName,
       });
-      
+
       result.verification.proof = proof;
     }
 
-    // Verify COD collection if applicable
     if (codAmount) {
       const { rows: orderRows } = await query(
         'SELECT total_amount FROM orders WHERE id = $1',
         [orderId]
       );
-      
+
       if (orderRows[0]) {
         const codVerification = await verifyCODCollection({
           orderId,
@@ -292,9 +354,9 @@ async function completeDeliveryWithVerification({
           collectedAmount: Number(codAmount),
           notes,
         });
-        
+
         result.verification.cod = codVerification;
-        
+
         if (!codVerification.isValid) {
           result.errors.push('COD amount mismatch');
         }
@@ -302,7 +364,7 @@ async function completeDeliveryWithVerification({
     }
 
     result.success = result.errors.length === 0;
-    
+
     return result;
   } catch (error) {
     logger.error('complete_delivery_with_verification_failed', {
@@ -318,25 +380,22 @@ async function completeDeliveryWithVerification({
  */
 async function getDeliveryOTPForCustomer(orderId, customerId) {
   try {
-    // Verify customer owns this order
     const { rows } = await query(
       'SELECT customer_id FROM orders WHERE id = $1',
       [orderId]
     );
-    
+
     if (!rows[0] || rows[0].customer_id !== customerId) {
       throw new Error('Unauthorized');
     }
-    
-    // Get or create OTP
-    const key = `${OTP_PREFIX}${orderId}`;
-    let otp = await redis.get(key);
-    
-    if (!otp) {
-      otp = await createDeliveryOTP(orderId);
+
+    const displayKey = `${OTP_DISPLAY_PREFIX}${orderId}`;
+    const existing = await redis.get(displayKey);
+    if (existing) {
+      return existing;
     }
-    
-    return otp;
+
+    return createDeliveryOTP(orderId);
   } catch (error) {
     logger.error('get_delivery_otp_for_customer_failed', {
       error: error.message,
@@ -348,19 +407,37 @@ async function getDeliveryOTPForCustomer(orderId, customerId) {
 }
 
 /**
+ * Ensure delivery OTP exists when order goes out for delivery.
+ */
+async function ensureDeliveryOTP(orderId) {
+  try {
+    const displayKey = `${OTP_DISPLAY_PREFIX}${orderId}`;
+    const existing = await redis.get(displayKey);
+    if (existing) return existing;
+    return createDeliveryOTP(orderId);
+  } catch (error) {
+    logger.warn('ensure_delivery_otp_failed', {
+      error: error.message,
+      orderId,
+    });
+    return null;
+  }
+}
+
+/**
  * Resend delivery OTP
  */
 async function resendDeliveryOTP(orderId) {
   try {
-    // Delete old OTP
     const key = `${OTP_PREFIX}${orderId}`;
+    const displayKey = `${OTP_DISPLAY_PREFIX}${orderId}`;
     await redis.del(key);
-    
-    // Create new OTP
+    await redis.del(displayKey);
+
     const otp = await createDeliveryOTP(orderId);
-    
+
     logger.info('delivery_otp_resent', { orderId });
-    
+
     return otp;
   } catch (error) {
     logger.error('resend_delivery_otp_failed', {
@@ -381,5 +458,6 @@ module.exports = {
   getCODVerification,
   completeDeliveryWithVerification,
   getDeliveryOTPForCustomer,
+  ensureDeliveryOTP,
   resendDeliveryOTP,
 };

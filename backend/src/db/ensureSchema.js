@@ -19,6 +19,21 @@ const ensureSchema = async () => {
       run: repairAppSettingsSchema,
     },
     {
+      name: 'store_settings',
+      sql: `
+        CREATE TABLE IF NOT EXISTS store_settings (
+          id SERIAL PRIMARY KEY,
+          delivery_radius_km DECIMAL(5,2) DEFAULT 5.0,
+          center_lat DECIMAL(10,7) DEFAULT 0,
+          center_lng DECIMAL(10,7) DEFAULT 0,
+          min_order_amount DECIMAL(10,2) DEFAULT 150.0,
+          delivery_fee DECIMAL(10,2) DEFAULT 30.0,
+          is_open BOOLEAN DEFAULT true,
+          updated_at TIMESTAMPTZ DEFAULT NOW()
+        )
+      `,
+    },
+    {
       name: 'categories.sort_order',
       sql: `ALTER TABLE categories ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`,
     },
@@ -29,6 +44,10 @@ const ensureSchema = async () => {
     {
       name: 'products.base_price_per_kg_backfill',
       sql: `UPDATE products SET base_price_per_kg = COALESCE(base_price_per_kg, price, 0)`,
+    },
+    {
+      name: 'products.mrp',
+      sql: `ALTER TABLE products ADD COLUMN IF NOT EXISTS mrp NUMERIC(10,2)`,
     },
     {
       name: 'products.weight_variants',
@@ -85,6 +104,10 @@ const ensureSchema = async () => {
         USING users u
         WHERE dp.user_id = u.id
           AND u.role <> 'delivery'
+          AND NOT EXISTS (
+            SELECT 1 FROM order_assignments oa
+            WHERE oa.delivery_partner_id = dp.id
+          )
       `,
     },
     {
@@ -123,7 +146,9 @@ const ensureSchema = async () => {
           order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
           amount NUMERIC(10,2) NOT NULL CHECK (amount >= 0),
           status VARCHAR(50) NOT NULL DEFAULT 'INITIATED' CHECK (status IN ('INITIATED', 'PENDING', 'SUCCESS', 'FAILED', 'REFUNDED')),
-          gateway VARCHAR(50) NOT NULL DEFAULT 'PHONEPE',
+          gateway VARCHAR(50) NOT NULL DEFAULT 'CASHFREE',
+          gateway_order_id VARCHAR(100),
+          gateway_payment_id VARCHAR(100),
           gateway_transaction_id TEXT,
           payment_url TEXT,
           gateway_response JSONB,
@@ -132,6 +157,14 @@ const ensureSchema = async () => {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `,
+    },
+    {
+      name: 'payment_transactions.gateway_order_id',
+      sql: `ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS gateway_order_id VARCHAR(100)`,
+    },
+    {
+      name: 'payment_transactions.gateway_payment_id',
+      sql: `ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS gateway_payment_id VARCHAR(100)`,
     },
     {
       name: 'payment_transactions_indexes',
@@ -338,19 +371,22 @@ const ensureSchema = async () => {
         RETURNS void
         LANGUAGE plpgsql
         AS $$
-        DECLARE
-          d DATE;
-          horizon DATE := CURRENT_DATE + INTERVAL '13 days';
         BEGIN
-          d := CURRENT_DATE;
-          WHILE d <= horizon LOOP
-            INSERT INTO delivery_slots (name, start_time, end_time, slot_date, capacity, booked, is_active)
-            VALUES
-              ('Morning', '07:00:00', '11:00:00', d, 20, 0, true),
-              ('Evening', '16:00:00', '20:00:00', d, 20, 0, true)
-            ON CONFLICT (slot_date, name) DO NOTHING;
-            d := d + 1;
-          END LOOP;
+          -- Delivery slots are admin-managed (today + 2 days). No automatic seeding.
+          RETURN;
+        END;
+        $$
+      `,
+    },
+    {
+      name: 'delivery_slots.auto_generate_admin_managed_v2',
+      sql: `
+        CREATE OR REPLACE FUNCTION auto_generate_delivery_slots()
+        RETURNS void
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+          RETURN;
         END;
         $$
       `,
@@ -386,6 +422,14 @@ const ensureSchema = async () => {
     {
       name: 'orders.eta_minutes',
       sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS eta_minutes INTEGER`,
+    },
+    {
+      name: 'orders.delivery_slot_id',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_slot_id BIGINT`,
+    },
+    {
+      name: 'orders.delivery_slot_id_nullable',
+      sql: `ALTER TABLE orders ALTER COLUMN delivery_slot_id DROP NOT NULL`,
     },
     {
       name: 'orders.eta_index',
@@ -430,6 +474,10 @@ const ensureSchema = async () => {
       sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PAYMENT_VERIFIED'`,
     },
     {
+      name: 'user_role.staff',
+      sql: `ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'staff'`,
+    },
+    {
       name: 'order_status.packing_started',
       sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PACKING_STARTED'`,
     },
@@ -454,8 +502,96 @@ const ensureSchema = async () => {
       sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'REFUNDED'`,
     },
     {
-      name: 'order_status.failed',
-      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'FAILED'`,
+      name: 'order_assignments.delivery_image_url',
+      sql: `ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS delivery_image_url TEXT`,
+    },
+    {
+      name: 'order_assignments.delivery_notes',
+      sql: `ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS delivery_notes TEXT`,
+    },
+    {
+      name: 'order_assignments.delivered_at',
+      sql: `ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'order_assignments.batch_ids',
+      sql: `ALTER TABLE order_assignments ADD COLUMN IF NOT EXISTS batch_ids JSONB NOT NULL DEFAULT '[]'::jsonb`,
+    },
+    {
+      name: 'users.email',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`,
+    },
+    {
+      name: 'users.profile_image_url',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image_url TEXT`,
+    },
+    {
+      name: 'users.updated_at',
+      sql: `ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+    },
+    {
+      name: 'user_notifications_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS user_notifications (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          type VARCHAR(50) NOT NULL DEFAULT 'custom',
+          title VARCHAR(255) NOT NULL,
+          body TEXT NOT NULL,
+          data JSONB NOT NULL DEFAULT '{}'::jsonb,
+          is_read BOOLEAN NOT NULL DEFAULT FALSE,
+          read_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'user_notifications.user_id_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_user_notifications_user_id ON user_notifications(user_id, created_at DESC)`,
+    },
+    {
+      name: 'wishlists_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS wishlists (
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (user_id, product_id)
+        )
+      `,
+    },
+    {
+      name: 'order_reviews_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS order_reviews (
+          id BIGSERIAL PRIMARY KEY,
+          order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          rider_rating SMALLINT,
+          product_quality_rating SMALLINT,
+          delivery_speed_rating SMALLINT,
+          feedback TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (order_id, user_id)
+        )
+      `,
+    },
+    {
+      name: 'product_ratings_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS product_ratings (
+          id BIGSERIAL PRIMARY KEY,
+          product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+          rating SMALLINT NOT NULL CHECK (rating >= 1 AND rating <= 5),
+          review TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (product_id, user_id, order_id)
+        )
+      `,
     },
   ];
 

@@ -27,6 +27,7 @@ import 'config/google_maps_setup.dart';
 import 'app_navigator_key.dart';
 import 'config/feature_flags.dart';
 import 'design_system/theme/meatvo_theme.dart';
+import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'ui/shells/meatvo_floating_nav_bar.dart';
 import 'ui/shells/meatvo_layout.dart';
@@ -40,9 +41,6 @@ import 'utils/debug_session_log.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // TODO: call ErrorTrackingService.initialize() somewhere in this main()
-  // (after EnvConfig.load) so the release branch below actually ships errors
-  // to Sentry instead of just debugPrint'ing them.
   FlutterError.onError = (FlutterErrorDetails details) {
     if (kReleaseMode) {
       ErrorTrackingService.captureException(
@@ -85,8 +83,10 @@ Future<void> main() async {
   }
 
   try {
-    // Do not crash startup when Firebase config (google-services.json) is absent.
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    PushNotificationService.registerBackgroundHandler();
     // #region agent log
     DebugSessionLog.log(
       location: 'main.dart:firebase',
@@ -107,13 +107,12 @@ Future<void> main() async {
     // #endregion
   }
 
-  try {
-    await PushNotificationService().initialize();
-  } catch (e) {
-    debugPrint('⚠️ Push notification init failed: $e');
-  }
-
   runApp(const ProviderScope(child: MyApp()));
+
+  // Defer FCM token fetch so cold start is not blocked on Play Services (MIUI).
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    PushNotificationService().initialize();
+  });
   WidgetsBinding.instance.addPostFrameCallback((_) {
     registerSessionExpiredHandler(() {
       final nav = appNavigatorKey.currentState;

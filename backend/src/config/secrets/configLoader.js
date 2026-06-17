@@ -65,9 +65,11 @@ class ConfigLoader {
         SMS_PROVIDER: process.env.SMS_PROVIDER || DEFAULTS.SMS_PROVIDER,
 
         // Payment Configuration
-        PHONEPE_MERCHANT_ID: await secretManager.getSecret(SECRET_NAMES.phonepe_merchant_id),
-        PHONEPE_SALT_KEY: await secretManager.getSecret(SECRET_NAMES.phonepe_salt_key),
-        PHONEPE_ENVIRONMENT: process.env.PHONEPE_ENVIRONMENT || DEFAULTS.PHONEPE_ENVIRONMENT,
+        CASHFREE_APP_ID: await secretManager.getSecret(SECRET_NAMES.cashfree_app_id),
+        CASHFREE_SECRET_KEY: await secretManager.getSecret(SECRET_NAMES.cashfree_secret_key),
+        CASHFREE_API_BASE: process.env.CASHFREE_API_BASE,
+        CASHFREE_RETURN_URL: process.env.CASHFREE_RETURN_URL,
+        CASHFREE_WEBHOOK_URL: process.env.CASHFREE_WEBHOOK_URL,
 
         // Maps Configuration
         GOOGLE_MAPS_API_KEY: await secretManager.getSecret(SECRET_NAMES.google_maps_api_key),

@@ -32,5 +32,13 @@ const putBannerSchema = z.object({
   query: z.object({}).optional(),
 });
 
-module.exports = { getSchema, putThemeSchema, putBannerSchema };
+const putAppInfoSchema = z.object({
+  body: z.object({
+    appVersion: z.string().trim().min(1).max(20),
+  }),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+module.exports = { getSchema, putThemeSchema, putBannerSchema, putAppInfoSchema };
 

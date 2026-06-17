@@ -75,13 +75,13 @@ class RiderState {
   double get todayEarnings => earnings?.today ?? 0.0;
 
   // Get weekly earnings
-  double get weeklyEarnings => earnings?.week ?? 0.0;
+  double get weeklyEarnings => earnings?.thisWeek ?? 0.0;
 
   // Get monthly earnings
-  double get monthlyEarnings => earnings?.month ?? 0.0;
+  double get monthlyEarnings => earnings?.thisMonth ?? 0.0;
 
   // Get delivery count
-  int get deliveryCount => earnings?.deliveryCount ?? 0;
+  int get deliveryCount => earnings?.totalDeliveries ?? 0;
 
   // Get rider rating
   double get rating => earnings?.rating ?? 0.0;
@@ -144,7 +144,7 @@ class RiderNotifier extends StateNotifier<RiderState> {
 
   Future<void> _loadActiveOrders() async {
     try {
-      final orders = await _riderService.getActiveOrders();
+      final orders = await _riderService.getRiderOrders();
       state = state.copyWith(activeOrders: orders);
     } catch (e) {
       debugPrint('[RiderProvider] Load orders error: $e');
@@ -154,7 +154,7 @@ class RiderNotifier extends StateNotifier<RiderState> {
 
   Future<void> _loadEarnings() async {
     try {
-      final earnings = await _riderService.getEarnings();
+      final earnings = await _riderService.getRiderEarnings();
       state = state.copyWith(earnings: earnings);
     } catch (e) {
       debugPrint('[RiderProvider] Load earnings error: $e');
@@ -167,7 +167,9 @@ class RiderNotifier extends StateNotifier<RiderState> {
     final newStatus = !state.isOnline;
     
     try {
-      await _riderService.toggleOnline(newStatus);
+      await _riderService.updateRiderStatus(
+        newStatus ? 'available' : 'offline',
+      );
       state = state.copyWith(isOnline: newStatus);
 
       if (!newStatus) {
@@ -239,8 +241,8 @@ class RiderNotifier extends StateNotifier<RiderState> {
     state = state.copyWith(isLoading: true);
     
     try {
-      final route = await _riderService.getMyRoute();
-      state = state.copyWith(currentRoute: route, isLoading: false);
+      // Route payload is delivered via socket (`route:zone_assigned`).
+      state = state.copyWith(isLoading: false);
     } catch (e) {
       debugPrint('[RiderProvider] Load route error: $e');
       state = state.copyWith(
@@ -293,7 +295,7 @@ class RiderNotifier extends StateNotifier<RiderState> {
       loadRoute();
     });
 
-    _socketService.onAssignmentCancelled((data) {
+    _socketService.onOrderAssignmentCancelled((data) {
       debugPrint('[RiderProvider] Assignment cancelled: $data');
       _loadActiveOrders();
     });

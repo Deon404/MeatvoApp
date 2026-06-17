@@ -128,7 +128,7 @@ _SwipeToToggle(
 
 ## Code Location
 
-**File**: `old_meatvo/lib/screens/rider/rider_dashboard_screen.dart`
+**File**: `frontend/lib/screens/rider/rider_dashboard_screen.dart`
 
 ### Key Methods
 ```dart

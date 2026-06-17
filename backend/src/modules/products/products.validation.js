@@ -51,7 +51,10 @@ const productBody = z.object({
   description: z.string().trim().max(500).optional().nullable(),
   price: z.coerce.number().positive().max(10000),
   mrp: z.coerce.number().nonnegative().optional().nullable(),
-  image_url: z.string().trim().url().optional().nullable(),
+  image_url: z.union([
+    z.string().trim().url(),
+    z.string().trim().regex(/^\/uploads\/images\/[A-Za-z0-9._-]+$/),
+  ]).optional().nullable(),
   stock: z.coerce.number().int().nonnegative().optional(),
   unit: z.string().trim().max(20).optional().nullable(),
   active: z.boolean().optional(),

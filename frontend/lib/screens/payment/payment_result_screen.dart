@@ -16,7 +16,6 @@ class PaymentResultScreen extends StatelessWidget {
   final String? errorMessage;
   final String? errorCode;
   final VoidCallback? onRetry;
-  final String? deliverySlot;
   final Map<String, dynamic>? deliveryAddress;
 
   const PaymentResultScreen({
@@ -27,7 +26,6 @@ class PaymentResultScreen extends StatelessWidget {
     this.errorMessage,
     this.errorCode,
     this.onRetry,
-    this.deliverySlot,
     this.deliveryAddress,
   });
 
@@ -225,7 +223,6 @@ class PaymentResultScreen extends StatelessWidget {
                         MaterialPageRoute(
                           builder: (_) => OrderConfirmationScreen(
                             order: order!,
-                            deliverySlot: deliverySlot ?? '',
                             deliveryAddress: deliveryAddress ?? {},
                             paymentId: paymentId,
                           ),

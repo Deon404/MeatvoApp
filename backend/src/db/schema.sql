@@ -5,7 +5,7 @@ BEGIN;
 
 -- Enums
 DO $$ BEGIN
-  CREATE TYPE user_role AS ENUM ('admin', 'customer', 'delivery');
+  CREATE TYPE user_role AS ENUM ('admin', 'customer', 'delivery', 'staff');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS orders (
   coupon_id BIGINT REFERENCES coupons(id) ON DELETE SET NULL,
   address JSONB NOT NULL,
   payment_mode payment_mode NOT NULL DEFAULT 'COD',
+  delivery_slot_id BIGINT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -176,6 +177,7 @@ CREATE TABLE IF NOT EXISTS order_assignments (
   delivery_partner_id BIGINT NOT NULL REFERENCES delivery_partners(id) ON DELETE RESTRICT,
   assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   status assignment_status NOT NULL DEFAULT 'ASSIGNED',
+  batch_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -224,19 +226,9 @@ CREATE OR REPLACE FUNCTION auto_generate_delivery_slots()
 RETURNS void
 LANGUAGE plpgsql
 AS $$
-DECLARE
-  d DATE;
-  horizon DATE := CURRENT_DATE + INTERVAL '13 days';
 BEGIN
-  d := CURRENT_DATE;
-  WHILE d <= horizon LOOP
-    INSERT INTO delivery_slots (name, start_time, end_time, slot_date, capacity, booked, is_active)
-    VALUES
-      ('Morning', '07:00:00', '11:00:00', d, 20, 0, true),
-      ('Evening', '16:00:00', '20:00:00', d, 20, 0, true)
-    ON CONFLICT (slot_date, name) DO NOTHING;
-    d := d + 1;
-  END LOOP;
+  -- Delivery slots are admin-managed (today + 2 days). No automatic Morning/Evening seeding.
+  RETURN;
 END;
 $$;
 

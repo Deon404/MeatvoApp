@@ -13,11 +13,23 @@ class FileSecurity {
       'image/png',
       'image/gif',
       'image/webp',
-      'application/pdf',
-      'text/plain',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ]);
+
+    this.allowedExtensions = new Set([
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.gif',
+      '.webp',
+    ]);
+
+    this.magicByteSignatures = {
+      'image/jpeg': [Buffer.from([0xff, 0xd8, 0xff])],
+      'image/jpg': [Buffer.from([0xff, 0xd8, 0xff])],
+      'image/png': [Buffer.from([0x89, 0x50, 0x4e, 0x47])],
+      'image/gif': [Buffer.from([0x47, 0x49, 0x46, 0x38])],
+      'image/webp': [Buffer.from('RIFF'), Buffer.from('WEBP')],
+    };
 
     this.maxFileSize = 5 * 1024 * 1024; // 5MB
     this.scanFiles = this.scanFiles.bind(this);
@@ -27,14 +39,30 @@ class FileSecurity {
   /**
    * Generate secure filename
    */
+  verifyMagicBytes(fileBuffer, mimetype) {
+    const signatures = this.magicByteSignatures[mimetype];
+    if (!signatures || !fileBuffer || fileBuffer.length < 4) return false;
+
+    if (mimetype === 'image/webp') {
+      return fileBuffer.slice(0, 4).equals(signatures[0])
+        && fileBuffer.includes(signatures[1]);
+    }
+
+    return signatures.some((sig) => {
+      if (fileBuffer.length < sig.length) return false;
+      return fileBuffer.slice(0, sig.length).equals(sig);
+    });
+  }
+
   generateSecureFilename(originalName, userId = null) {
     try {
-      const ext = path.extname(originalName);
+      const ext = path.extname(originalName).toLowerCase();
+      const safeExt = this.allowedExtensions.has(ext) ? ext : '.bin';
       const timestamp = Date.now();
       const random = crypto.randomBytes(8).toString('hex');
       const userPrefix = userId ? `${userId}_` : '';
       
-      const secureName = `${userPrefix}${timestamp}_${random}${ext}`;
+      const secureName = `${userPrefix}${timestamp}_${random}${safeExt}`;
       
       logger.info('secure_filename_generated', { 
         originalName,
@@ -73,6 +101,18 @@ class FileSecurity {
       if (!this.allowedMimeTypes.has(file.mimetype)) {
         this.cleanupFile(file.path);
         return fail(res, 400, 'File type not allowed', { code: 'INVALID_FILE_TYPE' });
+      }
+
+      const ext = path.extname(file.originalname).toLowerCase();
+      if (!this.allowedExtensions.has(ext)) {
+        this.cleanupFile(file.path);
+        return fail(res, 400, 'File extension not allowed', { code: 'INVALID_FILE_EXTENSION' });
+      }
+
+      const fileBuffer = require('fs').readFileSync(file.path);
+      if (!this.verifyMagicBytes(fileBuffer, file.mimetype)) {
+        this.cleanupFile(file.path);
+        return fail(res, 400, 'File content does not match declared type', { code: 'INVALID_FILE_CONTENT' });
       }
 
       // Check filename for suspicious patterns

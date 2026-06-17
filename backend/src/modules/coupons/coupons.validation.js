@@ -47,8 +47,36 @@ const validateCouponSchema = z.object({
   query: z.object({}).optional(),
 });
 
+const updateCouponSchema = z.object({
+  params: z.object({
+    id: z.coerce.number().int().positive(),
+  }),
+  body: z
+    .object({
+      discount_type: z.enum(['PERCENT', 'FLAT']).optional(),
+      discount_value: z.coerce.number().nonnegative().optional(),
+      min_order_value: z.coerce.number().nonnegative().optional(),
+      max_uses: z.coerce.number().int().nonnegative().optional().nullable(),
+      active: z.boolean().optional(),
+    })
+    .refine((body) => Object.keys(body).length > 0, {
+      message: 'At least one field is required',
+    }),
+  query: z.object({}).optional(),
+});
+
+const deleteCouponSchema = z.object({
+  params: z.object({
+    id: z.coerce.number().int().positive(),
+  }),
+  body: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
 module.exports = {
   listCouponsSchema,
   createCouponSchema,
   validateCouponSchema,
+  updateCouponSchema,
+  deleteCouponSchema,
 };

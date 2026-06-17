@@ -6,3 +6,5 @@ yarn-error.log*
 server.*.log
 .git
 .DS_Store
+scripts/dev-only/
+test-*.js

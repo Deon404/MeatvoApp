@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/api_config.dart' show ApiAdminPaths, ApiDeliveryPaths;
+import '../config/backend_resolver.dart';
 import 'api_service.dart';
 import 'error_tracking_service.dart';
 import 'product_service.dart';
@@ -37,6 +38,45 @@ class AdminService {
       return Map<String, dynamic>.from(data);
     }
     throw Exception(fallbackMessage);
+  }
+
+  String _responseMessage(dynamic data, {String fallback = 'Request failed'}) {
+    if (data is Map) {
+      final map = Map<String, dynamic>.from(data);
+      final error = map['error'];
+      if (error is Map && error['message'] != null) {
+        return error['message'].toString();
+      }
+      final message = map['message'];
+      if (message != null && message.toString().trim().isNotEmpty) {
+        return message.toString();
+      }
+    } else if (data is String && data.trim().isNotEmpty) {
+      return data.trim();
+    }
+    return fallback;
+  }
+
+  String _dioErrorMessage(
+    DioException error, {
+    required String fallback,
+  }) {
+    final fromBody = _responseMessage(
+      error.response?.data,
+      fallback: fallback,
+    );
+    if (fromBody != fallback) return fromBody;
+
+    if (error.type == DioExceptionType.connectionError) {
+      final connectionError = error.error;
+      if (connectionError != null &&
+          connectionError.toString().trim().isNotEmpty) {
+        return connectionError.toString();
+      }
+      return BackendResolver.connectionUserMessage();
+    }
+
+    return error.message ?? fallback;
   }
 
   List<Map<String, dynamic>> _extractList(Response res, String fallbackMessage) {
@@ -133,6 +173,8 @@ class AdminService {
     switch (value) {
       case 'CONFIRMED':
         return 'accepted';
+      case 'PACKING_STARTED':
+        return 'packing_started';
       case 'OUT_FOR_DELIVERY':
         return 'on_way';
       case 'ASSIGNED':
@@ -160,9 +202,136 @@ class AdminService {
         return 'CANCELLED';
       case 'packed':
         return 'PACKED';
+      case 'packing_started':
+        return 'PACKING_STARTED';
       default:
         return status.toUpperCase();
     }
+  }
+
+  /// Compare UI status labels against the backend enum (accepted == confirmed).
+  String toBackendOrderStatus(String status) =>
+      _mapOrderStatusToBackend(status);
+
+  bool isSameBackendOrderStatus(String a, String b) =>
+      toBackendOrderStatus(a) == toBackendOrderStatus(b);
+
+  /// Maps legacy/enhanced DB statuses to the simplified admin flow states.
+  String resolveAdminTransitionState(String status) {
+    switch (toBackendOrderStatus(status)) {
+      case 'PAYMENT_PENDING':
+      case 'PAYMENT_VERIFIED':
+        return 'PLACED';
+      case 'CONFIRMED':
+      case 'ASSIGNED':
+      case 'RIDER_ASSIGNED':
+      case 'RIDER_ACCEPTED':
+      case 'RIDER_REJECTED':
+        return 'CONFIRMED';
+      case 'PACKING_STARTED':
+        return 'PACKING_STARTED';
+      case 'PACKED':
+        return 'PACKED';
+      case 'OUT_FOR_DELIVERY':
+      case 'PICKED_UP':
+      case 'ON_THE_WAY':
+      case 'RIDER_NEARBY':
+        return 'OUT_FOR_DELIVERY';
+      case 'DELIVERED':
+        return 'DELIVERED';
+      case 'CANCELLED':
+      case 'REFUNDED':
+      case 'FAILED':
+        return 'CANCELLED';
+      default:
+        return toBackendOrderStatus(status);
+    }
+  }
+
+  /// Primary next step for admin — one clear action per order stage.
+  static const Map<String, String> _adminPrimaryNextStep = {
+    'PLACED': 'CONFIRMED',
+    'CONFIRMED': 'PACKED',
+    'PACKING_STARTED': 'PACKED',
+    'PACKED': 'OUT_FOR_DELIVERY',
+    'OUT_FOR_DELIVERY': 'DELIVERED',
+  };
+
+  /// Mirrors backend `orderStateMachine.js` — admin may only move forward.
+  static const Map<String, List<String>> _adminOrderTransitions = {
+    'PLACED': ['CONFIRMED', 'CANCELLED'],
+    'CONFIRMED': ['PACKING_STARTED', 'PACKED', 'CANCELLED'],
+    'PACKING_STARTED': ['PACKED', 'CANCELLED'],
+    'PACKED': ['OUT_FOR_DELIVERY', 'CANCELLED'],
+    'OUT_FOR_DELIVERY': ['DELIVERED'],
+    'DELIVERED': [],
+    'CANCELLED': [],
+  };
+
+  /// Human-readable label for the admin status action button/menu.
+  String adminStatusActionLabel(String uiStatus) {
+    switch (uiStatus.toLowerCase()) {
+      case 'placed':
+        return 'Accept Order';
+      case 'accepted':
+      case 'confirmed':
+        return 'Mark as Packed';
+      case 'packing_started':
+        return 'Mark as Packed';
+      case 'packed':
+        return 'Out for Delivery';
+      case 'on_way':
+      case 'out_for_delivery':
+        return 'Mark Delivered';
+      case 'delivered':
+        return 'Delivered';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return uiStatus
+            .split('_')
+            .map((p) => p.isEmpty ? p : p[0].toUpperCase() + p.substring(1))
+            .join(' ');
+    }
+  }
+
+  String backendStatusToUi(String backendStatus) {
+    switch (backendStatus.toUpperCase()) {
+      case 'PLACED':
+        return 'placed';
+      case 'CONFIRMED':
+        return 'accepted';
+      case 'PACKING_STARTED':
+        return 'packing_started';
+      case 'PACKED':
+        return 'packed';
+      case 'OUT_FOR_DELIVERY':
+        return 'on_way';
+      case 'DELIVERED':
+        return 'delivered';
+      case 'CANCELLED':
+        return 'cancelled';
+      default:
+        return backendStatus.toLowerCase();
+    }
+  }
+
+  List<String> validAdminStatusTargets(String currentUiStatus) {
+    final from = resolveAdminTransitionState(currentUiStatus);
+    final nextBackend = _adminPrimaryNextStep[from];
+    if (nextBackend == null) return [];
+
+    final allowed = _adminOrderTransitions[from] ?? const [];
+    if (!allowed.contains(nextBackend)) return [];
+
+    return [backendStatusToUi(nextBackend)];
+  }
+
+  bool canAdminTransitionOrderStatus(String fromUiStatus, String toUiStatus) {
+    final from = resolveAdminTransitionState(fromUiStatus);
+    final to = toBackendOrderStatus(toUiStatus);
+    if (from == to) return false;
+    return (_adminOrderTransitions[from] ?? const []).contains(to);
   }
 
   Map<String, dynamic> normalizeOrder(Map<String, dynamic> raw) {
@@ -348,7 +517,8 @@ class AdminService {
     } on DioException catch (e) {
       await ErrorTrackingService.captureException(e, tag: 'admin_dashboard');
       throw Exception(
-          'Failed to get dashboard: ${e.response?.data?['message'] ?? e.message}');
+        'Failed to get dashboard: ${_dioErrorMessage(e, fallback: 'Could not load dashboard stats.')}',
+      );
     } catch (e, st) {
       await ErrorTrackingService.captureException(e, stackTrace: st, tag: 'admin_dashboard');
       throw Exception('Failed to get dashboard: $e');
@@ -623,11 +793,24 @@ class AdminService {
 
   Map<String, dynamic> normalizeAdminProduct(Map<String, dynamic> raw) {
     final stock = raw['stockQty'] ?? raw['stock'] ?? raw['stock_qty'] ?? 0;
+    final salePrice = _asDouble(
+      raw['salePrice'] ?? raw['price'] ?? raw['basePricePerKg'] ?? raw['base_price_per_kg'],
+    );
+    final mrpRaw = raw['mrp'];
+    final mrp = mrpRaw == null ? null : _asDouble(mrpRaw);
+    final discountRaw = raw['discountPercent'];
+    final discountPercent = discountRaw == null
+        ? _discountFromPrices(mrp: mrp, salePrice: salePrice)
+        : _asInt(discountRaw);
+
     return {
       'id': (raw['id'] ?? '').toString(),
       'name': raw['name'] ?? '',
       'categoryId': (raw['categoryId'] ?? raw['category_id'] ?? '').toString(),
-      'price': _asDouble(raw['price'] ?? raw['basePricePerKg'] ?? raw['base_price_per_kg']),
+      'salePrice': salePrice,
+      'price': salePrice,
+      'mrp': mrp,
+      'discountPercent': discountPercent,
       'stockQty': _asInt(stock),
       'imageUrl': (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
       'description': (raw['description'] ?? '').toString(),
@@ -641,6 +824,11 @@ class AdminService {
     };
   }
 
+  int? _discountFromPrices({double? mrp, required double salePrice}) {
+    if (mrp == null || mrp <= salePrice + 0.01) return null;
+    return ((1 - salePrice / mrp) * 100).round().clamp(1, 99);
+  }
+
   Future<List<Map<String, dynamic>>> getAdminProductsNormalized() async {
     final rows = await getProducts();
     return rows.map(normalizeAdminProduct).toList();
@@ -650,6 +838,7 @@ class AdminService {
     Map<String, dynamic>? data,
     required String name,
     required double price,
+    double? mrp,
     String? categoryId,
     String unit = 'kg',
     int? stockQty,
@@ -661,7 +850,9 @@ class AdminService {
       final payload = data ??
           <String, dynamic>{
             'name': name,
+            'salePrice': price,
             'price': price,
+            if (mrp != null && mrp > price) 'mrp': mrp,
             if (categoryId != null && categoryId.isNotEmpty) 'categoryId': categoryId,
             'unit': unit,
             if (stockQty != null) 'stockQty': stockQty,
@@ -689,23 +880,35 @@ class AdminService {
     Map<String, dynamic>? data,
     String? name,
     double? price,
+    double? mrp,
     String? categoryId,
     String? description,
     String? unit,
     int? stockQty,
     String? imageUrl,
     bool? isActive,
+    bool clearMrp = false,
+    List<int>? weightVariants,
   }) async {
     try {
       final updates = data != null ? Map<String, dynamic>.from(data) : <String, dynamic>{};
       if (name != null) updates['name'] = name;
-      if (price != null) updates['price'] = price;
+      if (price != null) {
+        updates['salePrice'] = price;
+        updates['price'] = price;
+      }
+      if (clearMrp) {
+        updates['mrp'] = null;
+      } else if (mrp != null) {
+        updates['mrp'] = mrp;
+      }
       if (categoryId != null) updates['categoryId'] = categoryId;
       if (description != null) updates['description'] = description;
       if (unit != null) updates['unit'] = unit;
       if (stockQty != null) updates['stockQty'] = stockQty;
       if (imageUrl != null) updates['imageUrl'] = imageUrl;
       if (isActive != null) updates['isActive'] = isActive;
+      if (weightVariants != null) updates['weight_variants'] = weightVariants;
 
       if (updates.isEmpty) throw Exception('No fields to update');
 
@@ -1141,10 +1344,38 @@ class AdminService {
     }
   }
 
-  // ── Variant management (not yet in backend spec) ──────────────────────────
+  // ── Variant management ────────────────────────────────────────────────────
 
-  Future<List<Map<String, dynamic>>> getProductVariants(String productId) async =>
-      [];
+  Future<Map<String, dynamic>> getAdminProductById(String productId) async {
+    final products = await getAdminProducts();
+    for (final product in products) {
+      if (product['id']?.toString() == productId) {
+        return product;
+      }
+    }
+    throw Exception('Product not found');
+  }
+
+  Future<List<Map<String, dynamic>>> getProductVariants(String productId) async {
+    try {
+      final product = await getAdminProductById(productId);
+      final variants = product['weight_variants'];
+      if (variants is! List || variants.isEmpty) return [];
+      return variants.map((weight) {
+        final grams = (weight as num?)?.toInt() ?? 500;
+        return {
+          'id': '${productId}_$grams',
+          'product_id': productId,
+          'weight': '${grams}g',
+          'weight_value': grams / 1000.0,
+          'stock': product['stock'],
+          'is_available': product['active'] != false,
+        };
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
 
   Future<Map<String, dynamic>> createProductVariant({
     required String productId,
@@ -1153,8 +1384,21 @@ class AdminService {
     int? stock,
     bool isAvailable = true,
   }) async {
-    throw UnimplementedError(
-        'createProductVariant: not yet supported by backend');
+    final product = await getAdminProductById(productId);
+    final existing = (product['weight_variants'] as List?)?.cast<num>() ?? [];
+    final grams = (weightValue * 1000).round();
+    if (!existing.contains(grams)) {
+      existing.add(grams);
+      await updateProduct(productId, weightVariants: existing.map((e) => e.toInt()).toList());
+    }
+    return {
+      'id': '${productId}_$grams',
+      'product_id': productId,
+      'weight': weight,
+      'weight_value': weightValue,
+      'stock': stock ?? product['stock'],
+      'is_available': isAvailable,
+    };
   }
 
   Future<void> updateProductVariant(
@@ -1164,13 +1408,30 @@ class AdminService {
     int? stock,
     bool? isAvailable,
   }) async {
-    throw UnimplementedError(
-        'updateProductVariant: not yet supported by backend');
+    final parts = variantId.split('_');
+    if (parts.length < 2) return;
+    final productId = parts.sublist(0, parts.length - 1).join('_');
+    if (stock != null) {
+      await updateProductStock(productId, stock);
+    }
+    if (isAvailable != null) {
+      await updateProduct(productId, isActive: isAvailable);
+    }
   }
 
   Future<void> deleteProductVariant(String variantId) async {
-    throw UnimplementedError(
-        'deleteProductVariant: not yet supported by backend');
+    final parts = variantId.split('_');
+    if (parts.length < 2) return;
+    final productId = parts.sublist(0, parts.length - 1).join('_');
+    final grams = int.tryParse(parts.last);
+    if (grams == null) return;
+    final product = await getAdminProductById(productId);
+    final existing = (product['weight_variants'] as List?)?.cast<num>() ?? [];
+    final updated = existing.where((e) => e.toInt() != grams).toList();
+    await updateProduct(
+      productId,
+      weightVariants: updated.map((e) => e.toInt()).toList(),
+    );
   }
 
   // ── User management (limited — uses customers endpoint) ───────────────────
@@ -1281,5 +1542,84 @@ class AdminService {
     } catch (e) {
       throw Exception('Failed to update rider KYC: $e');
     }
+  }
+
+  // ── Coupons ───────────────────────────────────────────────────────────────
+
+  Future<List<Map<String, dynamic>>> getCoupons({bool includeInactive = true}) async {
+    final data = _extractMap(
+      await _api.get(
+        ApiAdminPaths.coupons,
+        queryParameters: {'includeInactive': includeInactive.toString()},
+      ),
+      'Failed to load coupons',
+    );
+    final coupons = data['coupons'];
+    if (coupons is List) {
+      return List<Map<String, dynamic>>.from(
+        coupons.map((e) => Map<String, dynamic>.from(e as Map)),
+      );
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> createCoupon({
+    required String code,
+    required String discountType,
+    required double discountValue,
+    double minOrderValue = 0,
+    int? maxUses,
+    bool active = true,
+  }) async {
+    return _extractMap(
+      await _api.post(
+        ApiAdminPaths.coupons,
+        data: {
+          'code': code,
+          'discount_type': discountType,
+          'discount_value': discountValue,
+          'min_order_value': minOrderValue,
+          if (maxUses != null) 'max_uses': maxUses,
+          'active': active,
+        },
+      ),
+      'Failed to create coupon',
+    );
+  }
+
+  Future<void> updateCoupon(
+    int id, {
+    String? discountType,
+    double? discountValue,
+    double? minOrderValue,
+    int? maxUses,
+    bool? active,
+  }) async {
+    await _api.patch(
+      ApiAdminPaths.couponById(id),
+      data: {
+        if (discountType != null) 'discount_type': discountType,
+        if (discountValue != null) 'discount_value': discountValue,
+        if (minOrderValue != null) 'min_order_value': minOrderValue,
+        if (maxUses != null) 'max_uses': maxUses,
+        if (active != null) 'active': active,
+      },
+    );
+  }
+
+  Future<void> deleteCoupon(int id) async {
+    await _api.delete(ApiAdminPaths.couponById(id));
+  }
+
+  // ── Analytics ─────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getAnalytics({String period = 'today'}) async {
+    return _extractMap(
+      await _api.get(
+        ApiAdminPaths.analytics,
+        queryParameters: {'period': period},
+      ),
+      'Failed to load analytics',
+    );
   }
 }

@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../constants/home_strings.dart';
-import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../features/connectivity/connectivity_provider.dart';
 import '../../features/home/widgets/home_top_bar_delegate.dart';
 import '../../models/banner_model.dart';
 import '../../models/home_category_item.dart';
 import '../../models/product_variant_model.dart';
-import '../../screens/address/address_list_screen.dart';
 import '../../screens/categories/categories_list_screen.dart';
 import '../../screens/categories/category_products_screen.dart';
 import '../../screens/notifications/notifications_screen.dart';
@@ -16,10 +14,11 @@ import '../../ui/shells/meatvo_layout.dart';
 import '../../ui/shells/offline_banner.dart';
 import '../../utils/app_transitions.dart';
 import '../../utils/responsive_helper.dart';
+import '../../providers/store_settings_provider.dart';
 import '../../viewmodels/home_provider.dart';
 import '../../viewmodels/home_state.dart';
 import '../../widgets/home/home_body.dart';
-import '../../widgets/location/location_onboarding_sheet.dart';
+import '../../widgets/location/delivery_location_sheet.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({
@@ -57,6 +56,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      ref.invalidate(storeSettingsProvider);
       ref.read(homeViewModelProvider.notifier).handleResume();
     }
   }
@@ -109,12 +109,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     pinned: true,
                     delegate: HomeTopBarDelegate(
                       topPadding: MediaQuery.paddingOf(context).top,
-                      locationLabel: _shortDeliveryAreaName(state),
+                      locationTitle: _locationTitle(state),
+                      locationSubtitle: _locationSubtitle(state),
                       unreadCount: state.unreadNotificationCount,
-                      profileInitial: _profileInitial(state),
                       onAddressTap: _openAddressBook,
                       onNotificationTap: _openNotifications,
-                      onProfileTap: widget.onOpenProfileTab,
                     ),
                   ),
                   HomeBody(
@@ -132,12 +131,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     onRetryPopular: () => ref
                         .read(homeViewModelProvider.notifier)
                         .fetchBestSellers(),
+                    onRetryAllProducts: () => ref
+                        .read(homeViewModelProvider.notifier)
+                        .fetchAllProducts(),
                     onBannerTap: _handleBannerTap,
                     onProductTap: _openProduct,
                     onQuantityChange: ref
                         .read(homeViewModelProvider.notifier)
                         .changeCartQuantity,
                     bottomPadding: bottomPad,
+                    onChangeLocation: _openAddressBook,
                   ),
                 ],
               ),
@@ -189,19 +192,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> _openAddressBook() async {
-    final state = ref.read(homeViewModelProvider);
-    if (state.defaultAddress == null) {
-      final name = state.user?.name?.trim();
-      final firstName = name != null && name.isNotEmpty
-          ? name.split(RegExp(r'\s+')).first
-          : null;
-      await LocationOnboardingSheet.show(context, userName: firstName);
-      if (mounted) {
-        await ref.read(homeViewModelProvider.notifier).refresh();
-      }
-      return;
-    }
-    await context.pushSlideRight(const AddressListScreen());
+    await DeliveryLocationSheet.show(context);
     if (mounted) {
       await ref.read(homeViewModelProvider.notifier).refresh();
     }
@@ -254,6 +245,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
   }
 
+  String _locationTitle(HomeState state) {
+    final address = state.defaultAddress;
+    if (address == null) return HomeStrings.selectLocation;
+
+    final city = address.city.trim();
+    if (city.isNotEmpty) return city;
+
+    return _shortDeliveryAreaName(state);
+  }
+
+  String? _locationSubtitle(HomeState state) {
+    final address = state.defaultAddress;
+    if (address == null) return null;
+    final line = address.fullAddress.trim();
+    if (line.isEmpty) return null;
+    return line.length <= 48 ? line : '${line.substring(0, 48)}...';
+  }
+
   String _shortDeliveryAreaName(HomeState state) {
     // Capture everything to locals so the `address!.landmark!` bangs
     // disappear. Instance fields cannot be smart-cast in Dart, so the
@@ -279,10 +288,5 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final city = address.city.trim();
     final fallback = city.isNotEmpty ? city : HomeStrings.selectLocation;
     return fallback.length <= 20 ? fallback : '${fallback.substring(0, 20)}...';
-  }
-
-  String _profileInitial(HomeState state) {
-    final name = state.user?.name?.trim() ?? '';
-    return name.isEmpty ? 'M' : name.substring(0, 1).toUpperCase();
   }
 }

@@ -113,7 +113,7 @@ Test all status transitions:
 
 ## Files Changed
 
-- `old_meatvo/lib/screens/rider/rider_order_detail_screen.dart`
+- `frontend/lib/screens/rider/rider_order_detail_screen.dart`
   - Added `_getActualOrderId()` method
   - Updated all status update methods
   - Added debug logging

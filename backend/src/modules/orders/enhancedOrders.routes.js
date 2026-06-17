@@ -93,7 +93,7 @@ router.get(
 router.post(
   '/:id/start-packing',
   protect,
-  rbac(ROLES.ADMIN),
+  rbac(ROLES.ADMIN, ROLES.STAFF),
   requireOrderState('CONFIRMED'),
   startPacking
 );
@@ -105,7 +105,7 @@ router.post(
 router.post(
   '/:id/mark-packed',
   protect,
-  rbac(ROLES.ADMIN),
+  rbac(ROLES.ADMIN, ROLES.STAFF),
   requireOrderState('PACKING_STARTED', 'CONFIRMED'),
   markPacked
 );

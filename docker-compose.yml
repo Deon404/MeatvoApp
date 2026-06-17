@@ -47,10 +47,10 @@ services:
       REDIS_URL: redis://redis:6379
       DEFAULT_COUNTRY_CODE: "+91"
 
-      # Auth / OTP
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-access-secret-change-me}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-dev-refresh-secret-change-me}
-      OTP_HASH_SECRET: ${OTP_HASH_SECRET:-dev-otp-hash-secret-change-me}
+      # Auth / OTP — SECURITY FIX: no dev-default fallbacks; set in root .env
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      OTP_HASH_SECRET: ${OTP_HASH_SECRET}
       SMS_PROVIDER: ${SMS_PROVIDER:-console}
 
       # Dev-only auth bypass for Admin/Delivery HTML panels

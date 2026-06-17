@@ -83,6 +83,20 @@ async function getDistanceToCustomer(riderLat, riderLng, orderId) {
 }
 
 /**
+ * Verify rider is assigned to the given order
+ */
+async function verifyRiderAssignedToOrder(riderUserId, orderId) {
+  const { rows } = await query(
+    `SELECT oa.id
+     FROM order_assignments oa
+     JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+     WHERE oa.order_id = $1 AND dp.user_id = $2`,
+    [orderId, riderUserId]
+  );
+  return Boolean(rows[0]);
+}
+
+/**
  * Update rider location and calculate ETA
  */
 async function updateRiderLocation({
@@ -117,15 +131,24 @@ async function updateRiderLocation({
     // Use advanced ETA service to recalculate for all active orders
     await handleRiderLocationUpdate(riderUserId, { lat, lng }, io);
 
-    // Check if rider is nearby any order
-    if (orderId) {
-      const isNearby = await checkRiderNearby(orderId, { lat, lng });
+    // Check if rider is nearby any order (only for assigned orders)
+    let verifiedOrderId = orderId;
+    if (verifiedOrderId) {
+      const assigned = await verifyRiderAssignedToOrder(riderUserId, verifiedOrderId);
+      if (!assigned) {
+        logger.warn('rider_location_unassigned_order', { riderUserId, orderId: verifiedOrderId });
+        verifiedOrderId = null;
+      }
+    }
+
+    if (verifiedOrderId) {
+      const isNearby = await checkRiderNearby(verifiedOrderId, { lat, lng });
       
       if (isNearby) {
         // Get order and rider info
         const { rows: orderRows } = await query(
           'SELECT customer_id FROM orders WHERE id = $1',
-          [orderId]
+          [verifiedOrderId]
         );
         
         const { rows: userRows } = await query(
@@ -138,7 +161,7 @@ async function updateRiderLocation({
           
           // Send nearby notification
           await sendRiderNearbyNotification({
-            orderId,
+            orderId: verifiedOrderId,
             customerId: orderRows[0].customer_id,
             riderName,
             eta: 5, // Nearby = ~5 minutes
@@ -369,6 +392,7 @@ async function checkRiderOnlineStatus(riderUserId, io) {
 
 module.exports = {
   calculateETA,
+  verifyRiderAssignedToOrder,
   updateRiderLocation,
   getRiderLocation,
   getOrderTrackingInfo,

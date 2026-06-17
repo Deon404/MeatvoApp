@@ -1,24 +1,28 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../models/order_model.dart';
 import '../../services/rider_service.dart';
 import '../../services/rider_location_service.dart';
 import '../../services/socket_service.dart';
 import '../../services/maps_service.dart';
+import '../../services/contact_action_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/maps/rider_location_tracker.dart';
 import '../../widgets/maps/rider_navigation_map.dart';
+import 'batch_delivery_screen.dart';
 
 /// Rider Order Detail Screen - Detailed view with actions for a single order assignment
 class RiderOrderDetailScreen extends StatefulWidget {
   final String assignmentId;
+  final List<String>? batchOrderIds;
 
   const RiderOrderDetailScreen({
     super.key,
     required this.assignmentId,
+    this.batchOrderIds,
   });
 
   @override
@@ -31,6 +35,7 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
   final RiderLocationService _locationService = RiderLocationService();
   final SocketService _socketService = SocketService();
   final MapsService _mapsService = MapsService();
+  final ContactActionService _contactService = ContactActionService();
   Map<String, dynamic>? _assignment;
   bool _isLoading = true;
   String? _errorMessage;
@@ -150,15 +155,17 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         .replaceAll('-', '_');
   }
 
-  Future<void> _loadOrderDetails() async {
+  Future<void> _loadOrderDetails({bool forceRefresh = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      final assignment =
-          await _riderService.getOrderAssignment(widget.assignmentId);
+      final assignment = await _riderService.getOrderAssignment(
+        widget.assignmentId,
+        forceRefresh: forceRefresh,
+      );
       if (mounted) {
         setState(() {
           _assignment = assignment;
@@ -169,11 +176,19 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Failed to load order details: $e';
+          _errorMessage = _friendlyLoadError(e);
           _isLoading = false;
         });
       }
     }
+  }
+
+  String _friendlyLoadError(Object error) {
+    final message = error.toString();
+    if (message.contains('429') || message.toLowerCase().contains('too many requests')) {
+      return 'Server is busy (too many requests). Please wait a few seconds and tap Retry.';
+    }
+    return 'Failed to load order details: $error';
   }
 
   Future<void> _acceptOrder() async {
@@ -203,6 +218,32 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
 
     setState(() => _isProcessing = true);
     try {
+      final batchIds = widget.batchOrderIds
+          ?.map((id) => id.toString())
+          .where((id) => id.isNotEmpty)
+          .toList();
+      final isBatch = batchIds != null && batchIds.length > 1;
+
+      if (isBatch) {
+        debugPrint('[RiderOrderDetail] Accepting batch: $batchIds');
+        await _riderService.acceptOrders(batchIds);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${batchIds.length} orders accepted!'),
+              backgroundColor: AppColors.success,
+            ),
+          );
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => BatchDeliveryScreen(orderIds: batchIds),
+            ),
+          );
+        }
+        return;
+      }
+
       final orderId = _getActualOrderId();
       debugPrint('[RiderOrderDetail] Accepting order: $orderId');
       await _riderService.acceptOrder(orderId);
@@ -400,6 +441,36 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
   }
 
   Future<void> _markDelivered() async {
+    final order = _assignment?['order'] as Map<String, dynamic>?;
+    final paymentMethod = (order?['payment_method'] as String? ?? 'cod').toLowerCase();
+    final isCOD = paymentMethod == 'cod';
+    final totalAmount = (order?['total_price'] as num?)?.toDouble() ?? 0.0;
+
+    if (isCOD) {
+      final cashConfirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Collect Cash'),
+          content: Text(
+            'Confirm you collected ₹${totalAmount.toStringAsFixed(0)} in cash from the customer before marking delivered.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Not yet'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
+              child: const Text('Cash Collected'),
+            ),
+          ],
+        ),
+      );
+      if (cashConfirmed != true) return;
+    }
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -461,7 +532,26 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     try {
       final orderId = _getActualOrderId();
       debugPrint('[RiderOrderDetail] Marking delivered: $orderId');
-      await _riderService.markOrderDelivered(orderId);
+
+      String? proofUrl;
+      try {
+        final picker = ImagePicker();
+        final photo = await picker.pickImage(
+          source: ImageSource.camera,
+          maxWidth: 1280,
+          imageQuality: 80,
+        );
+        if (photo != null) {
+          proofUrl = await _riderService.uploadDeliveryProof(photo.path);
+        }
+      } catch (proofErr) {
+        debugPrint('[RiderOrderDetail] Proof capture skipped: $proofErr');
+      }
+
+      await _riderService.markOrderDelivered(
+        orderId,
+        proofUrl: proofUrl,
+      );
       _locationService.stopSendingLocation();
       if (mounted) {
         await showDialog(
@@ -674,6 +764,20 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     );
   }
 
+  Future<void> _handleContactCall(String phone) async {
+    final success = await _contactService.makeCall(phone);
+    if (!success && mounted && context.mounted) {
+      _contactService.showContactError(context, 'call', phone);
+    }
+  }
+
+  Future<void> _handleContactSms(String phone) async {
+    final success = await _contactService.sendSMS(phone);
+    if (!success && mounted && context.mounted) {
+      _contactService.showContactError(context, 'message', phone);
+    }
+  }
+
   Widget _buildAddressCard() {
     final order = _assignment?['order'] as Map<String, dynamic>?;
     if (order == null) return const SizedBox.shrink();
@@ -733,7 +837,7 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
                 ),
               ),
               IconButton(
-                onPressed: () => launchUrl(Uri.parse('tel:$storePhone')),
+                onPressed: () => _handleContactCall(storePhone),
                 icon: const Icon(
                   Icons.call,
                   color: Color(0xFFC8102E),
@@ -800,15 +904,30 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
                 ),
               ),
               if (customerPhone.isNotEmpty)
-                IconButton(
-                  onPressed: () => launchUrl(Uri.parse('tel:$customerPhone')),
-                  icon: const Icon(
-                    Icons.call,
-                    color: Color(0xFFC8102E),
-                    size: 20,
-                  ),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: () => _handleContactSms(customerPhone),
+                      icon: const Icon(
+                        Icons.message_outlined,
+                        color: Color(0xFFC8102E),
+                        size: 20,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                    IconButton(
+                      onPressed: () => _handleContactCall(customerPhone),
+                      icon: const Icon(
+                        Icons.call,
+                        color: Color(0xFFC8102E),
+                        size: 20,
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
                 ),
             ],
           ),
@@ -1076,29 +1195,50 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         ],
       );
     } else if (status == 'accepted') {
+      return ElevatedButton(
+        onPressed: _isProcessing ? null : _markPickedUp,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFC8102E),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          minimumSize: const Size(double.infinity, 50),
+        ),
+        child: Text(
+          _isProcessing ? 'Processing...' : 'Mark Picked Up',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    } else if (status == 'picked_up' || status == 'on_the_way') {
       return Row(
         children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: _isProcessing ? null : _markPickedUp,
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFFC8102E)),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+          if (status == 'picked_up')
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _isProcessing ? null : _markOnTheWay,
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFFC8102E)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
-              ),
-              child: Text(
-                _isProcessing ? 'Processing...' : 'Mark Picked Up',
-                style: const TextStyle(
-                  color: Color(0xFFC8102E),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
+                child: Text(
+                  _isProcessing ? 'Processing...' : 'On The Way',
+                  style: const TextStyle(
+                    color: Color(0xFFC8102E),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 12),
+          if (status == 'picked_up') const SizedBox(width: 12),
           Expanded(
             child: ElevatedButton(
               onPressed: _isProcessing ? null : _markDelivered,
@@ -1120,26 +1260,6 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
             ),
           ),
         ],
-      );
-    } else if (status == 'picked_up') {
-      return ElevatedButton(
-        onPressed: _isProcessing ? null : _markDelivered,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFFC8102E),
-          padding: const EdgeInsets.symmetric(vertical: 14),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          minimumSize: const Size(double.infinity, 50),
-        ),
-        child: Text(
-          _isProcessing ? 'Processing...' : 'Mark Delivered',
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
       );
     } else if (status == 'delivered') {
       return Container(
@@ -1289,7 +1409,7 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
             ),
             SizedBox(height: R.sh(3, context)),
             ElevatedButton.icon(
-              onPressed: _loadOrderDetails,
+              onPressed: () => _loadOrderDetails(forceRefresh: true),
               icon: const Icon(Icons.refresh),
               label: Text(
                 'Retry',

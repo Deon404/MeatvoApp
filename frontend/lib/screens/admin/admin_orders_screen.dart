@@ -1,10 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../../config/backend_resolver.dart';
 import '../../services/admin_service.dart';
+import '../../services/socket_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
+import '../../widgets/admin/assignment_failed_alert_banner.dart';
+import '../../widgets/admin/new_order_alert_banner.dart';
 import '../../widgets/skeletons/order_card_skeleton.dart';
 
 /// Admin Orders Management Screen
@@ -18,12 +25,16 @@ class AdminOrdersScreen extends StatefulWidget {
 
 class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   final _adminService = AdminService();
+  final _socketService = SocketService();
   final _dateFormat = DateFormat('MMM d, yyyy • hh:mm a');
+  AdminNewOrderAlertController? _alertController;
+  Timer? _socketReloadDebounce;
 
   final List<Map<String, String?>> _statusFilters = const [
     {'label': 'All', 'value': null},
     {'label': 'Placed', 'value': 'placed'},
     {'label': 'Accepted', 'value': 'accepted'},
+    {'label': 'Packed', 'value': 'packed'},
     {'label': 'Assigned', 'value': 'assigned'},
     {'label': 'On the Way', 'value': 'on_way'},
     {'label': 'Delivered', 'value': 'delivered'},
@@ -37,18 +48,116 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   DateTimeRange? _selectedDateRange;
   String? _assigningOrderId;
   String? _updatingOrderId;
+  final Set<int> _unassignedOrderIds = {};
 
   @override
   void initState() {
     super.initState();
     _loadOrders();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _setupNewOrderAlerts();
+      _setupSocketListeners();
+    });
   }
 
-  Future<void> _loadOrders() async {
+  @override
+  void dispose() {
+    _socketReloadDebounce?.cancel();
+    _socketService.offNewOrder();
+    _socketService.offAdminOrderUpdate();
+    _socketService.offAssignmentFailed();
+    _alertController?.dispose();
+    super.dispose();
+  }
+
+  void _setupNewOrderAlerts() {
+    if (!mounted) return;
+
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+
+    _alertController = AdminNewOrderAlertController(
+      overlayState: overlay,
+      onTap: (_) => _debouncedReloadOrders(),
+    );
+  }
+
+  Future<void> _setupSocketListeners() async {
+    await _socketService.connect();
+    _socketService.onNewOrder(_handleNewOrder);
+    _socketService.onAdminOrderUpdate(_onOrderUpdatedSocketEvent);
+    _socketService.onAssignmentFailed(_handleAssignmentFailed);
+  }
+
+  void _handleAssignmentFailed(dynamic data) {
+    if (!mounted) return;
+
+    final alert = AssignmentFailedAlertData.fromSocket(data);
+    if (alert.orderId == 0) return;
+
     setState(() {
-      _isLoading = true;
-      _loadError = null;
+      _unassignedOrderIds.add(alert.orderId);
     });
+    _debouncedReloadOrders();
+  }
+
+  void _handleNewOrder(dynamic data) {
+    if (!mounted) return;
+
+    final alert = NewOrderAlertData.fromSocket(data);
+    if (alert.orderId > 0) {
+      _alertController?.enqueue(alert);
+    }
+
+    _debouncedReloadOrders();
+  }
+
+  void _onOrderUpdatedSocketEvent(dynamic _) {
+    if (!mounted) return;
+    _debouncedReloadOrders();
+  }
+
+  void _debouncedReloadOrders() {
+    _socketReloadDebounce?.cancel();
+    _socketReloadDebounce = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) _loadOrders(showLoading: false);
+    });
+  }
+
+  void _syncUnassignedWarnings(List<Map<String, dynamic>> orders) {
+    if (_unassignedOrderIds.isEmpty) return;
+
+    final assignedOrderIds = <int>{};
+    for (final order in orders) {
+      final orderId = int.tryParse(order['id']?.toString() ?? '');
+      if (orderId == null) continue;
+      if (_orderHasAssignment(order)) {
+        assignedOrderIds.add(orderId);
+      }
+    }
+
+    _unassignedOrderIds.removeWhere(assignedOrderIds.contains);
+  }
+
+  bool _orderHasAssignment(Map<String, dynamic> order) {
+    final assignmentData = order['assignment'];
+    if (assignmentData is List) return assignmentData.isNotEmpty;
+    if (assignmentData is Map<String, dynamic>) return assignmentData.isNotEmpty;
+    return false;
+  }
+
+  bool _isUnassignedOrder(dynamic orderId) {
+    final parsed = int.tryParse(orderId?.toString() ?? '');
+    return parsed != null && _unassignedOrderIds.contains(parsed);
+  }
+
+  Future<void> _loadOrders({bool showLoading = true}) async {
+    if (showLoading) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
     try {
       final orders = await _adminService.getAllOrders(
         status: _selectedStatus,
@@ -62,6 +171,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
         _orders = orders;
         _isLoading = false;
         _loadError = null;
+        _syncUnassignedWarnings(orders);
       });
     } catch (e, stackTrace) {
       debugPrint('AdminOrdersScreen: failed to load orders: $e');
@@ -69,7 +179,10 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _loadError = e.toString();
+        _loadError = BackendResolver.toUserMessage(
+          e,
+          fallback: 'Could not load orders.',
+        );
         _orders = [];
       });
     }
@@ -107,6 +220,10 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     try {
       await _adminService.assignRiderToOrder(orderId, riderId);
       if (!mounted) return;
+      final parsedOrderId = int.tryParse(orderId);
+      if (parsedOrderId != null) {
+        setState(() => _unassignedOrderIds.remove(parsedOrderId));
+      }
       Navigator.of(context).pop(); // Close sheet
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -316,6 +433,47 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   }
 
   Future<void> _updateOrderStatus(String orderId, String status) async {
+    Map<String, dynamic>? existingOrder;
+    for (final candidate in _orders) {
+      if ((candidate['id'] ?? '').toString() == orderId) {
+        existingOrder = candidate;
+        break;
+      }
+    }
+    if (existingOrder != null &&
+        !_adminService.canAdminTransitionOrderStatus(
+          (existingOrder['status'] ?? '').toString(),
+          status,
+        )) {
+      if (!mounted) return;
+      final current = _formatStatus(existingOrder['status']);
+      final next = _formatStatus(status);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cannot change order from $current to $next'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
+    if (existingOrder != null &&
+        _adminService.isSameBackendOrderStatus(
+          status,
+          (existingOrder['status'] ?? '').toString(),
+        )) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Order is already ${_formatStatus(existingOrder['status'])}',
+          ),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
     setState(() => _updatingOrderId = orderId);
     try {
       await _adminService.updateOrderStatus(orderId, status);
@@ -346,6 +504,11 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      backgroundColor: AppColors.greyLight,
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.orders,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       appBar: AppBar(
         title: const Text('Manage Orders'),
         backgroundColor: Colors.white,
@@ -427,14 +590,21 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     return RefreshIndicator(
       onRefresh: _loadOrders,
       color: AppColors.primary,
-      child: ListView(
+      child: ListView.builder(
         padding: const EdgeInsets.all(16),
         physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          _buildFilterSection(),
-          const SizedBox(height: 16),
-          ..._orders.map(_buildOrderCard),
-        ],
+        itemCount: _orders.length + 1,
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Column(
+              children: [
+                _buildFilterSection(),
+                const SizedBox(height: 16),
+              ],
+            );
+          }
+          return _buildOrderCard(_orders[index - 1]);
+        },
       ),
     );
   }
@@ -494,6 +664,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                       _selectedDateRange == null
                           ? 'Select Date Range'
                           : '${DateFormat('MMM d').format(_selectedDateRange!.start)} - ${DateFormat('MMM d').format(_selectedDateRange!.end)}',
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ),
@@ -542,13 +713,52 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Order #${order['id'] ?? ''}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Order #${order['id'] ?? ''}',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                          if (_isUnassignedOrder(order['id']))
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.warning.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: AppColors.warning.withValues(alpha: 0.5),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.warning_amber_rounded,
+                                    size: 14,
+                                    color: AppColors.warning,
+                                  ),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'No rider',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.warning,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Text(
@@ -681,88 +891,67 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                   ],
                 ),
               ),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
-                if (assignment == null)
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _showAssignRiderSheet(order),
-                      icon: const Icon(Icons.delivery_dining),
-                      label: const Text('Assign Rider'),
-                    ),
-                  )
-                else
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => _showAssignRiderSheet(order),
-                      icon: const Icon(Icons.swap_horiz),
-                      label: const Text('Reassign Rider'),
-                    ),
+                OutlinedButton.icon(
+                  onPressed: () => _showAssignRiderSheet(order),
+                  icon: Icon(
+                    assignment == null ? Icons.delivery_dining : Icons.swap_horiz,
                   ),
-                const SizedBox(width: 12),
-                if (order['status'] != 'cancelled')
+                  label: Text(
+                    assignment == null ? 'Assign Rider' : 'Reassign Rider',
+                  ),
+                  style: _actionButtonStyle(),
+                ),
+                if (!_isCancelled(order['status']))
                   OutlinedButton.icon(
                     onPressed: _updatingOrderId == order['id']
                         ? null
                         : () => _confirmCancelOrder(order['id']),
                     icon: const Icon(Icons.cancel_outlined),
                     label: const Text('Cancel'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                    ),
+                    style: _actionButtonStyle(foreground: AppColors.primary),
                   ),
-                if (order['status'] != 'cancelled') const SizedBox(width: 12),
-                _updatingOrderId == order['id']
-                    ? const SizedBox(
-                        width: 32,
-                        height: 32,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.primary,
-                        ),
-                      )
-                    : PopupMenuButton<String>(
-                        onSelected: (value) =>
-                            _confirmStatusUpdate(order['id'], value),
-                        itemBuilder: (_) => _statusFilters
-                            .where((filter) => filter['value'] != null)
-                            .map(
-                              (filter) => PopupMenuItem<String>(
-                                value: filter['value']!,
-                                enabled: filter['value'] != order['status'],
-                                child: Text(
-                                  _formatStatus(filter['value']),
+                if (_updatingOrderId == order['id'])
+                  const SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
+                  )
+                else
+                  Builder(
+                    builder: (context) {
+                      final currentStatus =
+                          (order['status'] ?? '').toString();
+                      final validTargets = _adminService
+                          .validAdminStatusTargets(currentStatus);
+
+                      if (validTargets.isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+
+                      final nextStatus = validTargets.first;
+                      final actionLabel =
+                          _adminService.adminStatusActionLabel(nextStatus);
+
+                      return OutlinedButton.icon(
+                        onPressed: _updatingOrderId == order['id']
+                            ? null
+                            : () => _confirmStatusUpdate(
+                                  order['id'],
+                                  nextStatus,
                                 ),
-                              ),
-                            )
-                            .toList(),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: AppColors.divider,
-                            ),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Update Status',
-                                style: TextStyle(color: AppColors.textPrimary),
-                              ),
-                              SizedBox(width: 4),
-                              Icon(
-                                Icons.keyboard_arrow_down,
-                                color: AppColors.textPrimary,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
+                        icon: const Icon(Icons.arrow_forward, size: 18),
+                        label: Text(actionLabel),
+                        style: _actionButtonStyle(),
+                      );
+                    },
+                  ),
               ],
             ),
           ],
@@ -771,9 +960,25 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     );
   }
 
+  String _normalizedStatus(dynamic status) =>
+      status?.toString().trim().toLowerCase() ?? '';
+
+  bool _isCancelled(dynamic status) =>
+      _normalizedStatus(status) == 'cancelled';
+
+  ButtonStyle _actionButtonStyle({Color? foreground}) {
+    return OutlinedButton.styleFrom(
+      foregroundColor: foreground,
+      minimumSize: const Size(0, 44),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    );
+  }
+
   String _formatStatus(String? status) {
-    if (status == null || status.isEmpty) return 'Unknown';
-    return status
+    final normalized = _normalizedStatus(status);
+    if (normalized.isEmpty) return 'Unknown';
+    return normalized
         .split('_')
         .map((part) =>
             part.isEmpty ? part : part[0].toUpperCase() + part.substring(1))
@@ -787,7 +992,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   }
 
   Color _statusColor(String? status) {
-    switch (status) {
+    switch (_normalizedStatus(status)) {
       case 'placed':
         return Colors.blue;
       case 'packed':
@@ -803,7 +1008,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       case 'cancelled':
         return AppColors.primary;
       default:
-        return AppColors.surface;
+        return AppColors.textSecondary;
     }
   }
 }

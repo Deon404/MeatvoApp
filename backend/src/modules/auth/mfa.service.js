@@ -3,6 +3,7 @@ const qrcode = require('qrcode');
 const { query } = require('../../db/postgres');
 const { logger } = require('../../utils/logger');
 const { sentry } = require('../../utils/sentry');
+const { encryptMfaSecret, decryptMfaSecret, isEncrypted } = require('../../utils/mfaEncryption');
 
 class MFAService {
   constructor() {
@@ -170,16 +171,17 @@ class MFAService {
    * Generate a random backup code
    */
   generateRandomCode() {
+    const crypto = require('crypto');
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';
-    
+
     for (let i = 0; i < 8; i++) {
       if (i > 0 && i % 4 === 0) {
         code += '-';
       }
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+      code += chars.charAt(crypto.randomInt(chars.length));
     }
-    
+
     return code;
   }
 
@@ -211,7 +213,11 @@ class MFAService {
    * Check if user has MFA enabled
    */
   isMFAEnabled(user) {
-    return Boolean((user.mfaEnabled || user.mfa_enabled) && (user.mfaSecret || user.mfa_secret));
+    return Boolean(user.mfaEnabled || user.mfa_enabled) && Boolean(user.mfaSecret || user.mfa_secret);
+  }
+
+  resolveStoredSecret(stored) {
+    return decryptMfaSecret(stored);
   }
 
   /**
@@ -222,13 +228,14 @@ class MFAService {
       const hashedBackupCodes =
         this.backupCodes.get(userId) || (backupCodes || []).map((code) => this.hashBackupCode(code));
 
+      const encryptedSecret = encryptMfaSecret(secret);
       await query(
         `UPDATE users
          SET mfa_enabled = TRUE,
              mfa_secret = $2,
              mfa_backup_codes = $3::jsonb
          WHERE id = $1`,
-        [userId, secret, JSON.stringify(hashedBackupCodes)]
+        [userId, encryptedSecret, JSON.stringify(hashedBackupCodes)]
       );
 
       logger.info('mfa_enabled', { userId });
@@ -349,7 +356,22 @@ class MFAService {
        WHERE id = $1`,
       [userId]
     );
-    return rows[0] || null;
+    const user = rows[0];
+    if (user?.mfaSecret) {
+      const rawStored = user.mfaSecret;
+      user.mfaSecret = decryptMfaSecret(rawStored);
+      if (!isEncrypted(rawStored) && user.mfaSecret) {
+        try {
+          await query('UPDATE users SET mfa_secret = $1 WHERE id = $2', [
+            encryptMfaSecret(user.mfaSecret),
+            userId,
+          ]);
+        } catch (reencryptErr) {
+          logger.warn('mfa_secret_reencrypt_failed', { userId, message: reencryptErr.message });
+        }
+      }
+    }
+    return user || null;
   }
 
   /**

@@ -42,7 +42,7 @@ I've added detailed logging to track the entire token lifecycle:
 
 ### Step 1: Clean Reinstall
 ```bash
-cd old_meatvo
+cd frontend
 flutter clean
 flutter pub get
 flutter run
@@ -158,9 +158,9 @@ if (e.response?.statusCode == 403) {
 
 ## Files Modified
 
-1. `old_meatvo/lib/services/storage_service.dart` - Added logging to track token storage
-2. `old_meatvo/lib/services/auth_service.dart` - Added logging after token save
-3. `old_meatvo/lib/services/api_client.dart` - Added logging throughout refresh flow
+1. `frontend/lib/services/storage_service.dart` - Added logging to track token storage
+2. `frontend/lib/services/auth_service.dart` - Added logging after token save
+3. `frontend/lib/services/api_client.dart` - Added logging throughout refresh flow
 
 ---
 

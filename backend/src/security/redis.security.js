@@ -18,7 +18,7 @@ class RedisSecurity {
       'card',
       'bank',
       'upi',
-      'phonepe'
+      'cashfree'
     ]);
   }
 

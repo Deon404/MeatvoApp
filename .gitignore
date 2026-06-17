@@ -7,6 +7,7 @@ backend/.env.test
 .idea/
 build_log.txt
 backend/test-msg91-direct-output.log
+backend/scripts/dev-only/test-msg91-direct-output.log
 node_modules/
 dist
 logs
@@ -16,3 +17,4 @@ backend/uploads/images/*
 build/
 .obsidian/
 meatvo-deploy.tar.gz
+docs/security/backups/

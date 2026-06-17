@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -23,8 +25,18 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
   final ProductService _productService;
   final CartService _cartService;
   int? _currentCategoryId;
+  bool _userSelectedCategory = false;
+  Timer? _searchDebounce;
 
   static const _defaultCategories = ['Chicken', 'Eggs', 'Fish', 'Mutton'];
+  static const _comingSoonCategoryKeys = {'fish', 'mutton'};
+  static const _searchDebounceDuration = Duration(milliseconds: 400);
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
 
   Future<void> load({bool refresh = false, int? categoryId}) async {
     if (categoryId != null) {
@@ -42,9 +54,11 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
     // products had already loaded, producing a silent empty state).
     List<ProductWithVariants> products;
     try {
+      final isGlobalSearch = state.searchQuery.isNotEmpty;
       products = await _productService.getProducts(
         limit: 100,
-        categoryId: _currentCategoryId,
+        categoryId: isGlobalSearch ? null : _currentCategoryId,
+        search: isGlobalSearch ? state.searchQuery : null,
         useCache: !refresh,
       );
     } catch (e, st) {
@@ -78,11 +92,13 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
     }
 
     final categories = _resolveCategories(categoryMaps, products);
-    final selected = _resolveSelectedCategory(
-      requested: state.selectedCategory,
-      categories: categories,
-      products: products,
-    );
+    final selected = _userSelectedCategory
+        ? state.selectedCategory
+        : _resolveSelectedCategory(
+            requested: state.selectedCategory,
+            categories: categories,
+            products: products,
+          );
 
     state = state.copyWith(
       isLoading: false,
@@ -177,25 +193,96 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
     return items;
   }
 
-  void setCategory(String name) {
+  void setCategory(String name, {bool fromUser = true}) {
+    if (fromUser) _userSelectedCategory = true;
+
+    _searchDebounce?.cancel();
+
     final category = state.categories.firstWhere(
       (cat) => cat.name.toLowerCase() == name.toLowerCase(),
       orElse: () => CategoryModel(id: '', name: name),
     );
-    
+
     final categoryId = int.tryParse(category.id);
-    
-    // Update the selected category immediately for UI feedback
-    state = state.copyWith(selectedCategory: name);
-    
-    // Reload products with the new category ID
+
+    state = state.copyWith(
+      selectedCategory: name,
+      searchQuery: '',
+      allProducts: const [],
+      isRefreshing: true,
+      errorMessage: null,
+    );
+
     if (categoryId != null) {
       load(refresh: true, categoryId: categoryId);
+    } else {
+      load(refresh: true);
     }
   }
 
+  /// Picks the first active category likely to have products and navigates there.
+  /// Returns the chosen category name, or null if none found.
+  String? redirectToFirstAvailableCategory() {
+    final target = _firstAvailableCategoryName(state.categories);
+    if (target == null ||
+        target.toLowerCase() == state.selectedCategory.toLowerCase()) {
+      return null;
+    }
+
+    _userSelectedCategory = false;
+    setCategory(target, fromUser: false);
+    return target;
+  }
+
+  static bool isCategoryAvailable(CategoryModel category) {
+    if (!category.isActive) return false;
+    if (_comingSoonCategoryKeys.contains(category.name.toLowerCase())) {
+      return false;
+    }
+    if (category.productCount != null && category.productCount! <= 0) {
+      return false;
+    }
+    return true;
+  }
+
+  String? _firstAvailableCategoryName(List<CategoryModel> categories) {
+    for (final name in _defaultCategories) {
+      final match = categories.where(
+        (cat) => cat.name.toLowerCase() == name.toLowerCase(),
+      );
+      if (match.isEmpty) continue;
+      if (isCategoryAvailable(match.first)) return match.first.name;
+    }
+
+    for (final category in categories) {
+      if (isCategoryAvailable(category)) return category.name;
+    }
+
+    return categories.isNotEmpty ? categories.first.name : null;
+  }
+
   void setSearchQuery(String query) {
-    state = state.copyWith(searchQuery: query.trim().toLowerCase());
+    final trimmed = query.trim().toLowerCase();
+    state = state.copyWith(searchQuery: trimmed);
+
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(_searchDebounceDuration, () {
+      _loadForSearch(trimmed);
+    });
+  }
+
+  Future<void> _loadForSearch(String query) async {
+    if (query.isEmpty) {
+      await load(refresh: true, categoryId: _currentCategoryId);
+      return;
+    }
+
+    state = state.copyWith(
+      isRefreshing: true,
+      errorMessage: null,
+    );
+
+    await load(refresh: true);
   }
 
   void setSort(String sort) {

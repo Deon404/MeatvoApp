@@ -20,6 +20,11 @@ import '../../widgets/common/error_state.dart';
 import '../../widgets/common/shimmer_loader.dart';
 import '../../ui/organisms/meatvo_product_card.dart';
 import '../../ui/organisms/product_card_adapter.dart';
+import '../../providers/store_settings_provider.dart';
+import '../../ui/organisms/product_card_bindings.dart';
+import '../../utils/ordering_gate.dart';
+import '../../widgets/store/store_closed_banner.dart';
+import '../../widgets/store/store_closed_sheet.dart';
 
 /// Product Detail Screen - Full product information with variants and add to cart
 class ProductDetailScreen extends ConsumerStatefulWidget {
@@ -263,6 +268,17 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     final localProduct = _product;
     if (localProduct == null || !_isInStock || _isAddingToCart) return;
 
+    final storeStatus = ref.read(storeSettingsSyncProvider);
+    final cartItem = _currentCartItem;
+    final previousQty = cartItem?.quantity.round() ?? 0;
+    if (!storeStatus.isOpen && _quantity > previousQty) {
+      await StoreClosedSheet.show(context, storeStatus);
+      if (mounted && cartItem != null) {
+        setState(() => _quantity = previousQty);
+      }
+      return;
+    }
+
     setState(() {
       _isAddingToCart = true;
     });
@@ -418,6 +434,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   ),
                   padding: EdgeInsets.fromLTRB(20, 16, 20, bottomInset),
                   children: [
+                    StoreClosedBanner(
+                      status: ref.watch(storeSettingsSyncProvider),
+                      padding: EdgeInsets.zero,
+                    ),
                     Text(
                       product.name,
                       style: const TextStyle(
@@ -865,9 +885,54 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   _cart.findItemByProductId(related.product.id);
               final localItemId = relatedCartItem?.itemId;
               final localCartQty = relatedCartItem?.quantity.round() ?? 0;
-              final canAdd = ProductCardAdapter.canAdd(related);
+              final storeStatus = ref.watch(storeSettingsSyncProvider);
               final cardWidth = ProductCardAdapter.carouselWidth(
                 MediaQuery.sizeOf(context).width,
+              );
+
+              Future<void> guardedRelatedChange(int next) async {
+                await OrderingGate.guardQuantityChange(
+                  context,
+                  ref,
+                  currentQuantity: localCartQty,
+                  nextQuantity: next,
+                  action: () async {
+                    final preferredVariant =
+                        related.availableVariants.isNotEmpty
+                            ? related.availableVariants.first
+                            : (related.variants.isNotEmpty
+                                ? related.variants.first
+                                : null);
+                    if (localCartQty == 0 && next > 0) {
+                      await _cartService.addToCart(
+                        related.product.id,
+                        1,
+                        unit: preferredVariant?.weight ?? related.product.unit,
+                        variantId: preferredVariant?.id,
+                      );
+                    } else if (localItemId != null &&
+                        localItemId.isNotEmpty &&
+                        next > 0) {
+                      await _cartService.updateCartItem(localItemId, next);
+                    } else if (localItemId != null &&
+                        localItemId.isNotEmpty &&
+                        next <= 0) {
+                      await _cartService.removeFromCart(localItemId);
+                    }
+                    if (mounted) {
+                      final refreshedCart =
+                          await _cartService.getCart().catchError((_) => _cart);
+                      setState(() => _cart = refreshedCart);
+                    }
+                  },
+                );
+              }
+
+              final bindings = ProductCardBindings.forProduct(
+                storeStatus: storeStatus,
+                product: related,
+                cart: _cart,
+                onQuantityChange: (p, next) => guardedRelatedChange(next),
               );
 
               return SizedBox(
@@ -881,7 +946,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   originalPrice: ProductCardAdapter.originalPrice(related),
                   discountPercent: related.product.discount,
                   quantity: localCartQty,
-                  inStock: canAdd,
+                  inStock: bindings.inStock,
+                  orderingPaused: bindings.orderingPaused,
                   layout: MeatvoProductCardLayout.carousel,
                   onTap: () {
                     Navigator.of(context).pushReplacement(
@@ -890,73 +956,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       ),
                     );
                   },
-                  onAdd: canAdd
-                      ? () async {
-                          final preferredVariant =
-                              related.availableVariants.isNotEmpty
-                                  ? related.availableVariants.first
-                                  : (related.variants.isNotEmpty
-                                      ? related.variants.first
-                                      : null);
-                          await _cartService.addToCart(
-                            related.product.id,
-                            1,
-                            unit: preferredVariant?.weight ??
-                                related.product.unit,
-                            variantId: preferredVariant?.id,
-                          );
-                          if (mounted) {
-                            final refreshedCart = await _cartService
-                                .getCart()
-                                .catchError((_) => _cart);
-                            setState(() {
-                              _cart = refreshedCart;
-                            });
-                          }
-                        }
-                      : null,
-                  onIncrement: (canAdd &&
-                          localItemId != null &&
-                          localItemId.isNotEmpty)
-                      ? () async {
-                          await _cartService.updateCartItem(
-                            localItemId,
-                            localCartQty + 1,
-                          );
-                          if (mounted) {
-                            final refreshedCart = await _cartService
-                                .getCart()
-                                .catchError((_) => _cart);
-                            setState(() {
-                              _cart = refreshedCart;
-                            });
-                          }
-                        }
-                      : null,
-                  onDecrement:
-                      (localItemId != null && localItemId.isNotEmpty &&
-                              localCartQty > 0)
-                          ? () async {
-                              final nextQuantity = localCartQty - 1;
-                              if (nextQuantity > 0) {
-                                await _cartService.updateCartItem(
-                                  localItemId,
-                                  nextQuantity,
-                                );
-                              } else {
-                                await _cartService
-                                    .removeFromCart(localItemId);
-                              }
-                              if (mounted) {
-                                final refreshedCart = await _cartService
-                                    .getCart()
-                                    .catchError((_) => _cart);
-                                setState(() {
-                                  _cart = refreshedCart;
-                                });
-                              }
-                            }
-                          : null,
+                  onAdd: bindings.onAdd,
+                  onIncrement: bindings.onIncrement,
+                  onDecrement: bindings.onDecrement,
                 ),
               );
             },
@@ -993,6 +995,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   Widget _buildBottomBar(ProductWithVariants activeProduct) {
     final hasExistingCartItem = _currentCartItem != null;
     final totalPrice = _priceFor(activeProduct) * _quantity;
+    final storeStatus = ref.watch(storeSettingsSyncProvider);
+    final storeClosedButInStock = _isInStock && !storeStatus.isOpen;
 
     return SafeArea(
       top: false,
@@ -1032,7 +1036,15 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               SizedBox(
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: _isInStock && !_isAddingToCart ? _saveCart : null,
+                  onPressed: !_isInStock || _isAddingToCart
+                      ? null
+                      : () async {
+                          if (storeClosedButInStock) {
+                            await StoreClosedSheet.show(context, storeStatus);
+                            return;
+                          }
+                          await _saveCart();
+                        },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: ProductDetailScreen._brandRed,
                     disabledBackgroundColor:
@@ -1053,12 +1065,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                             valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         )
-                      : const Text(
-                          'Add to Cart',
-                          style: TextStyle(
+                      : Text(
+                          storeClosedButInStock ? 'Store closed' : 'Add to Cart',
+                          style: const TextStyle(
                             fontFamily: 'Poppins',
                             fontSize: 15,
                             fontWeight: FontWeight.w600,
+                            color: Colors.white,
                           ),
                         ),
                 ),
@@ -1101,7 +1114,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           _stepperButton(
             icon: Icons.add,
             onTap: !_isAddingToCart
-                ? () {
+                ? () async {
+                    final storeStatus = ref.read(storeSettingsSyncProvider);
+                    if (!storeStatus.isOpen) {
+                      await StoreClosedSheet.show(context, storeStatus);
+                      return;
+                    }
                     setState(() {
                       _quantity++;
                     });

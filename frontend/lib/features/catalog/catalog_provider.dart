@@ -10,10 +10,13 @@ typedef CatalogProviderKey = ({String? categoryName, int? categoryId});
 final catalogViewModelProvider =
     StateNotifierProvider.autoDispose.family<CatalogViewModel, CatalogState,
         CatalogProviderKey>((ref, key) {
-  return CatalogViewModel(
+  final vm = CatalogViewModel(
     productService: ProductService(),
     cartService: CartService(),
     initialCategory: key.categoryName,
     initialCategoryId: key.categoryId,
-  )..load();
+  );
+  ref.onDispose(vm.dispose);
+  vm.load();
+  return vm;
 });

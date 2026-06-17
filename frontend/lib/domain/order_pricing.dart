@@ -1,4 +1,4 @@
-/// Shared order pricing — aligned with backend `orders.controller.js` createOrder logic.
+/// Shared order pricing — uses admin-configured delivery fee when provided.
 class OrderPricingBreakdown {
   final double subtotal;
   final double discount;
@@ -16,21 +16,24 @@ class OrderPricingBreakdown {
 }
 
 abstract final class OrderPricingCalculator {
-  /// Backend: delivery free when subtotal >= 500, else ₹40.
-  static const double deliveryChargeAmount = 40;
-  static const double freeDeliveryThreshold = 500;
+  static const double defaultDeliveryChargeAmount = 30;
+  static const double defaultFreeDeliveryThreshold = 500;
 
   static OrderPricingBreakdown calculate({
     required double subtotal,
     double discount = 0,
+    double? deliveryChargeAmount,
+    double? freeDeliveryThreshold,
   }) {
     final double safeSubtotal = subtotal < 0 ? 0.0 : subtotal;
     final double safeDiscount = discount < 0 ? 0.0 : discount;
     final afterDiscount =
         (safeSubtotal - safeDiscount).clamp(0.0, double.infinity).toDouble();
-    final delivery = afterDiscount >= freeDeliveryThreshold
-        ? 0.0
-        : deliveryChargeAmount;
+    final deliveryFee =
+        deliveryChargeAmount ?? defaultDeliveryChargeAmount;
+    final threshold =
+        freeDeliveryThreshold ?? defaultFreeDeliveryThreshold;
+    final delivery = afterDiscount >= threshold ? 0.0 : deliveryFee;
     final grandTotal = afterDiscount + delivery;
 
     return OrderPricingBreakdown(

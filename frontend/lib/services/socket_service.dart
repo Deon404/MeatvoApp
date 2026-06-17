@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 import '../config/api_config.dart';
@@ -13,7 +15,7 @@ import 'storage_service.dart';
 ///   Manual joins:           `customer_{id}`, `admin_room`, `delivery_{id}`
 ///
 /// Server → client events (by room):
-///   customer_{id} room : `order:status_updated`, `order:status_update`, `order:partner_assigned`, `rider:location_update`
+///   customer_{id} room : `order:status_updated`, `order:status_update`, `order:partner_assigned`, `rider:location_update`, `eta:updated`
 ///   user:{id} room     : `order:assigned`, `order:assignment_cancelled`, `route:zone_assigned`, `delivery:location`, `partner:location_update`
 ///   admin_room         : `order:new`, `order:updated`, `order:assignment_failed`, `order:partner_assigned`
 ///   public room        : `catalog:categories_changed`, `catalog:products_changed`,
@@ -28,18 +30,40 @@ class SocketService {
 
   io.Socket? _socket;
   bool _connecting = false;
+  Future<void>? _connectFuture;
+  Completer<void>? _connectCompleter;
+  bool _roleRoomJoined = false;
+  final StreamController<bool> _connectionStateController =
+      StreamController<bool>.broadcast();
 
   bool get isConnected => _socket?.connected == true;
+  Stream<bool> get connectionStateStream => _connectionStateController.stream;
 
   // ── Connection ─────────────────────────────────────────────────────────────
 
-  Future<void> connect() async {
-    if (isConnected || _connecting) return;
+  Future<void> connect() {
+    if (isConnected) return Future.value();
+    if (_connectFuture != null) return _connectFuture!;
+
+    _connectFuture = _connectInternal().whenComplete(() {
+      _connectFuture = null;
+    });
+    return _connectFuture!;
+  }
+
+  Future<void> _connectInternal() async {
+    if (isConnected) return;
+    if (_connecting && _connectCompleter != null) {
+      return _connectCompleter!.future;
+    }
+
     _connecting = true;
+    _connectCompleter = Completer<void>();
 
     try {
       final token = await StorageService().getAccessToken();
 
+      _socket?.dispose();
       _socket = io.io(
         ApiConfig.socketUrl,
         io.OptionBuilder()
@@ -57,20 +81,43 @@ class SocketService {
         ..onConnect((_) {
           debugPrint('[Socket] Connected: ${ApiConfig.socketUrl}/ws');
           _connecting = false;
+          _connectionStateController.add(true);
           _joinRoleRoom();                           // join manual room after connect
+          if (!(_connectCompleter?.isCompleted ?? true)) {
+            _connectCompleter?.complete();
+          }
         })
         ..onDisconnect((reason) {
           debugPrint('[Socket] Disconnected: $reason');
           _connecting = false;
+          _roleRoomJoined = false;
+          _connectionStateController.add(false);
         })
         ..onConnectError((err) {
           debugPrint('[Socket] Connection error: $err');
           _connecting = false;
+          _roleRoomJoined = false;
+          if (!(_connectCompleter?.isCompleted ?? true)) {
+            _connectCompleter?.completeError(err);
+          }
         })
         ..onError((err) => debugPrint('[Socket] Error: $err'));
+
+      await _connectCompleter!.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          debugPrint('[Socket] Connection timed out — listeners will attach when ready');
+        },
+      );
     } catch (e) {
       _connecting = false;
+      _roleRoomJoined = false;
       debugPrint('[Socket] Failed to initialize: $e');
+      if (!(_connectCompleter?.isCompleted ?? true)) {
+        _connectCompleter?.complete();
+      }
+    } finally {
+      _connectCompleter = null;
     }
   }
 
@@ -79,6 +126,8 @@ class SocketService {
     _socket?.dispose();
     _socket = null;
     _connecting = false;
+    _connectFuture = null;
+    _roleRoomJoined = false;
   }
 
   // ── Room join helpers ──────────────────────────────────────────────────────
@@ -86,21 +135,30 @@ class SocketService {
   /// Emit the appropriate room-join event based on the stored user's role.
   /// Called automatically after every successful connection.
   void _joinRoleRoom() {
+    if (_roleRoomJoined || _socket == null) return;
+
     StorageService().getUser().then((user) {
-      if (user == null || _socket == null) return;
+      if (user == null || _socket == null || _roleRoomJoined) return;
       final parsed = int.tryParse(user.id);
       final userId = parsed ?? user.id;
       final role = user.role.toLowerCase();
       if (role == 'customer') {
         _socket?.emit('join_customer_room', userId);
+        _roleRoomJoined = true;
         debugPrint('[Socket] Joined customer room for user $userId');
       } else if (role == 'admin') {
         _socket?.emit('join_admin_room');
+        _roleRoomJoined = true;
         debugPrint('[Socket] Joined admin_room');
+      } else if (role == 'staff') {
+        _socket?.emit('join_staff_room');
+        _roleRoomJoined = true;
+        debugPrint('[Socket] Joined staff_room');
       } else if (role == 'rider' ||
           role == 'delivery' ||
           role == 'delivery_partner') {
         _socket?.emit('join_delivery_room', userId);
+        _roleRoomJoined = true;
         debugPrint('[Socket] Joined delivery room for rider $userId');
       }
     }).catchError((e) {
@@ -109,6 +167,11 @@ class SocketService {
   }
 
   // ── Order events ───────────────────────────────────────────────────────────
+
+  /// Join order-specific tracking room (canonical `order:{id}` on backend).
+  void joinOrderRoom(String orderId) {
+    _socket?.emit('join_order_room', orderId);
+  }
 
   /// Listen for order status changes (customer-facing).
   /// Backend emits `order:status_updated` to `customer_{id}` room.
@@ -133,9 +196,20 @@ class SocketService {
   /// Delivery partner: new order assigned to this rider.
   void onOrderAssigned(void Function(dynamic data) cb) {
     _socket?.on('order:assigned', cb);
+    _socket?.on('order:broadcast', cb);
   }
 
-  void offOrderAssigned() => _socket?.off('order:assigned');
+  void offOrderAssigned() {
+    _socket?.off('order:assigned');
+    _socket?.off('order:broadcast');
+  }
+
+  /// Delivery partner: order auto-accepted after popup timeout (nearest store rider).
+  void onOrderAutoAccepted(void Function(dynamic data) cb) {
+    _socket?.on('order:auto_accepted', cb);
+  }
+
+  void offOrderAutoAccepted() => _socket?.off('order:auto_accepted');
 
   /// Delivery partner: admin assigned a full delivery zone/route.
   void onRouteZoneAssigned(void Function(dynamic data) cb) {
@@ -168,6 +242,25 @@ class SocketService {
 
   void offAdminOrderUpdate() => _socket?.off('order:updated');
 
+  /// Listen for rider assignment failures (admin-facing).
+  /// Backend emits `order:assignment_failed` to `admin_room`.
+  void onAssignmentFailed(void Function(dynamic data) cb) {
+    _socket?.on('order:assignment_failed', cb);
+  }
+
+  void offAssignmentFailed() => _socket?.off('order:assignment_failed');
+
+  /// Kitchen staff: new confirmed order or status change in kitchen queue.
+  void onKitchenOrderUpdated(void Function(dynamic data) cb) {
+    _socket?.on('order:updated', cb);
+    _socket?.on('order:new', cb);
+  }
+
+  void offKitchenOrderUpdated() {
+    _socket?.off('order:updated');
+    _socket?.off('order:new');
+  }
+
   // ── Rider location events ─────────────────────────────────────────────────
 
   /// Listen for rider location updates (customer-facing order tracking).
@@ -184,6 +277,14 @@ class SocketService {
     _socket?.off('delivery:location');
     _socket?.off('partner:location_update');
   }
+
+  /// Listen for live ETA recalculations (customer-facing order tracking).
+  /// Backend emits `eta:updated` to `customer_{id}` room (eta.service.js).
+  void onEtaUpdate(void Function(dynamic data) cb) {
+    _socket?.on('eta:updated', cb);
+  }
+
+  void offEtaUpdate() => _socket?.off('eta:updated');
 
   /// Listen for partner acceptance event (customer-facing).
   /// Backend emits `partner:accepted` when delivery partner accepts the order.
@@ -235,9 +336,13 @@ class SocketService {
 
   void onNotification(void Function(dynamic data) cb) {
     _socket?.on('notification', cb);
+    _socket?.on('notification:new', cb);
   }
 
-  void offNotification() => _socket?.off('notification');
+  void offNotification() {
+    _socket?.off('notification');
+    _socket?.off('notification:new');
+  }
 
   // ── Generic event helpers ─────────────────────────────────────────────────
 

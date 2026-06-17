@@ -14,8 +14,9 @@ import '../../utils/role_access_exception.dart';
 import '../../widgets/skeletons/shimmer_base.dart';
 import 'rider_orders_screen.dart';
 import 'rider_profile_screen.dart';
+import 'batch_delivery_screen.dart';
 import 'rider_order_detail_screen.dart';
-import 'delivery_map_screen.dart';
+import 'widgets/rider_bottom_nav.dart';
 
 /// Rider Dashboard Screen - Main screen for riders
 class RiderDashboardScreen extends StatefulWidget {
@@ -39,7 +40,11 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   bool _isLoadingEarnings = true;
   String? _earningsError;
   int _currentIndex = 0;
+  final List<GlobalKey<NavigatorState>> _tabNavigatorKeys =
+      List.generate(3, (_) => GlobalKey<NavigatorState>());
   Future<void> Function()? _refreshOrdersTab;
+  final Set<int> _alertedOrderIds = {};
+  final Set<String> _alertedAssignmentKeys = {};
 
   @override
   void initState() {
@@ -59,6 +64,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   @override
   void dispose() {
     _socketService.offOrderAssigned();
+    _socketService.offOrderAutoAccepted();
     _socketService.offRouteZoneAssigned();
     _socketService.offOrderAssignmentCancelled();
     _riderService.unsubscribeFromOrderAssignments();
@@ -72,6 +78,33 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       return int.tryParse(raw?.toString() ?? '');
     }
     return int.tryParse(data?.toString() ?? '');
+  }
+
+  List<int> _parseOrderIds(dynamic data) {
+    if (data is Map) {
+      final rawList = data['orderIds'] ?? data['order_ids'];
+      if (rawList is List && rawList.isNotEmpty) {
+        return rawList
+            .map((value) => int.tryParse(value?.toString() ?? ''))
+            .whereType<int>()
+            .toList();
+      }
+    }
+    final single = _parseOrderId(data);
+    return single == null ? <int>[] : [single];
+  }
+
+  String _batchAlertKey(List<int> orderIds) {
+    final sorted = [...orderIds]..sort();
+    return sorted.join(',');
+  }
+
+  bool _isBatchAssignment(dynamic data) {
+    if (data is Map) {
+      if (data['isBatch'] == true) return true;
+      return _parseOrderIds(data).length > 1;
+    }
+    return false;
   }
 
   void _showAssignmentSnackBar({
@@ -94,13 +127,9 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                 textColor: Colors.white,
                 onPressed: () {
                   if (!context.mounted) return;
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => RiderOrderDetailScreen(
-                        assignmentId: orderId,
-                      ),
-                    ),
+                  _pushOnTab(
+                    0,
+                    RiderOrderDetailScreen(assignmentId: orderId),
                   );
                 },
               ),
@@ -108,10 +137,57 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     );
   }
 
+  Map<String, dynamic> _assignmentToAlertData(Map<String, dynamic> assignment) {
+    final order = assignment['order'] as Map<String, dynamic>? ?? {};
+    return {
+      'orderId': assignment['id'] ?? order['id'],
+      'totalAmount': order['total_amount'] ?? order['totalAmount'] ?? order['total_price'],
+      'total_amount': order['total_amount'] ?? order['totalAmount'],
+      'total_price': order['total_price'] ?? order['total_amount'],
+      'customerAddress': order['delivery_address'] ?? order['address'],
+      'address': order['delivery_address'] ?? order['address'],
+      'delivery_address': order['delivery_address'] ?? order['address'],
+    };
+  }
+
+  void _notifyNewAssignment(dynamic data) {
+    final orderIds = _parseOrderIds(data);
+    _loadDashboardData(force: true);
+    _refreshOrdersTab?.call();
+
+    if (orderIds.isEmpty) {
+      _showAssignmentSnackBar(message: 'New order assigned!');
+      return;
+    }
+
+    final isBatch = _isBatchAssignment(data);
+    final primaryOrderId = orderIds.first;
+    final batchLabel = isBatch ? '${orderIds.length} nearby orders' : 'order #$primaryOrderId';
+
+    _pushNotifications.showOrderAssignment(
+      orderId: primaryOrderId,
+      body: isBatch ? 'Batch delivery — tap to review $batchLabel' : 'Tap to view order #$primaryOrderId',
+    );
+
+    final alertKey = _batchAlertKey(orderIds);
+    if (_alertedAssignmentKeys.contains(alertKey)) {
+      return;
+    }
+
+    final alertData = data is Map
+        ? Map<String, dynamic>.from(data)
+        : <String, dynamic>{'orderId': primaryOrderId};
+    alertData.putIfAbsent('orderId', () => primaryOrderId);
+    alertData.putIfAbsent('orderIds', () => orderIds);
+    alertData.putIfAbsent('isBatch', () => isBatch);
+    alertData.putIfAbsent('batchCount', () => orderIds.length);
+    _showNewOrderAlert(alertData, orderIds);
+  }
+
   void _handleZoneAssigned(dynamic data) {
     final zoneId = data is Map ? data['zoneId']?.toString() : null;
     final orderCount = data is Map ? data['orderCount'] : null;
-    _loadDashboardData();
+    _loadDashboardData(force: true);
     _refreshOrdersTab?.call();
     final countLabel = orderCount != null ? '$orderCount orders' : 'new orders';
     _showAssignmentSnackBar(
@@ -122,75 +198,90 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   }
 
   void _handleAssignmentAssigned(dynamic data) {
-    final orderId = _parseOrderId(data);
-    _loadDashboardData();
-    _refreshOrdersTab?.call();
-    
-    if (orderId != null) {
-      _pushNotifications.showOrderAssignment(
-        orderId: orderId,
-        body: 'Tap to view order #$orderId',
-      );
-      
-      // Show prominent alert bottom sheet with sound
-      _showNewOrderAlert(data is Map ? data : {'orderId': orderId});
-    } else {
-      _showAssignmentSnackBar(
-        message: 'New order assigned!',
-        orderId: orderId?.toString(),
-      );
+    if (data is! Map) {
+      _notifyNewAssignment(data);
+      return;
     }
+
+    final map = Map<String, dynamic>.from(data);
+    final rawOrderIds = map['orderIds'] as List?;
+    final parsedOrderIds = rawOrderIds != null && rawOrderIds.isNotEmpty
+        ? rawOrderIds
+            .map((value) => int.tryParse(value.toString()))
+            .whereType<int>()
+            .toList()
+        : () {
+            final single = _parseOrderId(map);
+            return single != null ? [single] : <int>[];
+          }();
+
+    final isBatch = map['isBatch'] == true;
+    final batchCount = (map['batchCount'] as num?)?.toInt() ??
+        (parsedOrderIds.isNotEmpty ? parsedOrderIds.length : 1);
+
+    map['orderIds'] = parsedOrderIds;
+    map['isBatch'] = isBatch;
+    map['batchCount'] = batchCount;
+    if (parsedOrderIds.isNotEmpty) {
+      map.putIfAbsent('orderId', () => parsedOrderIds.first);
+    }
+
+    _notifyNewAssignment(map);
   }
 
-  void _showNewOrderAlert(Map<dynamic, dynamic> orderData) {
-    if (!mounted) return;
-    
-    // Play notification sound
+  void _showNewOrderAlert(Map<dynamic, dynamic> orderData, List<int> orderIds) {
+    if (!mounted || orderIds.isEmpty) return;
+
+    final primaryOrderId = orderIds.first;
+    final alertKey = _batchAlertKey(orderIds);
+    _alertedAssignmentKeys.add(alertKey);
+    _alertedOrderIds.add(primaryOrderId);
+
     try {
       _audioPlayer.play(AssetSource('sounds/new_order.mp3'));
     } catch (e) {
       debugPrint('Failed to play notification sound: $e');
     }
-    
+
     showModalBottomSheet(
       context: context,
       isDismissible: false,
       backgroundColor: Colors.transparent,
       builder: (ctx) => NewOrderAlertSheet(
         orderData: orderData,
-        onAccept: () => _acceptOrder(orderData['orderId']),
-        onReject: () => _rejectOrder(orderData['orderId'], 'Declined from alert'),
-        onTimeout: () => _rejectOrder(orderData['orderId'], 'timeout'),
+        onAccept: () => _acceptOrders(orderIds),
+        onReject: () => _rejectOrders(orderIds, 'Declined from alert'),
+        onTimeout: () => _handleAssignmentSheetTimeout(orderIds),
       ),
-    );
+    ).whenComplete(() {
+      _alertedAssignmentKeys.remove(alertKey);
+      _alertedOrderIds.remove(primaryOrderId);
+    });
   }
 
-  Future<void> _acceptOrder(dynamic orderId) async {
-    if (!mounted) return;
-    
-    final parsedOrderId = _parseOrderId(orderId);
-    if (parsedOrderId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Invalid order ID'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+  Future<void> _acceptOrders(List<int> orderIds) async {
+    if (!mounted || orderIds.isEmpty) return;
 
     try {
-      await _riderService.acceptOrder(parsedOrderId.toString());
-      await _loadDashboardData();
+      final stringIds = orderIds.map((id) => id.toString()).toList();
+      await _riderService.acceptOrders(stringIds);
+      await _loadDashboardData(force: true);
       _refreshOrdersTab?.call();
-      
+
       if (mounted) {
+        final label = orderIds.length > 1
+            ? '${orderIds.length} orders accepted!'
+            : 'Order #${orderIds.first} accepted!';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Order #$parsedOrderId accepted!'),
+            content: Text(label),
             backgroundColor: AppColors.success,
           ),
         );
+
+        if (orderIds.length > 1) {
+          _pushOnTab(0, BatchDeliveryScreen(orderIds: stringIds));
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -204,29 +295,24 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     }
   }
 
-  Future<void> _rejectOrder(dynamic orderId, [String reason = '']) async {
-    if (!mounted) return;
-    
-    final parsedOrderId = _parseOrderId(orderId);
-    if (parsedOrderId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Invalid order ID'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+  Future<void> _rejectOrders(List<int> orderIds, [String reason = '']) async {
+    if (!mounted || orderIds.isEmpty) return;
 
     try {
-      await _riderService.rejectOrder(parsedOrderId.toString(), reason);
-      await _loadDashboardData();
+      await _riderService.rejectOrders(
+        orderIds.map((id) => id.toString()).toList(),
+        reason,
+      );
+      await _loadDashboardData(force: true);
       _refreshOrdersTab?.call();
-      
+
       if (mounted) {
+        final label = orderIds.length > 1
+            ? '${orderIds.length} orders declined'
+            : 'Order #${orderIds.first} rejected';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Order #$parsedOrderId rejected'),
+            content: Text(label),
             backgroundColor: AppColors.warning,
           ),
         );
@@ -243,8 +329,33 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     }
   }
 
+  void _handleAssignmentSheetTimeout(List<int> orderIds) {
+    if (!mounted || orderIds.isEmpty) return;
+    final label = orderIds.length > 1
+        ? '${orderIds.length} orders auto-assigned to nearest online rider'
+        : 'Order #${orderIds.first} auto-assigned to nearest online rider';
+    _showAssignmentSnackBar(
+      message: label,
+      orderId: orderIds.first.toString(),
+    );
+    _loadDashboardData(force: true);
+    _refreshOrdersTab?.call();
+  }
+
+  void _handleOrderAutoAccepted(dynamic data) {
+    final orderId = _parseOrderId(data);
+    _loadDashboardData(force: true);
+    _refreshOrdersTab?.call();
+    if (orderId == null || !mounted) return;
+    _showAssignmentSnackBar(
+      message: 'Order #$orderId auto-accepted (nearest to store)',
+      orderId: orderId.toString(),
+    );
+  }
+
   void _handleAssignmentCancelled(dynamic data) {
     final orderId = _parseOrderId(data);
+    final reason = data is Map ? data['reason']?.toString() : null;
     if (mounted && orderId != null) {
       setState(() {
         _activeOrders.removeWhere((assignment) {
@@ -253,8 +364,11 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
           return id == orderId.toString();
         });
       });
+      if (reason == 'timeout' || reason == 'auto_reassigned') {
+        _alertedOrderIds.remove(orderId);
+      }
     }
-    _loadDashboardData();
+    _loadDashboardData(force: true);
     _refreshOrdersTab?.call();
     _showAssignmentSnackBar(
       message: orderId == null
@@ -268,6 +382,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     try {
       await _socketService.connect();
       _socketService.onOrderAssigned(_handleAssignmentAssigned);
+      _socketService.onOrderAutoAccepted(_handleOrderAutoAccepted);
       _socketService.onRouteZoneAssigned(_handleZoneAssigned);
       _socketService.onOrderAssignmentCancelled(_handleAssignmentCancelled);
     } catch (e) {
@@ -281,22 +396,11 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       await _riderService.subscribeToOrderAssignments(
         onRoleAccessDenied: handleRoleAccessDenied,
         onNewAssignment: (assignment) {
-          final orderId = assignment['id']?.toString();
-          _loadDashboardData();
-          if (orderId != null) {
-            final parsed = int.tryParse(orderId);
-            if (parsed != null) {
-              _pushNotifications.showOrderAssignment(orderId: parsed);
-            }
-          }
-          _showAssignmentSnackBar(
-            message: 'New order assigned!',
-            orderId: orderId,
-          );
+          _notifyNewAssignment(_assignmentToAlertData(assignment));
         },
         onAssignmentUpdated: () {
           if (context.mounted) {
-            _loadDashboardData();
+            _loadDashboardData(force: true);
           }
         },
       );
@@ -306,11 +410,13 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   }
 
   DateTime? _lastLoadTime;
-  
-  Future<void> _loadDashboardData() async {
-    // Debounce: Don't load if last load was less than 3 seconds ago
+
+  Future<void> _loadDashboardData({bool force = false}) async {
+    // Debounce routine refreshes, but always reload on new assignments.
     final now = DateTime.now();
-    if (_lastLoadTime != null && now.difference(_lastLoadTime!) < const Duration(seconds: 3)) {
+    if (!force &&
+        _lastLoadTime != null &&
+        now.difference(_lastLoadTime!) < const Duration(seconds: 3)) {
       debugPrint('[Dashboard] Skipping load - too soon after last load');
       return;
     }
@@ -334,7 +440,20 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                     (assignment['status'] as String? ?? '').toLowerCase();
                 return status != 'delivered' && status != 'cancelled';
               })
-              .toList();
+              .toList()
+            ..sort((a, b) {
+              final aOrder = a['order'] as Map<String, dynamic>?;
+              final bOrder = b['order'] as Map<String, dynamic>?;
+              final aId = int.tryParse(
+                    aOrder?['id']?.toString() ?? a['id']?.toString() ?? '0',
+                  ) ??
+                  0;
+              final bId = int.tryParse(
+                    bOrder?['id']?.toString() ?? b['id']?.toString() ?? '0',
+                  ) ??
+                  0;
+              return bId.compareTo(aId);
+            });
           _isLoading = false;
         });
       }
@@ -446,23 +565,55 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     return online ? 'available' : 'offline';
   }
 
+  Future<T?> _pushOnTab<T>(int tabIndex, Widget screen) {
+    return _tabNavigatorKeys[tabIndex].currentState!.push<T>(
+      MaterialPageRoute(builder: (_) => screen),
+    );
+  }
+
+  void _onTabTapped(int index) {
+    if (index == _currentIndex) {
+      _tabNavigatorKeys[index].currentState?.popUntil((route) => route.isFirst);
+      return;
+    }
+    setState(() => _currentIndex = index);
+  }
+
   @override
   Widget build(BuildContext context) {
     R.init(context);
 
-    if (_currentIndex == 1) {
-      return RiderOrdersScreen(
-        onBack: () => setState(() => _currentIndex = 0),
-        onRegisterRefresh: (refresh) {
-          _refreshOrdersTab = refresh;
-        },
-      );
-    } else if (_currentIndex == 2) {
-      return RiderProfileScreen(
-        onBack: () => setState(() => _currentIndex = 0),
-      );
-    }
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          RiderTabNavigator(
+            navigatorKey: _tabNavigatorKeys[0],
+            root: _buildDashboardTab(),
+          ),
+          RiderTabNavigator(
+            navigatorKey: _tabNavigatorKeys[1],
+            root: RiderOrdersScreen(
+              onRegisterRefresh: (refresh) {
+                _refreshOrdersTab = refresh;
+              },
+            ),
+          ),
+          RiderTabNavigator(
+            navigatorKey: _tabNavigatorKeys[2],
+            root: const RiderProfileScreen(),
+          ),
+        ],
+      ),
+      bottomNavigationBar: RiderBottomNav(
+        currentIndex: _currentIndex,
+        onTap: _onTabTapped,
+      ),
+    );
+  }
 
+  Widget _buildDashboardTab() {
     final isOnline = _getCurrentStatus() == 'available';
 
     return Scaffold(
@@ -504,7 +655,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                               const SizedBox(height: 12),
                               ..._activeOrders.map((order) => _buildOrderCardNew(order)),
                             ],
-                            const SizedBox(height: 90),
+                            const SizedBox(height: 24),
                           ],
                         ),
                       ),
@@ -513,30 +664,6 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                   _buildSwipeToggleBottom(isOnline),
                 ],
               ),
-      ),
-      bottomNavigationBar: SafeArea(
-        child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) {
-            setState(() => _currentIndex = index);
-          },
-          selectedItemColor: const Color(0xFFC8102E),
-          unselectedItemColor: const Color(0xFF6B6B6B),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.dashboard),
-              label: 'Dashboard',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.receipt_long),
-              label: 'Orders',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.person),
-              label: 'Profile',
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -914,12 +1041,10 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
               const Spacer(),
               ElevatedButton(
                 onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => RiderOrderDetailScreen(
-                        assignmentId: assignment['id'] as String,
-                      ),
+                  _pushOnTab(
+                    0,
+                    RiderOrderDetailScreen(
+                      assignmentId: assignment['id'] as String,
                     ),
                   );
                 },
@@ -1284,6 +1409,8 @@ class _SwipeToToggleState extends State<_SwipeToToggle>
 
 /// New Order Alert Bottom Sheet Widget
 class NewOrderAlertSheet extends StatelessWidget {
+  static const int _defaultTimeoutSeconds = 10;
+
   final Map<dynamic, dynamic> orderData;
   final VoidCallback onAccept;
   final VoidCallback onReject;
@@ -1299,20 +1426,29 @@ class NewOrderAlertSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final orderId = orderData['orderId']?.toString() ?? 
-                    orderData['order_id']?.toString() ?? 
-                    'N/A';
-    final amount = orderData['totalAmount']?.toString() ?? 
-                   orderData['amount']?.toString() ?? 
-                   orderData['total_amount']?.toString() ?? 
-                   orderData['total_price']?.toString() ?? 
-                   '0';
+    final orderIds = _extractOrderIds(orderData);
+    final isBatch = orderData['isBatch'] == true;
+    final batchCount =
+        (orderData['batchCount'] as num?)?.toInt() ?? orderIds.length;
+    final orderId = orderData['orderId']?.toString() ??
+        orderData['order_id']?.toString() ??
+        (orderIds.isNotEmpty ? orderIds.first : 'N/A');
+    final amount = orderData['totalAmount']?.toString() ??
+        orderData['amount']?.toString() ??
+        orderData['total_amount']?.toString() ??
+        orderData['total_price']?.toString() ??
+        '0';
     final customerAddress = formatAddressForDisplay(
       orderData['customerAddress'] ??
           orderData['delivery_address'] ??
           orderData['address'],
     );
     final distance = orderData['distance']?.toString() ?? '2.5';
+    final timeoutMs = (orderData['timeout'] as num?)?.toInt() ??
+        (((orderData['expiresIn'] as num?)?.toInt() ?? _defaultTimeoutSeconds) *
+            1000);
+    final timeoutSeconds = (timeoutMs / 1000).ceil().clamp(1, 120);
+    final batchTotal = _sumBatchAmount(orderData, amount);
 
     return Container(
       decoration: const BoxDecoration(
@@ -1326,9 +1462,9 @@ class NewOrderAlertSheet extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'New Order Request',
-                style: TextStyle(
+              Text(
+                isBatch ? 'Batch Delivery Request' : 'New Order Request',
+                style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
                   color: Color(0xFF1A1A1A),
@@ -1336,7 +1472,7 @@ class NewOrderAlertSheet extends StatelessWidget {
               ),
               TweenAnimationBuilder<double>(
                 tween: Tween(begin: 1.0, end: 0.0),
-                duration: const Duration(seconds: 30),
+                duration: Duration(seconds: timeoutSeconds),
                 onEnd: () {
                   if (context.mounted) {
                     Navigator.pop(context);
@@ -1356,7 +1492,7 @@ class NewOrderAlertSheet extends StatelessWidget {
                         backgroundColor: const Color(0xFFEEEEEE),
                       ),
                       Text(
-                        '${(value * 30).ceil()}',
+                        '${(value * timeoutSeconds).ceil()}',
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
@@ -1369,108 +1505,233 @@ class NewOrderAlertSheet extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 20),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Column(
+          if (isBatch) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3E0),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   const Icon(
-                    Icons.radio_button_checked,
-                    color: Color(0xFFC8102E),
-                    size: 18,
+                    Icons.local_shipping,
+                    color: Color(0xFFE65100),
+                    size: 16,
                   ),
-                  Container(
-                    width: 2,
-                    height: 40,
-                    color: const Color(0xFFEEEEEE),
-                  ),
-                  const Icon(
-                    Icons.location_on,
-                    color: Color(0xFF2ECC71),
-                    size: 18,
+                  const SizedBox(width: 6),
+                  Text(
+                    '$batchCount Orders — Batch Delivery',
+                    style: const TextStyle(
+                      color: Color(0xFFE65100),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            const SizedBox(height: 16),
+            ...List.generate(orderIds.length, (index) {
+              final id = orderIds[index];
+              final address = _addressForOrderId(orderData, id, customerAddress);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
                   children: [
-                    const Text(
-                      'Pickup',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Color(0xFF6B6B6B),
+                    Container(
+                      width: 20,
+                      height: 20,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFC8102E),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                    const Text(
-                      'Meatvo Store',
-                      style: TextStyle(
+                    const SizedBox(width: 8),
+                    Text(
+                      'Order #${formatOrderDisplayId(id)}',
+                      style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF1A1A1A),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const Spacer(),
+                    SizedBox(
+                      width: 120,
+                      child: Text(
+                        address,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFF6B6B6B),
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            Text(
+              'Complete all $batchCount deliveries in one trip',
+              style: const TextStyle(
+                fontSize: 12,
+                color: Color(0xFF6B6B6B),
+                fontStyle: FontStyle.italic,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                const Text(
+                  'Total earnings',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Color(0xFF6B6B6B),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '₹$batchTotal',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFC8102E),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Order #${formatOrderDisplayId(orderId)}',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF6B6B6B),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
+                  children: [
+                    const Icon(
+                      Icons.radio_button_checked,
+                      color: Color(0xFFC8102E),
+                      size: 18,
+                    ),
+                    Container(
+                      width: 2,
+                      height: 40,
+                      color: const Color(0xFFEEEEEE),
+                    ),
+                    const Icon(
+                      Icons.location_on,
+                      color: Color(0xFF2ECC71),
+                      size: 18,
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Pickup',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF6B6B6B),
+                        ),
+                      ),
+                      const Text(
+                        'Meatvo Store',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1A1A1A),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      const Text(
+                        'Deliver to',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Color(0xFF6B6B6B),
+                        ),
+                      ),
+                      Text(
+                        customerAddress,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1A1A1A),
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
                     const Text(
-                      'Deliver to',
+                      'Distance',
                       style: TextStyle(
                         fontSize: 11,
                         color: Color(0xFF6B6B6B),
                       ),
                     ),
                     Text(
-                      customerAddress,
+                      '$distance km',
                       style: const TextStyle(
                         fontSize: 14,
-                        fontWeight: FontWeight.w600,
+                        fontWeight: FontWeight.bold,
                         color: Color(0xFF1A1A1A),
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Earnings',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF6B6B6B),
+                      ),
+                    ),
+                    Text(
+                      '₹$amount',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFFC8102E),
+                      ),
                     ),
                   ],
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    'Distance',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF6B6B6B),
-                    ),
-                  ),
-                  Text(
-                    '$distance km',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1A1A1A),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Earnings',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF6B6B6B),
-                    ),
-                  ),
-                  Text(
-                    '₹$amount',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFFC8102E),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
           const SizedBox(height: 20),
           Row(
             children: [
@@ -1511,9 +1772,9 @@ class NewOrderAlertSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: const Text(
-                    'Accept Trip',
-                    style: TextStyle(
+                  child: Text(
+                    isBatch ? 'Accept $batchCount Orders' : 'Accept Trip',
+                    style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       fontSize: 16,
@@ -1526,5 +1787,58 @@ class NewOrderAlertSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  static String _addressForOrderId(
+    Map<dynamic, dynamic> orderData,
+    String orderId,
+    String fallbackAddress,
+  ) {
+    final batchOrders = orderData['batchOrders'];
+    if (batchOrders is List) {
+      for (final entry in batchOrders) {
+        if (entry is! Map) continue;
+        final entryId = entry['orderId']?.toString() ?? entry['order_id']?.toString();
+        if (entryId == orderId) {
+          return formatAddressForDisplay(entry['address']);
+        }
+      }
+    }
+
+    final primaryId = orderData['orderId']?.toString() ??
+        orderData['order_id']?.toString();
+    if (primaryId == orderId && fallbackAddress.isNotEmpty) {
+      return fallbackAddress;
+    }
+    return fallbackAddress;
+  }
+
+  static List<String> _extractOrderIds(Map<dynamic, dynamic> orderData) {
+    final rawList = orderData['orderIds'] ?? orderData['order_ids'];
+    if (rawList is List && rawList.isNotEmpty) {
+      return rawList.map((value) => value.toString()).toList();
+    }
+    final single = orderData['orderId'] ?? orderData['order_id'] ?? orderData['id'];
+    return single == null ? <String>[] : [single.toString()];
+  }
+
+  static String _sumBatchAmount(Map<dynamic, dynamic> orderData, String fallback) {
+    final batchOrders = orderData['batchOrders'];
+    if (batchOrders is! List || batchOrders.isEmpty) {
+      return fallback;
+    }
+
+    double total = 0;
+    var hasAmount = false;
+    for (final entry in batchOrders) {
+      if (entry is! Map) continue;
+      final raw = entry['totalAmount'] ?? entry['total_amount'] ?? entry['amount'];
+      final value = double.tryParse(raw?.toString() ?? '');
+      if (value != null) {
+        total += value;
+        hasAmount = true;
+      }
+    }
+    return hasAmount ? total.toStringAsFixed(total % 1 == 0 ? 0 : 2) : fallback;
   }
 }

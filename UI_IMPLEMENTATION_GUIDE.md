@@ -18,7 +18,7 @@ This document provides the complete design specifications and implementation app
 
 ### 1. Dashboard Redesign
 
-**File:** `old_meatvo/lib/screens/rider/rider_dashboard_screen.dart`
+**File:** `frontend/lib/screens/rider/rider_dashboard_screen.dart`
 
 **Key Design Principles:**
 - 64dp online/offline toggle at top (thumb-accessible)
@@ -155,7 +155,7 @@ Container(
 
 ### 2. Order Detail Redesign (Progressive Disclosure)
 
-**File:** `old_meatvo/lib/screens/rider/rider_order_detail_screen.dart`
+**File:** `frontend/lib/screens/rider/rider_order_detail_screen.dart`
 
 **Design Philosophy:** Show only what's needed for current stage
 
@@ -343,7 +343,7 @@ Column(
 
 ### 3. Route Map Enhancement
 
-**File:** `old_meatvo/lib/screens/rider/delivery_map_screen.dart`
+**File:** `frontend/lib/screens/rider/delivery_map_screen.dart`
 
 **Layout:**
 ```dart

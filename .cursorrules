@@ -9,7 +9,7 @@ This is a **monorepo**:
 | Path | Purpose |
 |------|---------|
 | `backend/` | Node.js REST API + Socket.io + PostgreSQL/Redis |
-| `old_meatvo/` | Flutter customer/rider/admin mobile app |
+| `frontend/` | Flutter customer/rider/admin mobile app |
 | `admin/`, `customer/`, `delivery/` | Web SPAs served by the backend |
 | `shared/` | Shared env manifest (`env-manifest.json`) |
 
@@ -68,7 +68,7 @@ Entry point: `backend/index.js` (default port **8080**).
 ## 3. Flutter Tech Stack & Folder Structure
 
 ### Stack
-- **Framework:** Flutter 3.9+ (`old_meatvo/`)
+- **Framework:** Flutter 3.9+ (`frontend/`)
 - **State:** flutter_riverpod
 - **HTTP:** Dio via `ApiService` / `ApiClient`
 - **Navigation:** Navigator (MaterialPageRoute) + partial go_router
@@ -79,10 +79,10 @@ Entry point: `backend/index.js` (default port **8080**).
 - **Payments:** PhonePe via backend redirect URL (native SDK disabled)
 - **Env:** flutter_dotenv (`.env` in assets)
 
-### `old_meatvo/lib/` structure
+### `frontend/lib/` structure
 
 ```
-old_meatvo/lib/
+frontend/lib/
 ├── main.dart                 # app entry, ProviderScope, theme
 ├── config/                   # env_config, api_config, backend_resolver, feature_flags
 ├── core/
@@ -125,7 +125,7 @@ old_meatvo/lib/
 
 ## 4. Design System Constants
 
-**Primary palette** — use `AppColors` from `old_meatvo/lib/core/constants/app_constants.dart`:
+**Primary palette** — use `AppColors` from `frontend/lib/core/constants/app_constants.dart`:
 
 | Token | Value |
 |-------|-------|
@@ -154,7 +154,7 @@ old_meatvo/lib/
 ### Flutter
 - Use **Riverpod** for all shared/async state (`providers/`, `features/*/`)
 - Use **`AppColors`**, **`AppTextStyles`**, **`AppSpacing`**, **`AppRadius`** — never hardcode colors, font sizes, or radii
-- **All API calls** go through `old_meatvo/lib/services/api_service.dart` (or domain services that use it) — never call Dio/HTTP directly from widgets
+- **All API calls** go through `frontend/lib/services/api_service.dart` (or domain services that use it) — never call Dio/HTTP directly from widgets
 - Never use emoji as icons — use `Icons` or `font_awesome_flutter`
 - Every data-fetching screen must handle **loading** (shimmer), **empty**, and **error** states
 - Secrets and API keys live in `.env` / `EnvConfig` — never commit or hardcode them
@@ -168,7 +168,7 @@ old_meatvo/lib/
 - Follow module pattern: `*.routes.js` → `*.controller.js` → `*.validation.js`
 
 ### General
-- Monorepo scripts: root `npm run dev` starts backend; Flutter runs from `old_meatvo/`
+- Monorepo scripts: root `npm run dev` starts backend; Flutter runs from `frontend/`
 - Env keys must match `shared/env-manifest.json`
 
 ---
@@ -226,7 +226,7 @@ Some routes also expose `/api/v1/*` aliases (orders, products, addresses, admin,
 - PostgreSQL schema + migrations, Redis
 - Web SPAs: `/admin`, `/customer`, `/delivery`
 
-### ✅ Done (Flutter — `old_meatvo/`)
+### ✅ Done (Flutter — `frontend/`)
 - Auth: splash → phone OTP → session persistence
 - Onboarding + location permission/setup
 - Home: banners, categories, product carousel, search
@@ -251,10 +251,10 @@ Some routes also expose `/api/v1/*` aliases (orders, products, addresses, admin,
 | **Sentry init** | `ErrorTrackingService.initialize()` not called in `main.dart` |
 | **Privacy Policy / ToS** | Placeholder toasts in account settings |
 | **Design system unification** | Two palettes (`AppColors` dark vs `MeatvoColors` warm) coexist |
-| **Expo/React Native stubs** | `old_meatvo/app/(tabs)/*` are "Coming soon" placeholders |
+| **Expo/React Native stubs** | `frontend/app/(tabs)/*` are "Coming soon" placeholders |
 | **Web customer SPA** | Location switcher, membership, driver messaging, help center |
 | **Web admin** | Order detail modal marked "coming soon" |
-| **Flutter at repo root** | App currently in `old_meatvo/`; no root-level `lib/` yet |
+| **Flutter at repo root** | App currently in `frontend/`; no root-level `lib/` yet |
 
 ---
 

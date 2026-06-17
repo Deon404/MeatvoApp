@@ -39,48 +39,83 @@ class MeatvoFloatingNavBar extends StatelessWidget {
         right: false,
         bottom: true,
         child: ClipRRect(
-        borderRadius: BorderRadius.circular(mv.radii.pill),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Material(
-            color: mv.surfaceCard.withValues(alpha: 0.96),
-            elevation: 0,
-            child: Container(
-              height: MeatvoLayout.navBarHeight,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(mv.radii.pill),
-                border: Border.all(color: mv.border.withValues(alpha: 0.85)),
-                boxShadow: [
-                  BoxShadow(
-                    color: mv.textPrimary.withValues(alpha: 0.08),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: List.generate(items.length, (index) {
-                  final item = items[index];
-                  final selected = index == currentIndex;
-                  return Expanded(
-                    child: _NavTile(
-                      item: item,
-                      selected: selected,
-                      showLabel: showLabels,
-                      compact: compact,
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        onTap(index);
-                      },
+          borderRadius: BorderRadius.circular(mv.radii.pill),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Material(
+              color: mv.surfaceCard.withValues(alpha: 0.96),
+              elevation: 0,
+              child: Container(
+                height: MeatvoLayout.navBarHeight,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(mv.radii.pill),
+                  border: Border.all(color: mv.border.withValues(alpha: 0.85)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: mv.textPrimary.withValues(alpha: 0.08),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
                     ),
-                  );
-                }),
+                  ],
+                ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final itemWidth = constraints.maxWidth / items.length;
+                    const indicatorWidth = 28.0;
+                    final indicatorLeft =
+                        itemWidth * currentIndex + (itemWidth - indicatorWidth) / 2;
+
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: List.generate(items.length, (index) {
+                            final item = items[index];
+                            final selected = index == currentIndex;
+                            return Expanded(
+                              child: _NavTile(
+                                item: item,
+                                selected: selected,
+                                showLabel: showLabels,
+                                compact: compact,
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  onTap(index);
+                                },
+                              ),
+                            );
+                          }),
+                        ),
+                        AnimatedPositioned(
+                          duration: MeatvoDurations.normal,
+                          curve: MeatvoDurations.curve,
+                          bottom: 8,
+                          left: indicatorLeft,
+                          width: indicatorWidth,
+                          height: 3,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: mv.brandPrimary,
+                              borderRadius: BorderRadius.circular(2),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: mv.brandPrimary.withValues(alpha: 0.35),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 1),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -118,65 +153,60 @@ class _NavTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
-    // Smart-cast local — `item.badge!` bang removed. The badge can be
-    // swapped to null on cart-empty events; without the local, that
-    // mid-frame change would crash with "Null check operator used on
-    // a null value".
     final badge = item.badge;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(mv.radii.lg),
-      child: AnimatedContainer(
-        duration: MeatvoDurations.normal,
-        curve: MeatvoDurations.curve,
-        margin: EdgeInsets.symmetric(
-          horizontal: mv.spacing.xxs,
-          vertical: compact ? mv.spacing.xxs : mv.spacing.xs,
-        ),
-        decoration: BoxDecoration(
-          color: selected
-              ? mv.brandPrimary.withValues(alpha: 0.08)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(mv.radii.lg),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                AnimatedScale(
-                  scale: selected ? 1.08 : 1.0,
-                  duration: MeatvoDurations.fast,
-                  curve: MeatvoDurations.curve,
-                  child: Icon(
-                    selected ? item.activeIcon : item.icon,
-                    color: selected ? mv.brandPrimary : mv.textMuted,
-                    size: 24,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(mv.radii.lg),
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: Colors.transparent,
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: mv.spacing.xxs,
+            vertical: compact ? mv.spacing.xxs : mv.spacing.xs,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  AnimatedScale(
+                    scale: selected ? 1.08 : 1.0,
+                    duration: MeatvoDurations.fast,
+                    curve: MeatvoDurations.curve,
+                    child: Icon(
+                      selected ? item.activeIcon : item.icon,
+                      color: selected ? mv.brandPrimary : mv.textMuted,
+                      size: 24,
+                    ),
+                  ),
+                  if (badge != null)
+                    Positioned(right: -8, top: -4, child: badge),
+                ],
+              ),
+              if (showLabel) ...[
+                SizedBox(height: mv.spacing.xxs),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: AnimatedDefaultTextStyle(
+                    duration: MeatvoDurations.fast,
+                    curve: MeatvoDurations.curve,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: selected ? mv.brandPrimary : mv.textMuted,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w500,
+                        ) ??
+                        const TextStyle(),
+                    child: Text(item.label),
                   ),
                 ),
-                if (badge != null)
-                  Positioned(right: -8, top: -4, child: badge),
               ],
-            ),
-            if (showLabel) ...[
-              SizedBox(height: mv.spacing.xxs),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: AnimatedDefaultTextStyle(
-                  duration: MeatvoDurations.fast,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: selected ? mv.brandPrimary : mv.textMuted,
-                        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                      ) ??
-                      const TextStyle(),
-                  child: Text(item.label),
-                ),
-              ),
             ],
-          ],
+          ),
         ),
       ),
     );

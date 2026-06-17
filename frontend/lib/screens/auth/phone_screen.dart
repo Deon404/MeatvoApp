@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../config/backend_resolver.dart';
-import '../../core/constants/app_constants.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../services/auth_service.dart';
 import '../../utils/app_transitions.dart';
+import '../settings/privacy_policy_screen.dart';
+import '../settings/terms_of_service_screen.dart';
+import 'auth_screen_shell.dart';
 import 'otp_screen.dart';
 
 class PhoneScreen extends StatefulWidget {
@@ -15,14 +19,6 @@ class PhoneScreen extends StatefulWidget {
 }
 
 class _PhoneScreenState extends State<PhoneScreen> {
-  static const _bgColor = Color(0xFFFFF5F5);
-  static const _brandRed = Color(0xFFC8102E);
-  static const _textPrimary = Color(0xFF1A1A1A);
-  static const _textMuted = Color(0xFF6B6B6B);
-  static const _borderDefault = Color(0xFFE5E5E5);
-  static const _buttonDisabled = Color(0xFFE0E0E0);
-  static const _buttonDisabledText = Color(0xFF9E9E9E);
-
   final TextEditingController _phoneController = TextEditingController();
   final FocusNode _phoneFocusNode = FocusNode();
   final AuthService _authService = AuthService();
@@ -61,12 +57,8 @@ class _PhoneScreenState extends State<PhoneScreen> {
     if (lower.contains('too many') || lower.contains('rate limit')) {
       return 'Too many requests. Please try again in a few minutes.';
     }
-    if (lower.contains('server tak') ||
-        lower.contains('meatvo_api_root') ||
-        lower.contains('cannot reach') ||
-        lower.contains('connection') ||
-        lower.contains('network')) {
-      return BackendResolver.connectionHelpMessage();
+    if (BackendResolver.isConnectionError(raw)) {
+      return BackendResolver.connectionUserMessage();
     }
     return raw.isEmpty ? 'Failed to send OTP. Please try again.' : raw;
   }
@@ -98,33 +90,41 @@ class _PhoneScreenState extends State<PhoneScreen> {
     });
 
     try {
-      final devOtp = await _authService.sendOtp(phoneE164);
+      await BackendResolver.ensureReachable();
+      final result = await _authService.sendOtp(phoneE164);
       if (!mounted) return;
 
       Navigator.of(context).push(
         AppTransitions.slideFade(
-          OtpScreen(phone: phoneE164, prefilledOtp: devOtp),
+          OtpScreen(
+            phone: phoneE164,
+            prefilledOtp: result.devOtp,
+            initialResendSeconds: result.remainingSeconds,
+            otpAlreadySent: result.alreadySent,
+          ),
         ),
       );
     } catch (error) {
       if (!mounted) return;
-      final message = _errorMessage(error);
-      setState(() => _feedbackText = message);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() => _feedbackText = _errorMessage(error));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  void _openLegalScreen(Widget screen) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final theme = Theme.of(context);
     final phone = _phoneController.text.trim();
-    final phoneFocused = _phoneFocusNode.hasFocus;
+    final isConnectionFeedback = _feedbackText != null &&
+        BackendResolver.isConnectionError(_feedbackText!);
 
     final helperText = _feedbackText ??
         (phone.isEmpty
@@ -133,317 +133,226 @@ class _PhoneScreenState extends State<PhoneScreen> {
                 ? 'OTP will be sent to +91 $phone'
                 : 'Enter a valid 10-digit mobile number.');
     final helperColor = _feedbackText != null
-        ? Colors.red
+        ? mv.error
         : _isValidPhone(phone)
-            ? AppColors.success
-            : _textMuted;
+            ? mv.freshBadge
+            : mv.textMuted;
 
-    final buttonColor = _hasTenDigits ? _brandRed : _buttonDisabled;
-    final buttonTextColor = _hasTenDigits ? Colors.white : _buttonDisabledText;
-
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      backgroundColor: _bgColor,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'assets/images/login_background.png',
-            fit: BoxFit.cover,
-          ),
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withOpacity(0.95),
-                  Colors.white.withOpacity(0.90),
-                  const Color(0xFFFFF5F5).withOpacity(0.85),
-                ],
+    return AuthScreenShell(
+      children: [
+        const AuthBrandHeader(),
+        SizedBox(height: mv.spacing.lg),
+        AuthFormCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Enter your mobile',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: mv.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          ),
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-                final keyboardVisible = keyboardHeight > 0;
-                
-                return SingleChildScrollView(
-                  child: Container(
-                    height: constraints.maxHeight,
-                    padding: EdgeInsets.only(bottom: keyboardHeight > 0 ? 20 : 0),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
+              SizedBox(height: mv.spacing.xxs),
+              Text(
+                "We'll send a 4-digit OTP to verify",
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: mv.textSecondary,
+                ),
+              ),
+              SizedBox(height: mv.spacing.lg),
+              TextField(
+                controller: _phoneController,
+                focusNode: _phoneFocusNode,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.done,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(10),
+                ],
+                onChanged: (_) => setState(() => _feedbackText = null),
+                onSubmitted: (_) {
+                  if (!_isLoading) _sendOtp();
+                },
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: mv.textPrimary,
+                  fontWeight: FontWeight.w500,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Enter mobile number',
+                  hintStyle: theme.textTheme.bodyLarge?.copyWith(
+                    color: mv.textMuted,
+                  ),
+                  filled: true,
+                  fillColor: mv.surfaceCard,
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: mv.spacing.md,
+                    horizontal: mv.spacing.md,
+                  ),
+                  // prefixIcon stays visible when unfocused; `prefix` is hidden
+                  // by Material until the field has focus and text.
+                  prefixIcon: Padding(
+                    padding: EdgeInsets.only(left: mv.spacing.md),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Meatvo',
-                          style: TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 32,
-                            fontWeight: FontWeight.w700,
-                            color: _textPrimary,
-                            letterSpacing: -0.5,
+                          '+91',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: mv.textPrimary,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        SizedBox(width: mv.spacing.sm),
+                        Container(width: 1, height: 22, color: mv.border),
+                        SizedBox(width: mv.spacing.sm),
+                      ],
+                    ),
+                  ),
+                  prefixIconConstraints:
+                      const BoxConstraints(minWidth: 0, minHeight: 0),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(mv.radii.md),
+                    borderSide: BorderSide(color: mv.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(mv.radii.md),
+                    borderSide: BorderSide(color: mv.brandPrimary, width: 2),
+                  ),
+                  errorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(mv.radii.md),
+                    borderSide: BorderSide(color: mv.error),
+                  ),
+                  focusedErrorBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(mv.radii.md),
+                    borderSide: BorderSide(color: mv.error, width: 2),
+                  ),
+                ),
+              ),
+              if (helperText.isNotEmpty) ...[
+                SizedBox(height: mv.spacing.xs),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_feedbackText != null)
+                      Padding(
+                        padding: EdgeInsets.only(top: 1, right: mv.spacing.xxs),
+                        child: Icon(
+                          isConnectionFeedback
+                              ? Icons.wifi_off_rounded
+                              : Icons.info_outline_rounded,
+                          size: 16,
+                          color: helperColor,
+                        ),
+                      ),
+                    Expanded(
+                      child: Text(
+                        helperText,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: helperColor,
+                          fontWeight: FontWeight.w500,
+                          height: 1.35,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              SizedBox(height: mv.spacing.md),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.lock_outline, size: 16, color: mv.textMuted),
+                  SizedBox(width: mv.spacing.xs),
+                  Expanded(
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
                         Text(
-                          'Fresh • Hygienic • Reliable',
-                          style: TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 13,
-                            color: _textMuted,
-                            fontWeight: FontWeight.w500,
+                          'By continuing, you agree to our ',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: mv.textMuted,
+                            height: 1.4,
                           ),
                         ),
-                        SizedBox(height: keyboardVisible ? 20 : 40),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Container(
-                            padding: const EdgeInsets.all(28),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.8),
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.6),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.06),
-                                  blurRadius: 30,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Enter your mobile',
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w600,
-                                    color: _textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  "We'll send a 4-digit OTP to verify",
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 13,
-                                    color: _textMuted,
-                                  ),
-                                ),
-                                const SizedBox(height: 24),
-                                Material(
-                                  color: Colors.transparent,
-                                  child: Container(
-                                    height: 56,
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: phoneFocused ? _brandRed : _borderDefault,
-                                        width: phoneFocused ? 2 : 1,
-                                      ),
-                                      boxShadow: phoneFocused
-                                          ? [
-                                              BoxShadow(
-                                                color: _brandRed.withOpacity(0.1),
-                                                blurRadius: 8,
-                                                offset: const Offset(0, 2),
-                                              ),
-                                            ]
-                                          : null,
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(11),
-                                      child: Row(
-                                        children: [
-                                          Container(
-                                            color: Colors.white,
-                                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                                            child: const Text(
-                                              '+91',
-                                              style: TextStyle(
-                                                fontFamily: 'Poppins',
-                                                fontSize: 15,
-                                                fontWeight: FontWeight.w600,
-                                                color: _textPrimary,
-                                              ),
-                                            ),
-                                          ),
-                                          Container(
-                                            width: 1,
-                                            height: 24,
-                                            color: _borderDefault,
-                                          ),
-                                          Expanded(
-                                            child: Container(
-                                              color: Colors.white,
-                                              child: TextField(
-                                                controller: _phoneController,
-                                                focusNode: _phoneFocusNode,
-                                                keyboardType: TextInputType.phone,
-                                                textInputAction: TextInputAction.done,
-                                                inputFormatters: [
-                                                  FilteringTextInputFormatter.digitsOnly,
-                                                  LengthLimitingTextInputFormatter(10),
-                                                ],
-                                                onChanged: (_) =>
-                                                    setState(() => _feedbackText = null),
-                                                onSubmitted: (_) {
-                                                  if (!_isLoading) _sendOtp();
-                                                },
-                                                style: const TextStyle(
-                                                  fontFamily: 'Poppins',
-                                                  fontSize: 15,
-                                                  fontWeight: FontWeight.w500,
-                                                  color: _textPrimary,
-                                                ),
-                                                decoration: const InputDecoration(
-                                                  hintText: 'Enter mobile number',
-                                                  hintStyle: TextStyle(
-                                                    fontFamily: 'Poppins',
-                                                    fontSize: 15,
-                                                    color: _textMuted,
-                                                  ),
-                                                  border: InputBorder.none,
-                                                  enabledBorder: InputBorder.none,
-                                                  focusedBorder: InputBorder.none,
-                                                  errorBorder: InputBorder.none,
-                                                  focusedErrorBorder: InputBorder.none,
-                                                  contentPadding: EdgeInsets.symmetric(
-                                                    horizontal: 16,
-                                                  ),
-                                                  filled: true,
-                                                  fillColor: Colors.white,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (helperText.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    helperText,
-                                    maxLines: 3,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: 12,
-                                      color: helperColor,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                                const SizedBox(height: 16),
-                                Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Icon(
-                                      Icons.lock_outline,
-                                      size: 16,
-                                      color: _textMuted,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: RichText(
-                                        text: const TextSpan(
-                                          style: TextStyle(
-                                            fontFamily: 'Poppins',
-                                            fontSize: 11,
-                                            color: _textMuted,
-                                            height: 1.4,
-                                          ),
-                                          children: [
-                                            TextSpan(
-                                              text: 'By continuing, you agree to our ',
-                                            ),
-                                            TextSpan(
-                                              text: 'Terms of Services',
-                                              style: TextStyle(
-                                                color: _brandRed,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                            TextSpan(
-                                              text: ' and ',
-                                            ),
-                                            TextSpan(
-                                              text: 'Privacy Policy',
-                                              style: TextStyle(
-                                                color: _brandRed,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                        GestureDetector(
+                          onTap: () => _openLegalScreen(
+                            const TermsOfServiceScreen(),
+                          ),
+                          child: Text(
+                            'Terms of Service',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: mv.brandPrimary,
+                              fontWeight: FontWeight.w600,
+                              height: 1.4,
                             ),
                           ),
                         ),
-                        SizedBox(height: keyboardVisible ? 20 : 40),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: SizedBox(
-                            width: double.infinity,
-                            height: 56,
-                            child: ElevatedButton(
-                              onPressed: _isLoading ? null : _sendOtp,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: buttonColor,
-                                foregroundColor: buttonTextColor,
-                                disabledBackgroundColor: buttonColor,
-                                disabledForegroundColor: buttonTextColor,
-                                elevation: _hasTenDigits ? 8 : 0,
-                                shadowColor: _brandRed.withOpacity(0.4),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                              ),
-                              child: _isLoading
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
-                                      ),
-                                    )
-                                  : const Text(
-                                      'Continue',
-                                      style: TextStyle(
-                                        fontFamily: 'Poppins',
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.5,
-                                      ),
-                                    ),
+                        Text(
+                          ' and ',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: mv.textMuted,
+                            height: 1.4,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => _openLegalScreen(
+                            const PrivacyPolicyScreen(),
+                          ),
+                          child: Text(
+                            'Privacy Policy',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: mv.brandPrimary,
+                              fontWeight: FontWeight.w600,
+                              height: 1.4,
                             ),
                           ),
                         ),
                       ],
                     ),
                   ),
-                );
-              },
-            ),
+                ],
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        SizedBox(height: mv.spacing.lg),
+        SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: ElevatedButton(
+            onPressed: _isLoading || !_hasTenDigits ? null : _sendOtp,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: mv.brandPrimary,
+              foregroundColor: MeatvoColors.white,
+              disabledBackgroundColor: MeatvoColors.surfaceMuted,
+              disabledForegroundColor: mv.textMuted,
+              elevation: _hasTenDigits ? 4 : 0,
+              shadowColor: mv.brandPrimary.withValues(alpha: 0.35),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(mv.radii.lg),
+              ),
+            ),
+            child: _isLoading
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: MeatvoColors.white,
+                    ),
+                  )
+                : Text(
+                    'Continue',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: _hasTenDigits ? MeatvoColors.white : mv.textMuted,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+          ),
+        ),
+      ],
     );
   }
 }

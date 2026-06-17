@@ -42,22 +42,12 @@ CREATE OR REPLACE FUNCTION auto_generate_delivery_slots()
 RETURNS void
 LANGUAGE plpgsql
 AS $$
-DECLARE
-  d DATE;
-  horizon DATE := CURRENT_DATE + INTERVAL '13 days';
 BEGIN
-  d := CURRENT_DATE;
-  WHILE d <= horizon LOOP
-    INSERT INTO delivery_slots (name, start_time, end_time, slot_date, capacity, booked, is_active)
-    VALUES
-      ('Morning', '07:00:00', '11:00:00', d, 20, 0, true),
-      ('Evening', '16:00:00', '20:00:00', d, 20, 0, true)
-    ON CONFLICT (slot_date, name) DO NOTHING;
-    d := d + 1;
-  END LOOP;
+  -- Delivery slots are admin-managed (today + 2 days). No automatic Morning/Evening seeding.
+  RETURN;
 END;
 $$;
 
-SELECT auto_generate_delivery_slots();
+-- No automatic slot seed; admin creates slots with custom times.
 
 COMMIT;

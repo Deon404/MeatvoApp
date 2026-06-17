@@ -16,6 +16,7 @@ const ORDER_STATES = {
   OUT_FOR_DELIVERY: 'OUT_FOR_DELIVERY',
   RIDER_NEARBY: 'RIDER_NEARBY',
   DELIVERED: 'DELIVERED',
+  FAILED_DELIVERY: 'FAILED_DELIVERY',
   CANCELLED: 'CANCELLED',
   REFUNDED: 'REFUNDED',
 };
@@ -52,6 +53,7 @@ const STATE_TRANSITIONS = {
   [ORDER_STATES.OUT_FOR_DELIVERY]: [
     ORDER_STATES.RIDER_NEARBY,
     ORDER_STATES.DELIVERED,
+    ORDER_STATES.FAILED_DELIVERY,
   ],
   [ORDER_STATES.RIDER_NEARBY]: [ORDER_STATES.DELIVERED],
   [ORDER_STATES.DELIVERED]: [ORDER_STATES.REFUNDED], // In case of issues
@@ -64,16 +66,17 @@ const TRANSITION_ACTORS = {
   [ORDER_STATES.PLACED]: ['customer', 'system'],
   [ORDER_STATES.PAYMENT_PENDING]: ['system'],
   [ORDER_STATES.PAYMENT_VERIFIED]: ['admin', 'system'],
-  [ORDER_STATES.CONFIRMED]: ['admin'],
-  [ORDER_STATES.PACKING_STARTED]: ['admin'],
-  [ORDER_STATES.PACKED]: ['admin'],
+  [ORDER_STATES.CONFIRMED]: ['admin', 'staff'],
+  [ORDER_STATES.PACKING_STARTED]: ['admin', 'staff'],
+  [ORDER_STATES.PACKED]: ['admin', 'staff'],
   [ORDER_STATES.RIDER_ASSIGNED]: ['admin', 'system'],
   [ORDER_STATES.RIDER_ACCEPTED]: ['rider'],
   [ORDER_STATES.RIDER_REJECTED]: ['rider'],
-  [ORDER_STATES.OUT_FOR_DELIVERY]: ['rider'],
-  [ORDER_STATES.RIDER_NEARBY]: ['system'],
-  [ORDER_STATES.DELIVERED]: ['rider'],
-  [ORDER_STATES.CANCELLED]: ['customer', 'admin'],
+  [ORDER_STATES.OUT_FOR_DELIVERY]: ['rider', 'admin', 'staff'],
+  [ORDER_STATES.RIDER_NEARBY]: ['system', 'admin'],
+  [ORDER_STATES.DELIVERED]: ['rider', 'admin', 'staff'],
+  [ORDER_STATES.FAILED_DELIVERY]: ['rider', 'admin'],
+  [ORDER_STATES.CANCELLED]: ['customer', 'admin', 'staff'],
   [ORDER_STATES.REFUNDED]: ['admin'],
 };
 
@@ -125,6 +128,11 @@ const STATE_NOTIFICATIONS = {
       title: 'Order Confirmed',
       body: 'Order #{orderId} confirmed, ready for packing',
       priority: 'normal',
+    },
+    staff: {
+      title: 'New Kitchen Order',
+      body: 'Order #{orderId} is ready to prepare',
+      priority: 'high',
     },
   },
   [ORDER_STATES.PACKING_STARTED]: {
@@ -252,11 +260,13 @@ const STATE_ACTIONS = {
   [ORDER_STATES.CONFIRMED]: {
     customer: ['cancel_order'],
     admin: ['start_packing', 'cancel_order'],
+    staff: ['start_packing'],
     rider: [],
   },
   [ORDER_STATES.PACKING_STARTED]: {
     customer: [],
     admin: ['mark_packed', 'cancel_order'],
+    staff: ['mark_packed'],
     rider: [],
   },
   [ORDER_STATES.PACKED]: {

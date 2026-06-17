@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../models/address_model.dart';
-import '../../models/delivery_slot_model.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../services/store_status_service.dart';
 import '../../theme/app_theme.dart';
-import '../../utils/eta_display_util.dart';
 import '../cart/premium_cart_card.dart';
+import '../store/store_closed_banner.dart';
 
 class CheckoutDeliverySection extends StatelessWidget {
   const CheckoutDeliverySection({
@@ -13,29 +15,36 @@ class CheckoutDeliverySection extends StatelessWidget {
     required this.selectedAddress,
     required this.onChangeAddress,
     required this.onAddAddress,
-    required this.deliverySlots,
-    required this.selectedSlot,
-    required this.onSlotSelected,
     this.isEmptyAddress = false,
-    this.isLoadingSlots = false,
+    this.isStoreOpen = true,
+    this.storeClosedMessage,
   });
 
   final AddressModel? selectedAddress;
   final VoidCallback onChangeAddress;
   final VoidCallback onAddAddress;
-  final List<DeliverySlotModel> deliverySlots;
-  final DeliverySlotModel? selectedSlot;
-  final ValueChanged<DeliverySlotModel> onSlotSelected;
   final bool isEmptyAddress;
-  final bool isLoadingSlots;
+  final bool isStoreOpen;
+  final String? storeClosedMessage;
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (!isStoreOpen && storeClosedMessage != null) ...[
+          StoreClosedBanner(
+            status: StoreStatus(
+              isOpen: false,
+              closedMessage: storeClosedMessage,
+            ),
+            padding: EdgeInsets.zero,
+          ),
+          SizedBox(height: mv.spacing.sm),
+        ],
         const PremiumCartSectionTitle(title: 'Deliver to'),
         PremiumCartCard(
           child: Column(
@@ -51,13 +60,13 @@ class CheckoutDeliverySection extends StatelessWidget {
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: AppThemeColors.primaryLight,
+                        color: MeatvoColors.primaryLight,
                         borderRadius:
                             BorderRadius.circular(AppRadius.radiusMd),
                       ),
                       child: Icon(
                         _iconForLabel(selectedAddress!.label),
-                        color: AppThemeColors.primary,
+                        color: mv.brandPrimary,
                         size: 22,
                       ),
                     ),
@@ -76,7 +85,7 @@ class CheckoutDeliverySection extends StatelessWidget {
                           Text(
                             selectedAddress!.displayAddress,
                             style: textTheme.bodyMedium?.copyWith(
-                              color: AppThemeColors.textSecondary,
+                              color: mv.textSecondary,
                               height: 1.45,
                             ),
                           ),
@@ -92,23 +101,13 @@ class CheckoutDeliverySection extends StatelessWidget {
                     ),
                   ],
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
-                  child: Divider(height: 1, color: AppThemeColors.divider),
-                ),
-                Text(
-                  'Delivery time',
-                  style: textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
+                if (isStoreOpen) ...[
+                  Padding(
+                    padding: EdgeInsets.symmetric(vertical: mv.spacing.sm),
+                    child: Divider(height: 1, color: mv.border),
                   ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                _CheckoutSlotSelector(
-                  slots: deliverySlots,
-                  selectedSlot: selectedSlot,
-                  onSlotSelected: onSlotSelected,
-                  isLoading: isLoadingSlots,
-                ),
+                  const _ExpressDeliveryEtaCard(),
+                ],
               ],
             ],
           ),
@@ -126,200 +125,39 @@ class CheckoutDeliverySection extends StatelessWidget {
   }
 }
 
-class _CheckoutSlotSelector extends StatelessWidget {
-  const _CheckoutSlotSelector({
-    required this.slots,
-    required this.selectedSlot,
-    required this.onSlotSelected,
-    required this.isLoading,
-  });
-
-  final List<DeliverySlotModel> slots;
-  final DeliverySlotModel? selectedSlot;
-  final ValueChanged<DeliverySlotModel> onSlotSelected;
-  final bool isLoading;
+class _ExpressDeliveryEtaCard extends StatelessWidget {
+  const _ExpressDeliveryEtaCard();
 
   @override
   Widget build(BuildContext context) {
-    if (isLoading) {
-      return const SizedBox(
-        height: 40,
-        child: Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-
-    if (slots.isEmpty) {
-      return Text(
-        'No delivery slots available right now.',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: AppThemeColors.textMuted,
-            ),
-      );
-    }
-
-    final grouped = <String, List<DeliverySlotModel>>{};
-    for (final slot in slots) {
-      grouped.putIfAbsent(slot.dateKey, () => []).add(slot);
-    }
-
-    final sortedKeys = grouped.keys.toList()
-      ..sort((a, b) => a.compareTo(b));
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < sortedKeys.length; i++) ...[
-          if (i > 0) const SizedBox(height: AppSpacing.md),
-          _SlotDaySection(
-            dateLabel: grouped[sortedKeys[i]]!.first.dateLabel,
-            slots: grouped[sortedKeys[i]]!,
-            selectedSlot: selectedSlot,
-            onSlotSelected: onSlotSelected,
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE8F5E9),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.access_time, color: Color(0xFF2E7D32), size: 20),
+          SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Express Delivery',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: Color(0xFF1A1A1A),
+                ),
+              ),
+              Text(
+                'Delivered in ~45-60 minutes',
+                style: TextStyle(fontSize: 12, color: Color(0xFF6B6B6B)),
+              ),
+            ],
           ),
         ],
-      ],
-    );
-  }
-}
-
-class _SlotDaySection extends StatelessWidget {
-  const _SlotDaySection({
-    required this.dateLabel,
-    required this.slots,
-    required this.selectedSlot,
-    required this.onSlotSelected,
-  });
-
-  final String dateLabel;
-  final List<DeliverySlotModel> slots;
-  final DeliverySlotModel? selectedSlot;
-  final ValueChanged<DeliverySlotModel> onSlotSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          dateLabel,
-          style: textTheme.labelLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-            color: AppThemeColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.sm,
-          children: slots.map((slot) {
-            final isSelected = selectedSlot?.id == slot.id &&
-                selectedSlot?.dateKey == slot.dateKey;
-            final etaLabel = formatSlotEtaDisplay(slot.estimatedEta);
-            return Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                _DeliverySlotChip(
-                  slot: slot,
-                  isSelected: isSelected,
-                  onTap: slot.available
-                      ? () {
-                          HapticFeedback.lightImpact();
-                          onSlotSelected(slot);
-                        }
-                      : null,
-                ),
-                if (etaLabel.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    etaLabel,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: etaGreen,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ],
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-}
-
-class _DeliverySlotChip extends StatelessWidget {
-  const _DeliverySlotChip({
-    required this.slot,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  final DeliverySlotModel slot;
-  final bool isSelected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final isAvailable = slot.available;
-
-    final borderColor = isSelected
-        ? AppThemeColors.primary
-        : isAvailable
-            ? AppThemeColors.border
-            : AppThemeColors.border.withValues(alpha: 0.6);
-
-    final textColor = isSelected
-        ? AppThemeColors.primary
-        : isAvailable
-            ? AppThemeColors.textPrimary
-            : AppThemeColors.textMuted;
-
-    final backgroundColor = isSelected
-        ? AppThemeColors.primaryLight.withValues(alpha: 0.25)
-        : isAvailable
-            ? AppThemeColors.white
-            : AppThemeColors.surface2;
-
-    return Material(
-      color: backgroundColor,
-      borderRadius: BorderRadius.circular(AppRadius.radiusPill),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.radiusPill),
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.sm,
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(AppRadius.radiusPill),
-            border: Border.all(
-              color: borderColor,
-              width: isSelected ? 2 : 1,
-            ),
-          ),
-          child: Text(
-            slot.displayLabel,
-            style: textTheme.bodySmall?.copyWith(
-              color: textColor,
-              fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-              decoration:
-                  isAvailable ? null : TextDecoration.lineThrough,
-              decorationColor: AppThemeColors.textMuted,
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -332,26 +170,27 @@ class _EmptyAddressPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return InkWell(
       onTap: onAddTap,
-      borderRadius: BorderRadius.circular(AppRadius.radiusMd),
+      borderRadius: BorderRadius.circular(mv.radii.md),
       child: Row(
         children: [
           Container(
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppThemeColors.surface2,
-              borderRadius: BorderRadius.circular(AppRadius.radiusMd),
+              color: MeatvoColors.surfaceMuted,
+              borderRadius: BorderRadius.circular(mv.radii.md),
             ),
-            child: const Icon(
+            child: Icon(
               Icons.add_location_alt_rounded,
-              color: AppThemeColors.primary,
+              color: mv.brandPrimary,
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          SizedBox(width: mv.spacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -365,15 +204,15 @@ class _EmptyAddressPrompt extends StatelessWidget {
                 Text(
                   'Pin your location for fresh delivery',
                   style: textTheme.bodySmall?.copyWith(
-                    color: AppThemeColors.textMuted,
+                    color: mv.textMuted,
                   ),
                 ),
               ],
             ),
           ),
-          const Icon(
+          Icon(
             Icons.chevron_right_rounded,
-            color: AppThemeColors.textMuted,
+            color: mv.textMuted,
           ),
         ],
       ),

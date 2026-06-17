@@ -20,7 +20,7 @@ const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production'
 const logOtpToConsole =
   process.env.OTP_LOG_TO_CONSOLE === 'true' && process.env.NODE_ENV !== 'production';
 
-const OTP_LENGTH = Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 6);
+const OTP_LENGTH = Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 4);
 
 const generateOtpCode = () => {
   const max = 10 ** OTP_LENGTH;
@@ -39,16 +39,12 @@ const hashOtp = (phone, otp) => {
 };
 
 const roleForNewUser = (phone) => {
-  const adminPhones = (process.env.ADMIN_PHONES || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // Admin role is assigned only via the admin panel API — never from env phone lists (SIM-swap risk).
   const deliveryPhones = (process.env.DELIVERY_PHONES || '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
 
-  if (adminPhones.includes(phone)) return ROLES.ADMIN;
   if (deliveryPhones.includes(phone)) return ROLES.DELIVERY;
   return ROLES.CUSTOMER;
 };
@@ -91,7 +87,7 @@ const ensureUserForPhone = async (phone) => {
     user = created.rows[0];
   }
   // Existing users: role comes from DB only (pgAdmin / admin panel).
-  // ADMIN_PHONES / DELIVERY_PHONES apply only when the account is first created.
+  // DELIVERY_PHONES applies only when the account is first created.
 
   if (user.role === ROLES.DELIVERY) {
     await query(
@@ -201,10 +197,9 @@ const sendOtp = asyncHandler(async (req, res) => {
     const phoneHash = sha256(phone);
     const templateId = process.env.MSG91_OTP_TEMPLATE_ID || process.env.MSG91_TEMPLATE_ID || null;
 
-    const { sendSMS: sendOTPViaMSG91 } = require('../../utils/msg91');
-    let msg91Response;
+    let smsResult;
     try {
-      msg91Response = await sendOTPViaMSG91(phone, otp);
+      smsResult = await sendOtpSms({ phone, otp });
     } catch (smsError) {
       await redis.del(sendLockKey);
       await redis.del(redisKey);
@@ -226,7 +221,11 @@ const sendOtp = asyncHandler(async (req, res) => {
       return fail(res, 503, 'Failed to send OTP. Please try again.');
     }
 
-    const msg91Payload = { provider: 'msg91', ...(msg91Response || {}) };
+    const msg91Payload = {
+      provider: smsResult?.provider || 'msg91',
+      ...(smsResult?.response || {}),
+      ...(smsResult?.fallback ? { fallback: true, reason: smsResult.reason } : {}),
+    };
 
     try {
       await query(
@@ -240,7 +239,7 @@ const sendOtp = asyncHandler(async (req, res) => {
 
     logger.info('otp_sent', {
       phone: maskedPhone,
-      provider: 'msg91',
+      provider: smsResult?.provider || 'msg91',
       success: true,
     });
 
@@ -249,7 +248,11 @@ const sendOtp = asyncHandler(async (req, res) => {
     }
 
     await redis.del(sendLockKey);
-    return ok(res, {}, 'OTP sent successfully');
+    const responseData = {};
+    if (!isProd) {
+      responseData.devOTP = otp;
+    }
+    return ok(res, responseData, 'OTP sent successfully');
   } catch (error) {
     logger.error('otp_send_error', { error: error.message });
     throw error;
@@ -369,7 +372,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
       return fail(res, 401, 'MFA token required', { requiresMFA: true });
     }
 
-    const isValidMfa = mfaService.verifyToken(mfaToken, user.mfaSecret);
+    const isValidMfa = mfaService.verifyToken(mfaToken, mfaService.resolveStoredSecret(user.mfaSecret));
     if (!isValidMfa) {
       if (sentry && sentry.addBreadcrumb) {
         sentry.addBreadcrumb({
@@ -451,7 +454,7 @@ const refreshToken = asyncHandler(async (req, res) => {
   }
 
   const incomingHash = sha256(token);
-  if (!user.refresh_token_hash || user.refresh_token_hash !== incomingHash) {
+  if (!user.refresh_token_hash || !timingSafeEqualStr(incomingHash, user.refresh_token_hash)) {
     return fail(res, 401, 'Invalid refresh token');
   }
 
@@ -491,7 +494,7 @@ const devLogin = asyncHandler(async (req, res) => {
   const requestedRole =
     requestedRoleRaw === 'user'
       ? ROLES.CUSTOMER
-      : [ROLES.ADMIN, ROLES.CUSTOMER, ROLES.DELIVERY].includes(requestedRoleRaw)
+      : [ROLES.ADMIN, ROLES.CUSTOMER, ROLES.DELIVERY, ROLES.STAFF].includes(requestedRoleRaw)
         ? requestedRoleRaw
         : undefined;
 

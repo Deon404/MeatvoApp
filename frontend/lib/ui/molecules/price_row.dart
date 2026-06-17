@@ -36,6 +36,7 @@ class PriceRow extends StatelessWidget {
     this.discountPercent,
     this.unit,
     this.compact = false,
+    this.showDiscountText = true,
   });
 
   final double price;
@@ -43,6 +44,7 @@ class PriceRow extends StatelessWidget {
   final double? discountPercent;
   final String? unit;
   final bool compact;
+  final bool showDiscountText;
 
   /// Returns the % discount label to render, or `null` when there is no
   /// meaningful discount. Always uses LOCAL captures of the nullable
@@ -73,75 +75,82 @@ class PriceRow extends StatelessWidget {
     final resolvedDiscount = _resolvedDiscountFrom(strikePrice: strikePrice);
 
     final priceStyle = compact
-        ? Theme.of(context).textTheme.titleSmall
+        ? Theme.of(context).textTheme.titleMedium?.copyWith(fontSize: 17)
         : Theme.of(context).textTheme.titleMedium;
 
-    // FittedBox(scaleDown) shrinks the whole row when the parent is
-    // narrower than the intrinsic width, preventing "RenderFlex
-    // overflowed by N pixels" warnings on tightly packed cards. Every
-    // Row child below has bounded width because we use
-    // `mainAxisSize: MainAxisSize.min` (no Expanded/Spacer/Flexible).
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: Alignment.centerLeft,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.baseline,
-        textBaseline: TextBaseline.alphabetic,
-        children: [
+    final priceRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      children: [
+        Text(
+          '₹${price.toStringAsFixed(0)}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          softWrap: false,
+          style: priceStyle?.copyWith(
+            color: mv.textPrimary,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.3,
+          ),
+        ),
+        if (hasUnit) ...[
+          SizedBox(width: mv.spacing.xxs),
           Text(
-            '₹${price.toStringAsFixed(0)}',
+            '/$unitLabel',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             softWrap: false,
-            style: priceStyle?.copyWith(
-              color: mv.textPrimary,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.3,
-            ),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: mv.textMuted,
+                  fontWeight: FontWeight.w500,
+                ),
           ),
-          if (hasUnit) ...[
-            SizedBox(width: mv.spacing.xxs),
-            Text(
-              '/$unitLabel',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              softWrap: false,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: mv.textMuted,
-                    fontWeight: FontWeight.w500,
-                  ),
-            ),
-          ],
-          if (strikePrice != null) ...[
-            SizedBox(width: mv.spacing.xs),
-            Text(
-              '₹${strikePrice.toStringAsFixed(0)}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              softWrap: false,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: mv.textMuted,
-                    decoration: TextDecoration.lineThrough,
-                    decorationColor: mv.textMuted,
-                  ),
-            ),
-          ],
-          if (resolvedDiscount != null) ...[
-            SizedBox(width: mv.spacing.xs),
-            Text(
-              '${resolvedDiscount.round()}% off',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              softWrap: false,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: mv.brandPrimary,
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-          ],
         ],
-      ),
+        if (strikePrice != null) ...[
+          SizedBox(width: mv.spacing.xs),
+          Text(
+            '₹${strikePrice.toStringAsFixed(0)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            softWrap: false,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: mv.textMuted,
+                  decoration: TextDecoration.lineThrough,
+                  decorationColor: mv.textMuted,
+                ),
+          ),
+        ],
+        if (showDiscountText && resolvedDiscount != null) ...[
+          SizedBox(width: mv.spacing.xs),
+          Text(
+            '${resolvedDiscount.round()}% off',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            softWrap: false,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: mv.brandPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ],
+    );
+
+    // Compact cards get the full card width for price — no scale-down.
+    // The old FittedBox shrank price to fit beside the 112px CTA, making
+    // ₹140 look like caption text on narrow grid cells.
+    if (compact) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: priceRow,
+      );
+    }
+
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: priceRow,
     );
   }
 }

@@ -45,9 +45,14 @@ const parsePhonePeWebhookBody = (body) => {
     return { payloadForSignature: base64Response, webhookBody: decoded };
   }
 
-  // Legacy/test format: direct JSON body (used in local curl tests).
+  const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (isProd) {
+    return { payloadForSignature: null, webhookBody: null, legacyRejected: true };
+  }
+
+  // Legacy/test format: direct JSON body (non-production local curl tests only).
   const canonical = JSON.stringify(body, Object.keys(body).sort());
-  return { payloadForSignature: canonical, webhookBody: body };
+  return { payloadForSignature: canonical, webhookBody: body, legacyRejected: false };
 };
 
 module.exports = {

@@ -1,8 +1,60 @@
 /**
  * ETA (Estimated Time of Arrival) Calculator
  *
- * Calculates delivery ETAs based on slot timing, packing queue, distance, and buffer.
+ * Express delivery ETAs use prep queue + travel distance.
+ * Legacy slot-based calculateETA is retained for backward compatibility.
  */
+
+const EXPRESS_SLA_MINUTES = 60;
+const EXPRESS_AVG_SPEED_KMH = 22;
+
+const OUT_FOR_DELIVERY_STATUSES = new Set([
+  'OUT_FOR_DELIVERY',
+  'ON_THE_WAY',
+  'ON_WAY',
+  'PICKED_UP',
+  'RIDER_NEARBY',
+]);
+
+const TRAFFIC_FACTORS = {
+  7: 1.3,
+  8: 1.4,
+  9: 1.3,
+  12: 1.2,
+  13: 1.2,
+  17: 1.4,
+  18: 1.5,
+  19: 1.3,
+  20: 1.2,
+  default: 1.0,
+};
+
+function getTrafficMultiplier(date = new Date()) {
+  const hour = date.getHours();
+  return TRAFFIC_FACTORS[hour] || TRAFFIC_FACTORS.default;
+}
+
+/**
+ * Compute preparation minutes from cart line items and kitchen queue depth.
+ * @param {Array<{ quantity?: number }>} items
+ * @param {number} queueDepth
+ */
+function computePrepMinutes(items = [], queueDepth = 0) {
+  const basePrep = 10;
+  const perLineItem = 3;
+  const perExtraUnit = 1;
+  const queueMinutesPerOrder = 4;
+  const maxPrep = 35;
+
+  let itemPrep = 0;
+  for (const item of items) {
+    const qty = Math.max(1, Number(item.quantity) || 1);
+    itemPrep += perLineItem + Math.max(0, qty - 1) * perExtraUnit;
+  }
+
+  const queuePrep = Math.min(Math.max(0, queueDepth) * queueMinutesPerOrder, 20);
+  return Math.min(basePrep + itemPrep + queuePrep, maxPrep);
+}
 
 /**
  * Parse time string (HH:MM:SS or HH:MM) to components.
@@ -145,8 +197,106 @@ function calculateETARange(slotStartTime, slotEndTime, ordersInSlot, minDistance
 }
 
 /**
- * Check if an order is likely to be delayed beyond the slot end.
+ * Express delivery ETA — prep + travel + buffer, capped at 1-hour SLA for display.
+ *
+ * @param {Object} params
+ * @param {Date} [params.placedAt]
+ * @param {Array<{ quantity?: number }>} [params.items]
+ * @param {number} [params.queueDepth]
+ * @param {number} params.distanceKm
+ * @param {number} [params.trafficMultiplier]
  */
+function calculateExpressETA({
+  placedAt = new Date(),
+  items = [],
+  queueDepth = 0,
+  distanceKm = 0,
+  trafficMultiplier,
+} = {}) {
+  const referenceTime = placedAt instanceof Date ? placedAt : new Date(placedAt);
+  const safeDistance =
+    typeof distanceKm === 'number' && distanceKm >= 0 ? distanceKm : 0;
+  const traffic = trafficMultiplier ?? getTrafficMultiplier(referenceTime);
+
+  const prepMinutes = computePrepMinutes(items, queueDepth);
+  const travelMinutes = ((safeDistance / EXPRESS_AVG_SPEED_KMH) * 60) * traffic;
+  const bufferMinutes = 5;
+  const totalMinutes = Math.round(prepMinutes + travelMinutes + bufferMinutes);
+  const displayMinutes = Math.min(totalMinutes, EXPRESS_SLA_MINUTES);
+  const etaTime = new Date(referenceTime.getTime() + totalMinutes * 60000);
+
+  return {
+    etaTime,
+    etaMinutes: displayMinutes,
+    etaDisplay: formatETA(etaTime, referenceTime),
+    breakdown: {
+      prepMinutes: Math.round(prepMinutes),
+      travelMinutes: Math.ceil(travelMinutes),
+      bufferMinutes,
+      queueDepth: Math.max(0, Number(queueDepth) || 0),
+      totalMinutes,
+      displayMinutes,
+      distanceKm: Number(safeDistance.toFixed(2)),
+      trafficMultiplier: traffic,
+      slaCapMinutes: EXPRESS_SLA_MINUTES,
+    },
+  };
+}
+
+/**
+ * Live tracking ETA from rider GPS → customer address.
+ * Before pickup: prep + rider travel. After pickup: travel only.
+ */
+function calculateRiderTrackingETA({
+  orderStatus = 'CONFIRMED',
+  riderLat,
+  riderLng,
+  deliveryLat,
+  deliveryLng,
+  items = [],
+  queueDepth = 0,
+  referenceTime = new Date(),
+} = {}) {
+  const { haversineDistanceKm } = require('./distance.util');
+
+  const rLat = Number(riderLat);
+  const rLng = Number(riderLng);
+  const dLat = Number(deliveryLat);
+  const dLng = Number(deliveryLng);
+
+  if (![rLat, rLng, dLat, dLng].every(Number.isFinite)) {
+    return null;
+  }
+
+  const straightKm = haversineDistanceKm(rLat, rLng, dLat, dLng);
+  const roadDistanceKm = straightKm * 1.2;
+  const traffic = getTrafficMultiplier(referenceTime);
+  const travelMinutes = ((roadDistanceKm / EXPRESS_AVG_SPEED_KMH) * 60) * traffic;
+
+  const normalized = String(orderStatus || '').toUpperCase();
+  const prepMinutes = OUT_FOR_DELIVERY_STATUSES.has(normalized)
+    ? 0
+    : computePrepMinutes(items, queueDepth);
+  const bufferMinutes = OUT_FOR_DELIVERY_STATUSES.has(normalized) ? 2 : 5;
+  const totalMinutes = Math.round(prepMinutes + travelMinutes + bufferMinutes);
+  const etaTime = new Date(referenceTime.getTime() + totalMinutes * 60000);
+
+  return {
+    etaTime,
+    etaMinutes: totalMinutes,
+    etaDisplay: formatETA(etaTime, referenceTime),
+    distanceKm: Number(straightKm.toFixed(2)),
+    roadDistanceKm: Number(roadDistanceKm.toFixed(2)),
+    breakdown: {
+      prepMinutes: Math.round(prepMinutes),
+      travelMinutes: Math.ceil(travelMinutes),
+      bufferMinutes,
+      totalMinutes,
+      trafficMultiplier: traffic,
+    },
+  };
+}
+
 function isLikelyDelayed(etaTime, slotEndTime, slotDate = null) {
   if (!(etaTime instanceof Date) || isNaN(etaTime.getTime())) {
     return false;
@@ -162,9 +312,14 @@ function isLikelyDelayed(etaTime, slotEndTime, slotDate = null) {
 
 module.exports = {
   calculateETA,
+  calculateExpressETA,
+  calculateRiderTrackingETA,
   calculateETARange,
   isLikelyDelayed,
   formatETA,
   parseTimeString,
   combineDateAndTime,
+  computePrepMinutes,
+  getTrafficMultiplier,
+  EXPRESS_SLA_MINUTES,
 };

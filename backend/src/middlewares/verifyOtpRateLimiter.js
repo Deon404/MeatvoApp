@@ -25,8 +25,11 @@ const verifyOtpRateLimiter = async (req, res, next) => {
     return next();
   } catch (err) {
     logger.error('Rate limit Redis error:', err);
+    if (String(process.env.NODE_ENV || '').toLowerCase() !== 'production') {
+      logger.warn('verify_otp_rate_limiter_fail_open_dev');
+      return next();
+    }
     next(new Error('Service temporarily unavailable'));
-    return;
   }
 };
 

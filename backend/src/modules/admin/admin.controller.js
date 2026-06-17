@@ -3,12 +3,26 @@ const { withTransaction, query } = require('../../db/postgres');
 const { repairAppSettingsSchema } = require('../../db/appSettings');
 const { ok, fail } = require('../../utils/response');
 const { emitToAll } = require('../../socket/socket');
+const { syncOperationalToStoreSettings, getMergedStoreSettings } = require('../../utils/storeSettings.util');
 const { addressToText } = require('../../utils/address');
 const { canTransition } = require('../../utils/orderStateMachine');
 const {
   emitAssignmentSuccess,
   emitAssignmentCancelled,
+  retryAssignOrderToPartner,
+  manualAssignOrderToPartner,
+  assignOrderToPartner,
 } = require('../../services/assignment.service');
+const { signStoredImageUrl, normalizeStoredImageUrl } = require('../../utils/uploadSigning');
+const { logger } = require('../../utils/logger');
+const {
+  restoreStockForOrder,
+  shouldRestoreStockOnCancel,
+} = require('../payments/payment-stock');
+
+const requestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+const signImageField = (req, url) => signStoredImageUrl(url || '', requestBaseUrl(req));
+const storeImageField = (url) => (url ? normalizeStoredImageUrl(url) : null);
 
 const dashboard = asyncHandler(async (req, res) => {
   const [
@@ -125,7 +139,7 @@ const customers = asyncHandler(async (req, res) => {
                WHERE oa.delivery_partner_id = dp.id AND o.status = 'DELIVERED') AS total_deliveries
        FROM users u
        LEFT JOIN delivery_partners dp ON dp.user_id = u.id
-       WHERE u.role IN ('customer', 'delivery', 'admin')
+       WHERE u.role IN ('customer', 'delivery', 'admin', 'staff')
        ORDER BY u.created_at DESC`
     ));
   } catch (err) {
@@ -145,7 +159,7 @@ const customers = asyncHandler(async (req, res) => {
               0::int AS total_deliveries
        FROM users u
        LEFT JOIN delivery_partners dp ON dp.user_id = u.id
-       WHERE u.role IN ('customer', 'delivery', 'admin')
+       WHERE u.role IN ('customer', 'delivery', 'admin', 'staff')
        ORDER BY u.created_at DESC`
     ));
   }
@@ -514,7 +528,7 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const baseSelect = `
-    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at,
+    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address,
            COALESCE(u.phone, '') AS phone,
            COALESCE(u.name, u.phone, 'Customer') AS customer_name`;
 
@@ -591,8 +605,7 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
 
   const out = rows.map((o) => {
     const hasAssignment = Boolean(o.delivery_partner_id);
-    const status =
-      hasAssignment && ['CONFIRMED', 'PACKED'].includes(o.status) ? 'ASSIGNED' : o.status;
+    const status = o.status;
     const createdAtMs = Number(o.created_at_ms || 0);
     const customerName = o.customer_name || o.phone || 'Customer';
     const orderId = String(o.id);
@@ -617,6 +630,8 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
         phone: o.phone || 'N/A',
       },
       items,
+      address: o.address || null,
+      delivery_address: o.address || null,
       assignment: o.delivery_partner_id
         ? {
             rider: {
@@ -632,6 +647,58 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
   });
 
   return ok(res, { orders: out }, 'Orders');
+});
+
+const assignRiderToOrder = asyncHandler(async (req, res) => {
+  const orderId = Number(req.validated.params.id);
+  const deliveryPartnerId = req.validated.body?.deliveryPartnerId;
+  const resetAttempts = req.validated.body?.resetAttempts !== false;
+  const io = req.app.get('io');
+
+  let result;
+  if (deliveryPartnerId != null && deliveryPartnerId !== '') {
+    result = await manualAssignOrderToPartner({
+      orderId,
+      deliveryPartnerId: Number(deliveryPartnerId),
+      io,
+    });
+  } else {
+    result = await retryAssignOrderToPartner({
+      orderId,
+      io,
+      resetAttempts,
+    });
+  }
+
+  if (!result?.assigned) {
+    return fail(
+      res,
+      400,
+      result?.reason || 'Unable to assign rider',
+      result || {}
+    );
+  }
+
+  const { rows: assignmentRows } = await query(
+    `SELECT oa.id, oa.order_id, oa.delivery_partner_id, oa.assigned_at, oa.status,
+            dp.is_online, dp.current_lat, dp.current_lng,
+            u.id AS user_id, u.phone AS user_phone, u.name AS user_name
+     FROM order_assignments oa
+     JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+     JOIN users u ON u.id = dp.user_id
+     WHERE oa.order_id = $1`,
+    [orderId]
+  );
+
+  return ok(
+    res,
+    {
+      orderId,
+      assignment: assignmentRows[0] || null,
+      result,
+    },
+    'Rider assigned successfully'
+  );
 });
 
 const patchOrderCompat = asyncHandler(async (req, res) => {
@@ -667,6 +734,9 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
         const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
         err.statusCode = 400;
         throw err;
+      }
+      if (shouldRestoreStockOnCancel(currentStatus)) {
+        await restoreStockForOrder(client, orderId);
       }
       await client.query('UPDATE orders SET status = $1 WHERE id = $2', ['CANCELLED', orderId]);
       await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['CANCELLED', orderId]);
@@ -818,6 +888,20 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
     }
   }
 
+  const ioAfterPatch = req.app.get('io');
+  const finalStatus = String(result.status || '').toUpperCase();
+  if (
+    !result.delivery_partner_id &&
+    finalStatus === 'PACKED'
+  ) {
+    assignOrderToPartner({ orderId, io: ioAfterPatch }).catch((err) => {
+      logger?.error?.('assign_after_patch_failed', {
+        orderId,
+        error: err.message,
+      });
+    });
+  }
+
   const hasAssignment = Boolean(result.delivery_partner_id);
   const status =
     hasAssignment && ['CONFIRMED', 'PACKED'].includes(result.status) ? 'ASSIGNED' : result.status;
@@ -860,7 +944,7 @@ const listCategoriesCompat = asyncHandler(async (req, res) => {
   const out = rows.map((c) => ({
     id: String(c.id),
     name: c.name,
-    imageUrl: c.image_url || '',
+    imageUrl: signImageField(req, c.image_url),
     isActive: Boolean(c.active),
     sortOrder: Number(c.sort_order || 0),
   }));
@@ -878,7 +962,7 @@ const createCategoryCompat = asyncHandler(async (req, res) => {
       `INSERT INTO categories (name, image_url, active, sort_order)
        VALUES ($1,$2,$3,$4)
        RETURNING id, name, image_url, active, sort_order`,
-      [body.name, body.imageUrl || null, body.isActive !== false, Number(body.sortOrder || 0)]
+      [body.name, storeImageField(body.imageUrl), body.isActive !== false, Number(body.sortOrder || 0)]
     ));
   } catch (err) {
     if (err?.code !== '42703') throw err;
@@ -886,7 +970,7 @@ const createCategoryCompat = asyncHandler(async (req, res) => {
       `INSERT INTO categories (name, image_url, active)
        VALUES ($1,$2,$3)
        RETURNING id, name, image_url, active`,
-      [body.name, body.imageUrl || null, body.isActive !== false]
+      [body.name, storeImageField(body.imageUrl), body.isActive !== false]
     ));
     rows = rows.map((c) => ({ ...c, sort_order: 0 }));
   }
@@ -923,7 +1007,7 @@ const patchCategoryCompat = asyncHandler(async (req, res) => {
      RETURNING id, name, image_url, active, sort_order`,
     [
       hasName,      body.name,
-      hasImageUrl,  body.imageUrl || null,
+      hasImageUrl,  storeImageField(body.imageUrl),
       hasIsActive,  Boolean(body.isActive),
       hasSortOrder, Number(body.sortOrder || 0),
       id,
@@ -941,51 +1025,94 @@ const patchCategoryCompat = asyncHandler(async (req, res) => {
   );
 });
 
+const parseWeightVariants = (wv) => {
+  if (typeof wv === 'string') {
+    try {
+      return JSON.parse(wv);
+    } catch {
+      return [500];
+    }
+  }
+  return Array.isArray(wv) && wv.length ? wv : [500];
+};
+
+const defaultWeightGrams = (wv) => parseWeightVariants(wv)[0] || 500;
+
+const salePriceFromRow = (p) => {
+  const base = Number(p.base_price_per_kg || p.price || 0);
+  const grams = defaultWeightGrams(p.weight_variants);
+  return Math.round(base * (grams / 1000) * 100) / 100;
+};
+
+const discountPercentFrom = (mrp, salePrice) => {
+  if (mrp == null || mrp <= salePrice + 0.01) return null;
+  return Math.round((1 - salePrice / mrp) * 100);
+};
+
+const normalizeMrpInput = (value) => {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
+const mapProductAdminOut = (req, p) => {
+  const weightVariants = parseWeightVariants(p.weight_variants);
+  const salePrice = salePriceFromRow({ ...p, weight_variants: weightVariants });
+  const mrpRaw = p.mrp != null ? Number(p.mrp) : null;
+  const mrp = mrpRaw != null && mrpRaw > salePrice + 0.01 ? mrpRaw : null;
+
+  let cutTypes = p.cut_types;
+  if (typeof cutTypes === 'string') {
+    try {
+      cutTypes = JSON.parse(cutTypes);
+    } catch {
+      cutTypes = null;
+    }
+  }
+
+  let marinationOptions = p.marination_options;
+  if (typeof marinationOptions === 'string') {
+    try {
+      marinationOptions = JSON.parse(marinationOptions);
+    } catch {
+      marinationOptions = null;
+    }
+  }
+
+  return {
+    id: String(p.id),
+    name: p.name,
+    categoryId: p.category_id ? String(p.category_id) : '',
+    salePrice,
+    price: salePrice,
+    mrp,
+    discountPercent: discountPercentFrom(mrp, salePrice),
+    basePricePerKg: Number(p.base_price_per_kg || p.price || 0),
+    weightVariants,
+    cutTypes: cutTypes || null,
+    marinationOptions: marinationOptions || null,
+    freshnessDate: p.freshness_date || null,
+    unit: p.unit || '',
+    stockQty: Number(p.stock),
+    imageUrl: signImageField(req, p.image_url),
+    description: p.description || '',
+    isActive: Boolean(p.active),
+    inStock: Number(p.stock) > 0,
+    tags: [],
+  };
+};
+
 const listProductsCompat = asyncHandler(async (req, res) => {
   const { rows } = await query(
-    `SELECT id, category_id, name, description, price, base_price_per_kg, 
+    `SELECT id, category_id, name, description, price, base_price_per_kg, mrp,
       weight_variants, cut_types, marination_options, freshness_date,
       image_url, stock, unit, active
       FROM products
       ORDER BY id DESC`
   );
 
-  const out = rows.map((p) => {
-    // Parse JSON/Array fields
-    let weightVariants = p.weight_variants;
-    if (typeof weightVariants === 'string') {
-      try { weightVariants = JSON.parse(weightVariants); } catch (e) { weightVariants = [250, 500, 1000]; }
-    }
-
-    let cutTypes = p.cut_types;
-    if (typeof cutTypes === 'string') {
-      try { cutTypes = JSON.parse(cutTypes); } catch (e) { cutTypes = null; }
-    }
-
-    let marinationOptions = p.marination_options;
-    if (typeof marinationOptions === 'string') {
-      try { marinationOptions = JSON.parse(marinationOptions); } catch (e) { marinationOptions = null; }
-    }
-
-    return {
-      id: String(p.id),
-      name: p.name,
-      categoryId: p.category_id ? String(p.category_id) : '',
-      price: Number(p.price),
-      basePricePerKg: Number(p.base_price_per_kg || p.price || 0),
-      weightVariants: weightVariants || [250, 500, 1000],
-      cutTypes: cutTypes || null,
-      marinationOptions: marinationOptions || null,
-      freshnessDate: p.freshness_date || null,
-      unit: p.unit || '',
-      stockQty: Number(p.stock),
-      imageUrl: p.image_url || '',
-      description: p.description || '',
-      isActive: Boolean(p.active),
-      inStock: Number(p.stock) > 0,
-      tags: [],
-    };
-  });
+  const out = rows.map((p) => mapProductAdminOut(req, p));
 
   return ok(res, out, 'Products');
 });
@@ -993,7 +1120,19 @@ const listProductsCompat = asyncHandler(async (req, res) => {
 const createProductCompat = asyncHandler(async (req, res) => {
   const body = req.validated.body || {};
   if (!body.name) return fail(res, 400, 'name is required');
-  if (typeof body.price !== 'number' && typeof body.basePricePerKg !== 'number') return fail(res, 400, 'price or basePricePerKg is required');
+  if (
+    typeof body.price !== 'number' &&
+    typeof body.salePrice !== 'number' &&
+    typeof body.basePricePerKg !== 'number'
+  ) {
+    return fail(res, 400, 'salePrice or price is required');
+  }
+
+  const salePrice = Number(body.salePrice ?? body.price ?? body.basePricePerKg ?? 0);
+  const mrp = normalizeMrpInput(body.mrp);
+  if (mrp != null && mrp <= salePrice) {
+    return fail(res, 400, 'MRP must be greater than selling price');
+  }
 
   const categoryId = body.categoryId ? String(body.categoryId).trim() : '';
   const category_id = categoryId ? Number(categoryId) : null;
@@ -1014,27 +1153,31 @@ const createProductCompat = asyncHandler(async (req, res) => {
     try { marinationOptions = JSON.parse(marinationOptions); } catch (e) { marinationOptions = null; }
   }
 
+  const defaultG = defaultWeightGrams(weightVariants);
+  const basePricePerKg = salePrice / (defaultG / 1000);
+
   const { rows } = await query(
     `INSERT INTO products (
-      category_id, name, description, price, base_price_per_kg,
+      category_id, name, description, price, base_price_per_kg, mrp,
       weight_variants, cut_types, marination_options, freshness_date,
       image_url, stock, unit, active
     )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-     RETURNING id, category_id, name, description, price, base_price_per_kg,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+     RETURNING id, category_id, name, description, price, base_price_per_kg, mrp,
                weight_variants, cut_types, marination_options, freshness_date,
                image_url, stock, unit, active`,
     [
       category_id || null,
       body.name,
       body.description || null,
-      Number(body.price || body.basePricePerKg || 0),
-      Number(body.basePricePerKg || body.price || 0),
+      salePrice,
+      basePricePerKg,
+      mrp,
       Array.isArray(weightVariants) ? weightVariants : [250, 500, 1000],
       Array.isArray(cutTypes) ? cutTypes : null,
       marinationOptions ? JSON.stringify(marinationOptions) : null,
       body.freshnessDate || null,
-      body.imageUrl || null,
+      storeImageField(body.imageUrl),
       Number(body.stockQty || 0),
       body.unit || null,
       body.isActive !== false,
@@ -1044,88 +1187,92 @@ const createProductCompat = asyncHandler(async (req, res) => {
   const p = rows[0];
   emitToAll('catalog:products_changed', { id: String(p.id) });
 
-  // Parse returned JSON fields
-  let pvVariants = p.weight_variants;
-  if (typeof pvVariants === 'string') {
-    try { pvVariants = JSON.parse(pvVariants); } catch (e) { pvVariants = [250, 500, 1000]; }
-  }
-  let pCutTypes = p.cut_types;
-  if (typeof pCutTypes === 'string') {
-    try { pCutTypes = JSON.parse(pCutTypes); } catch (e) { pCutTypes = null; }
-  }
-  let pMarination = p.marination_options;
-  if (typeof pMarination === 'string') {
-    try { pMarination = JSON.parse(pMarination); } catch (e) { pMarination = null; }
-  }
-
-  return ok(
-    res,
-    {
-      id: String(p.id),
-      name: p.name,
-      categoryId: p.category_id ? String(p.category_id) : '',
-      price: Number(p.price),
-      basePricePerKg: Number(p.base_price_per_kg || p.price || 0),
-      weightVariants: pvVariants || [250, 500, 1000],
-      cutTypes: pCutTypes || null,
-      marinationOptions: pMarination || null,
-      freshnessDate: p.freshness_date || null,
-      unit: p.unit || '',
-      stockQty: Number(p.stock),
-      imageUrl: p.image_url || '',
-      description: p.description || '',
-      isActive: Boolean(p.active),
-      inStock: Number(p.stock) > 0,
-      tags: [],
-    },
-    'Product created'
-  );
+  return ok(res, mapProductAdminOut(req, p), 'Product created');
 });
 
 const patchProductCompat = asyncHandler(async (req, res) => {
   const id = Number(req.validated.params.id);
   const body = req.validated.body || {};
 
-  const hasName             = Object.prototype.hasOwnProperty.call(body, 'name');
-  const hasDescription      = Object.prototype.hasOwnProperty.call(body, 'description');
-  const hasImageUrl         = Object.prototype.hasOwnProperty.call(body, 'imageUrl');
-  const hasPrice            = Object.prototype.hasOwnProperty.call(body, 'price');
-  const hasBasePricePerKg   = Object.prototype.hasOwnProperty.call(body, 'basePricePerKg');
-  const hasUnit             = Object.prototype.hasOwnProperty.call(body, 'unit');
-  const hasStockQty         = Object.prototype.hasOwnProperty.call(body, 'stockQty');
-  const hasIsActive         = Object.prototype.hasOwnProperty.call(body, 'isActive');
-  const hasCategoryId       = Object.prototype.hasOwnProperty.call(body, 'categoryId');
-  const hasWeightVariants   = Object.prototype.hasOwnProperty.call(body, 'weightVariants');
-  const hasCutTypes         = Object.prototype.hasOwnProperty.call(body, 'cutTypes');
+  const hasSalePrice = Object.prototype.hasOwnProperty.call(body, 'salePrice');
+  const hasPrice = Object.prototype.hasOwnProperty.call(body, 'price');
+  const hasBasePricePerKg = Object.prototype.hasOwnProperty.call(body, 'basePricePerKg');
+  const hasMrp = Object.prototype.hasOwnProperty.call(body, 'mrp');
+  const hasName = Object.prototype.hasOwnProperty.call(body, 'name');
+  const hasDescription = Object.prototype.hasOwnProperty.call(body, 'description');
+  const hasImageUrl = Object.prototype.hasOwnProperty.call(body, 'imageUrl');
+  const hasUnit = Object.prototype.hasOwnProperty.call(body, 'unit');
+  const hasStockQty = Object.prototype.hasOwnProperty.call(body, 'stockQty');
+  const hasIsActive = Object.prototype.hasOwnProperty.call(body, 'isActive');
+  const hasCategoryId = Object.prototype.hasOwnProperty.call(body, 'categoryId');
+  const hasWeightVariants = Object.prototype.hasOwnProperty.call(body, 'weightVariants');
+  const hasCutTypes = Object.prototype.hasOwnProperty.call(body, 'cutTypes');
   const hasMarinationOptions = Object.prototype.hasOwnProperty.call(body, 'marinationOptions');
-  const hasFreshnessDate    = Object.prototype.hasOwnProperty.call(body, 'freshnessDate');
+  const hasFreshnessDate = Object.prototype.hasOwnProperty.call(body, 'freshnessDate');
 
   if (
-    !hasName && !hasDescription && !hasImageUrl && !hasPrice && !hasBasePricePerKg &&
-    !hasUnit && !hasStockQty && !hasIsActive && !hasCategoryId && !hasWeightVariants &&
-    !hasCutTypes && !hasMarinationOptions && !hasFreshnessDate
+    !hasName && !hasDescription && !hasImageUrl && !hasPrice && !hasSalePrice &&
+    !hasBasePricePerKg && !hasMrp && !hasUnit && !hasStockQty && !hasIsActive &&
+    !hasCategoryId && !hasWeightVariants && !hasCutTypes && !hasMarinationOptions &&
+    !hasFreshnessDate
   ) {
     return fail(res, 400, 'No fields to update');
   }
 
-  // Pre-process complex types
-  let variants = body.weightVariants;
+  const { rows: existingRows } = await query(
+    `SELECT price, base_price_per_kg, mrp, weight_variants FROM products WHERE id = $1`,
+    [id]
+  );
+  if (!existingRows[0]) return fail(res, 404, 'Product not found');
+  const existing = existingRows[0];
+
+  let variants = hasWeightVariants ? body.weightVariants : existing.weight_variants;
   if (hasWeightVariants && typeof variants === 'string') {
-    try { variants = JSON.parse(variants); } catch (e) { variants = [250, 500, 1000]; }
+    try {
+      variants = JSON.parse(variants);
+    } catch {
+      variants = [500];
+    }
+  }
+  variants = parseWeightVariants(variants);
+
+  const nextSalePrice = (hasSalePrice || hasPrice)
+    ? Number(body.salePrice ?? body.price)
+    : salePriceFromRow({ ...existing, weight_variants: variants });
+  const nextBasePricePerKg = (hasSalePrice || hasPrice)
+    ? nextSalePrice / (defaultWeightGrams(variants) / 1000)
+    : Number(existing.base_price_per_kg || existing.price || 0);
+  const nextMrp = hasMrp ? normalizeMrpInput(body.mrp) : (existing.mrp != null ? Number(existing.mrp) : null);
+
+  if (nextMrp != null && nextMrp <= nextSalePrice) {
+    return fail(res, 400, 'MRP must be greater than selling price');
   }
 
   let cuts = body.cutTypes;
   if (hasCutTypes && typeof cuts === 'string') {
-    try { cuts = JSON.parse(cuts); } catch (e) { cuts = null; }
+    try {
+      cuts = JSON.parse(cuts);
+    } catch {
+      cuts = null;
+    }
   }
 
   let marinade = body.marinationOptions;
   if (hasMarinationOptions && typeof marinade === 'string') {
-    try { marinade = JSON.parse(marinade); } catch (e) { marinade = null; }
+    try {
+      marinade = JSON.parse(marinade);
+    } catch {
+      marinade = null;
+    }
   }
 
   const categoryIdVal = hasCategoryId
-    ? (() => { const raw = body.categoryId === null || body.categoryId === undefined ? '' : String(body.categoryId).trim(); return raw ? Number(raw) : null; })()
+    ? (() => {
+        const raw = body.categoryId === null || body.categoryId === undefined
+          ? ''
+          : String(body.categoryId).trim();
+        return raw ? Number(raw) : null;
+      })()
     : null;
 
   const { rows } = await query(
@@ -1134,33 +1281,34 @@ const patchProductCompat = asyncHandler(async (req, res) => {
          description        = CASE WHEN $3  THEN $4  ELSE description        END,
          image_url          = CASE WHEN $5  THEN $6  ELSE image_url          END,
          price              = CASE WHEN $7  THEN $8  ELSE price              END,
-         base_price_per_kg  = CASE WHEN $9  THEN $10 ELSE base_price_per_kg  END,
-         unit               = CASE WHEN $11 THEN $12 ELSE unit               END,
-         stock              = CASE WHEN $13 THEN $14 ELSE stock              END,
-         active             = CASE WHEN $15 THEN $16 ELSE active             END,
-         category_id        = CASE WHEN $17 THEN $18 ELSE category_id        END,
-         weight_variants    = CASE WHEN $19 THEN $20 ELSE weight_variants    END,
-         cut_types          = CASE WHEN $21 THEN $22 ELSE cut_types          END,
-         marination_options = CASE WHEN $23 THEN $24::jsonb ELSE marination_options END,
-         freshness_date     = CASE WHEN $25 THEN $26 ELSE freshness_date     END
-     WHERE id = $27
-     RETURNING id, category_id, name, description, price, base_price_per_kg,
+         base_price_per_kg  = CASE WHEN $7  THEN $9  ELSE base_price_per_kg  END,
+         mrp                = CASE WHEN $10 THEN $11 ELSE mrp                END,
+         unit               = CASE WHEN $12 THEN $13 ELSE unit               END,
+         stock              = CASE WHEN $14 THEN $15 ELSE stock              END,
+         active             = CASE WHEN $16 THEN $17 ELSE active             END,
+         category_id        = CASE WHEN $18 THEN $19 ELSE category_id        END,
+         weight_variants    = CASE WHEN $20 THEN $21 ELSE weight_variants    END,
+         cut_types          = CASE WHEN $22 THEN $23 ELSE cut_types          END,
+         marination_options = CASE WHEN $24 THEN $25::jsonb ELSE marination_options END,
+         freshness_date     = CASE WHEN $26 THEN $27 ELSE freshness_date     END
+     WHERE id = $28
+     RETURNING id, category_id, name, description, price, base_price_per_kg, mrp,
                weight_variants, cut_types, marination_options, freshness_date,
                image_url, stock, unit, active`,
     [
-      hasName,              body.name,
-      hasDescription,       body.description || null,
-      hasImageUrl,          body.imageUrl || null,
-      hasPrice,             hasPrice ? Number(body.price) : null,
-      hasBasePricePerKg,    hasBasePricePerKg ? Number(body.basePricePerKg) : null,
-      hasUnit,              body.unit || null,
-      hasStockQty,          hasStockQty ? Number(body.stockQty) : null,
-      hasIsActive,          hasIsActive ? Boolean(body.isActive) : null,
-      hasCategoryId,        categoryIdVal,
-      hasWeightVariants,    hasWeightVariants ? (Array.isArray(variants) ? variants : [250, 500, 1000]) : null,
-      hasCutTypes,          hasCutTypes ? (Array.isArray(cuts) ? cuts : null) : null,
+      hasName, body.name,
+      hasDescription, body.description || null,
+      hasImageUrl, storeImageField(body.imageUrl),
+      (hasSalePrice || hasPrice), nextSalePrice, nextBasePricePerKg,
+      hasMrp, nextMrp,
+      hasUnit, body.unit || null,
+      hasStockQty, hasStockQty ? Number(body.stockQty) : null,
+      hasIsActive, hasIsActive ? Boolean(body.isActive) : null,
+      hasCategoryId, categoryIdVal,
+      hasWeightVariants, variants,
+      hasCutTypes, hasCutTypes ? (Array.isArray(cuts) ? cuts : null) : null,
       hasMarinationOptions, hasMarinationOptions ? (marinade ? JSON.stringify(marinade) : null) : null,
-      hasFreshnessDate,     body.freshnessDate || null,
+      hasFreshnessDate, body.freshnessDate || null,
       id,
     ]
   );
@@ -1169,42 +1317,7 @@ const patchProductCompat = asyncHandler(async (req, res) => {
   const p = rows[0];
   emitToAll('catalog:products_changed', { id: String(p.id) });
 
-  // Parse returned JSON fields
-  let pvVariants = p.weight_variants;
-  if (typeof pvVariants === 'string') {
-    try { pvVariants = JSON.parse(pvVariants); } catch (e) { pvVariants = [250, 500, 1000]; }
-  }
-  let pCutTypes = p.cut_types;
-  if (typeof pCutTypes === 'string') {
-    try { pCutTypes = JSON.parse(pCutTypes); } catch (e) { pCutTypes = null; }
-  }
-  let pMarination = p.marination_options;
-  if (typeof pMarination === 'string') {
-    try { pMarination = JSON.parse(pMarination); } catch (e) { pMarination = null; }
-  }
-
-  return ok(
-    res,
-    {
-      id: String(p.id),
-      name: p.name,
-      categoryId: p.category_id ? String(p.category_id) : '',
-      price: Number(p.price),
-      basePricePerKg: Number(p.base_price_per_kg || p.price || 0),
-      weightVariants: pvVariants || [250, 500, 1000],
-      cutTypes: pCutTypes || null,
-      marinationOptions: pMarination || null,
-      freshnessDate: p.freshness_date || null,
-      unit: p.unit || '',
-      stockQty: Number(p.stock),
-      imageUrl: p.image_url || '',
-      description: p.description || '',
-      isActive: Boolean(p.active),
-      inStock: Number(p.stock) > 0,
-      tags: [],
-    },
-    'Product updated'
-  );
+  return ok(res, mapProductAdminOut(req, p), 'Product updated');
 });
 
 const deleteProductCompat = asyncHandler(async (req, res) => {
@@ -1268,7 +1381,7 @@ const createProduct = asyncHandler(async (req, res) => {
   if (price === undefined || price === null) return fail(res, 400, 'price is required');
 
   const category_id = categoryIdSnake ?? (categoryId ? Number(categoryId) : null);
-  const image_url = imageUrlSnake ?? imageUrl ?? null;
+  const image_url = storeImageField(imageUrlSnake ?? imageUrl ?? null);
   const stockVal = stock ?? stockQty ?? 0;
   let variants = weightVariantsSnake ?? weightVariants;
   if (typeof variants === 'string') {
@@ -1376,7 +1489,7 @@ const createCategory = asyncHandler(async (req, res) => {
 
   if (!name) return fail(res, 400, 'name is required');
 
-  const image_url = imageUrlSnake ?? imageUrl ?? null;
+  const image_url = storeImageField(imageUrlSnake ?? imageUrl ?? null);
   const color_hex = colorHexSnake ?? colorHex ?? null;
   const active = is_active !== undefined ? Boolean(is_active) : isActive !== false;
 
@@ -1407,7 +1520,7 @@ const updateCategory = asyncHandler(async (req, res) => {
   const body = mergeBody(req);
   const name = body.name ?? null;
   const description = body.description ?? null;
-  const image_url = body.image_url ?? body.imageUrl ?? null;
+  const image_url = storeImageField(body.image_url ?? body.imageUrl ?? null);
   const color_hex = body.color_hex ?? body.colorHex ?? null;
 
   let rows;
@@ -1487,7 +1600,7 @@ const createBanner = asyncHandler(async (req, res) => {
     sortOrder,
   } = body;
 
-  const image_url = imageUrlSnake ?? imageUrl ?? null;
+  const image_url = storeImageField(imageUrlSnake ?? imageUrl ?? null);
   const isActiveVal =
     is_active !== undefined
       ? Boolean(is_active)
@@ -1521,7 +1634,7 @@ const updateBanner = asyncHandler(async (req, res) => {
   const { id } = mergeParams(req);
   const body = mergeBody(req);
   const { title, subtitle, image_url, imageUrl, link_url, linkUrl, is_active, isActive, active } = body;
-  const imageUrlVal = image_url ?? imageUrl ?? null;
+  const imageUrlVal = storeImageField(image_url ?? imageUrl ?? null);
   const isActiveVal =
     is_active !== undefined
       ? is_active
@@ -1694,8 +1807,14 @@ const updateSettings = asyncHandler(async (req, res) => {
     ...(store_open !== undefined ? { store_open } : {}),
   };
   const saved = await writeOperationalSettings(nextOperational);
+  await syncOperationalToStoreSettings(saved);
+  const effective = await getMergedStoreSettings();
 
-  emitToAll('store:status_changed', { isOpen: saved.store_open });
+  emitToAll('store:status_changed', {
+    isOpen: effective.is_open,
+    manualOpen: effective.manual_open,
+    closedMessage: effective.closed_message,
+  });
 
   return ok(
     res,
@@ -1724,9 +1843,9 @@ const changeUserRole = asyncHandler(async (req, res) => {
     return fail(res, 403, 'Only administrators can change user roles');
   }
 
-  // Validate role - customer, delivery partner, or admin
-  if (!['customer', 'delivery_partner', 'admin'].includes(role)) {
-    return fail(res, 400, 'Invalid role. Allowed: customer, delivery_partner, admin');
+  // Validate role - customer, delivery partner, admin, or staff
+  if (!['customer', 'delivery_partner', 'admin', 'staff'].includes(role)) {
+    return fail(res, 400, 'Invalid role. Allowed: customer, delivery_partner, admin, staff');
   }
 
   // Map frontend role to database role
@@ -1954,6 +2073,7 @@ module.exports = {
   patchDeliveryPartner,
   listOrdersCompat,
   patchOrderCompat,
+  assignRiderToOrder,
   listCategoriesCompat,
   createCategoryCompat,
   patchCategoryCompat,

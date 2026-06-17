@@ -1,10 +1,14 @@
 import 'package:flutter/foundation.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:dio/dio.dart';
-import '../config/env_config.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfwebcheckoutpayment.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfpaymentgateway/cfpaymentgatewayservice.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfsession/cfsession.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cftheme/cftheme.dart';
+import 'package:flutter_cashfree_pg_sdk/utils/cfenums.dart';
 import 'api_service.dart';
 
-/// Payment Service — custom Node.js backend + UPI deep links
+/// Payment Service — custom Node.js backend + Cashfree hosted checkout
 class PaymentService {
   final ApiService _api = ApiService();
 
@@ -12,24 +16,30 @@ class PaymentService {
   Function(String)? _onFailure;
   bool _isInitialized = false;
 
+  String? _paymentSessionId;
+  String? _cfOrderId;
+
+  String? get paymentSessionId => _paymentSessionId;
+  String? get cfOrderId => _cfOrderId;
+
   // ── Initialization ─────────────────────────────────────────────────────────
 
   Future<void> initialize() async {
     if (_isInitialized) return;
     _isInitialized = true;
-    debugPrint('✅ PaymentService initialized (custom backend)');
+    debugPrint('✅ PaymentService initialized (Cashfree backend)');
   }
 
   // ── Backend payment initiation ────────────────────────────────────────────
 
-  /// Initiate payment via backend — returns paymentUrl + transactionId.
+  /// Initiate payment via backend — returns payment_session_id + cf_order_id.
   Future<Map<String, dynamic>> _initiatePaymentRequest({
     required String orderId,
     required double amount,
     required String phone,
   }) async {
     try {
-      final res = await _api.post('/payments/initiate', data: {
+      final res = await _api.post('/payments/cashfree/initiate', data: {
         'orderId': int.tryParse(orderId) ?? orderId,
       });
 
@@ -46,11 +56,11 @@ class PaymentService {
     }
   }
 
-  /// Verify payment transaction via backend.
-  Future<Map<String, dynamic>> _verifyPaymentRequest(String transactionId) async {
+  /// Verify payment via backend (Cashfree).
+  Future<Map<String, dynamic>> _verifyPaymentRequest(String orderId) async {
     try {
-      final res = await _api.post('/payments/verify', data: {
-        'transactionId': transactionId,
+      final res = await _api.post('/payments/cashfree/verify', data: {
+        'orderId': int.tryParse(orderId) ?? orderId,
       });
       if (res.data['success'] != true) {
         throw Exception(res.data['message'] ?? 'Failed to verify payment');
@@ -61,12 +71,60 @@ class PaymentService {
     }
   }
 
+  // ── Cashfree hosted checkout ────────────────────────────────────────────────
+
+  /// Opens Cashfree native checkout (UPI via Web Checkout SDK).
+  Future<void> openCashfreeCheckout(
+      String paymentSessionId, String orderId) async {
+    try {
+      var session = CFSessionBuilder()
+          .setEnvironment(CFEnvironment.SANDBOX) // change to PRODUCTION when live
+          .setOrderId(orderId)
+          .setPaymentSessionId(paymentSessionId)
+          .build();
+
+      var theme = CFThemeBuilder()
+          .setNavigationBarBackgroundColorColor('#C8102E')
+          .setNavigationBarTextColor('#FFFFFF')
+          .setPrimaryFont('Poppins')
+          .setSecondaryFont('Poppins')
+          .setPrimaryTextColor('#1A1A1A')
+          .setSecondaryTextColor('#666666')
+          .setBackgroundColor('#FAF9F7')
+          .setButtonBackgroundColor('#C8102E')
+          .setButtonTextColor('#FFFFFF')
+          .build();
+
+      var cfWebCheckout = CFWebCheckoutPaymentBuilder()
+          .setSession(session)
+          .setTheme(theme)
+          .build();
+
+      final cfPaymentGatewayService = CFPaymentGatewayService();
+      cfPaymentGatewayService.setCallback(
+        (String orderId) async {
+          debugPrint('✅ Cashfree payment success: $orderId');
+          await verifyPayment(transactionId: orderId);
+        },
+        (CFErrorResponse error, String orderId) {
+          debugPrint(
+              '❌ Cashfree payment error: ${error.getMessage()} for $orderId');
+        },
+      );
+
+      cfPaymentGatewayService.doPayment(cfWebCheckout);
+    } catch (e) {
+      debugPrint('❌ Cashfree checkout error: $e');
+      rethrow;
+    }
+  }
+
   // ── Legacy method (kept for screen compatibility) ──────────────────────────
 
-  /// Initiate payment using backend and launch paymentUrl externally.
-  /// POST /payments/initiate
-  /// body: { orderId, amount, phone }
-  /// response: { data: { paymentUrl, transactionId } }
+  /// Initiate payment using backend and launch Cashfree hosted checkout.
+  /// POST /payments/cashfree/initiate
+  /// body: { orderId }
+  /// response: { data: { payment_session_id, cf_order_id, orderId } }
   ///
   /// Backward compatibility: old fields/callbacks are still accepted.
   Future<Map<String, dynamic>> initiatePayment({
@@ -92,25 +150,24 @@ class PaymentService {
         phone: phone ?? customerPhone ?? '',
       );
 
-      final paymentUrl = data['paymentUrl'] as String?;
-      final transactionId = data['transactionId'] as String?;
+      final paymentSessionId = data['payment_session_id'] as String?;
+      final cfOrderId = data['cf_order_id'] as String?;
 
-      if (paymentUrl != null && paymentUrl.isNotEmpty) {
-        final uri = Uri.parse(paymentUrl);
-        if (await canLaunchUrl(uri)) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-          debugPrint('✅ Payment URL opened: $paymentUrl');
-          // Caller must manually verify after returning from payment app
-        } else {
-          throw Exception('Cannot open payment URL');
-        }
+      _paymentSessionId = paymentSessionId;
+      _cfOrderId = cfOrderId;
+
+      if (paymentSessionId != null && paymentSessionId.isNotEmpty) {
+        await openCashfreeCheckout(paymentSessionId, orderId.toString());
+      } else {
+        throw Exception('Missing payment session from backend');
       }
 
-      // Notify success with transaction details
       _onSuccess?.call({
-        'transactionId': transactionId ?? '',
+        'transactionId': cfOrderId ?? '',
         'orderId': orderId,
         'status': 'initiated',
+        'payment_session_id': paymentSessionId,
+        'cf_order_id': cfOrderId,
         ...data,
       });
       return data;
@@ -124,18 +181,20 @@ class PaymentService {
   // ── Verify payment ─────────────────────────────────────────────────────────
 
   /// Verify payment via backend.
-  /// POST /payments/verify
-  /// body: { transactionId }
-  /// response: { data: { success, status } }
+  /// POST /payments/cashfree/verify
+  /// body: { orderId }
+  /// response: { data: { verified, status } }
+  ///
+  /// [transactionId] is kept for backward compatibility — pass the order ID.
   Future<Map<String, dynamic>> verifyPayment({
     required String transactionId,
   }) =>
       _verifyPaymentRequest(transactionId);
 
-  /// GET /payments/:orderId/status
+  /// GET /payments/cashfree/:orderId/status
   Future<Map<String, dynamic>> getPaymentStatusForOrder(String orderId) async {
     try {
-      final res = await _api.get('/payments/$orderId/status');
+      final res = await _api.get('/payments/cashfree/$orderId/status');
       if (res.data['success'] != true) {
         throw Exception(res.data['message'] ?? 'Failed to fetch payment status');
       }
@@ -155,104 +214,19 @@ class PaymentService {
     return data['status']?.toString();
   }
 
-  // ── UPI deep-link payment (no merchant account needed) ───────────────────
-
-  Future<void> initiateUPIPayment({
-    required String orderId,
-    required double amount,
-    required String customerName,
-    required String? phonepeNumber,
-    required String? upiId,
-    required String? merchantUPIId,
-    required String? merchantPhoneNumber,
-    required Function(Map<String, dynamic>) onSuccess,
-    required Function(String) onFailure,
-  }) async {
-    _onSuccess = onSuccess;
-    _onFailure = onFailure;
-
-    try {
-      final amountString = amount.toStringAsFixed(2);
-      final paymentNote = 'Payment for Order #$orderId';
-
-      String upiUrl = '';
-
-      if (merchantPhoneNumber != null && merchantPhoneNumber.isNotEmpty) {
-        final clean = merchantPhoneNumber.replaceAll(RegExp(r'[\s\-]'), '');
-        upiUrl =
-            'phonepe://pay?pa=$clean&pn=Meatvo&am=$amountString&cu=INR&tn=$paymentNote';
-      } else if (merchantUPIId != null && merchantUPIId.isNotEmpty) {
-        upiUrl =
-            'upi://pay?pa=$merchantUPIId&pn=Meatvo&am=$amountString&cu=INR&tn=$paymentNote';
-      } else if (EnvConfig.merchantPhoneNumber.isNotEmpty) {
-        final clean =
-            EnvConfig.merchantPhoneNumber.replaceAll(RegExp(r'[\s\-]'), '');
-        upiUrl =
-            'phonepe://pay?pa=$clean&pn=Meatvo&am=$amountString&cu=INR&tn=$paymentNote';
-      } else if (phonepeNumber != null && phonepeNumber.isNotEmpty) {
-        final clean = phonepeNumber.replaceAll(RegExp(r'[\s\-]'), '');
-        upiUrl =
-            'phonepe://pay?pa=$clean&pn=$customerName&am=$amountString&cu=INR&tn=$paymentNote';
-      } else if (upiId != null && upiId.isNotEmpty) {
-        upiUrl =
-            'upi://pay?pa=$upiId&pn=$customerName&am=$amountString&cu=INR&tn=$paymentNote';
-      } else {
-        throw Exception(
-            'Merchant phone number, UPI ID, ya PhonePe number dena zaroori hai');
-      }
-
-      final uri = Uri.parse(upiUrl);
-      if (await canLaunchUrl(uri)) {
-        final launched =
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-        if (launched) {
-          debugPrint('✅ UPI payment app opened successfully');
-        } else {
-          throw Exception('Could not open your UPI payment app.');
-        }
-      } else {
-        throw Exception('No UPI payment app found on this device.');
-      }
-    } catch (e) {
-      debugPrint('❌ Error initiating UPI payment: $e');
-      _onFailure?.call(e.toString());
-    }
-  }
-
-  Future<void> initiatePhonePeDirectPayment({
-    required String orderId,
-    required double amount,
-    required String customerName,
-    required String? phonepeNumber,
-    required String? merchantPhoneNumber,
-    required Function(Map<String, dynamic>) onSuccess,
-    required Function(String) onFailure,
-  }) async {
-    await initiateUPIPayment(
-      orderId: orderId,
-      amount: amount,
-      customerName: customerName,
-      phonepeNumber: phonepeNumber,
-      upiId: null,
-      merchantUPIId: null,
-      merchantPhoneNumber: merchantPhoneNumber,
-      onSuccess: onSuccess,
-      onFailure: onFailure,
-    );
-  }
-
   Future<void> verifyManualPayment({
     required String orderId,
     required String transactionId,
     required String? upiReferenceId,
   }) async {
     try {
-      final verification = await _verifyPaymentRequest(transactionId);
-      if (verification['success'] == true) {
+      final verification = await _verifyPaymentRequest(orderId);
+      if (verification['verified'] == true ||
+          verification['status']?.toString().toUpperCase() == 'SUCCESS') {
         _onSuccess?.call({
           'transactionId': transactionId,
           'upiReferenceId': upiReferenceId,
-          'status': verification['status'] ?? 'completed',
+          'status': verification['status'] ?? 'SUCCESS',
         });
       } else {
         _onFailure?.call('Payment verification failed');

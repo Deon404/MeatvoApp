@@ -3,8 +3,11 @@ const router = express.Router();
 
 const { protect } = require('../../middlewares/auth.middleware');
 const { rbac } = require('../../middlewares/rbac.middleware');
+const { requireDeliveryPartner } = require('../../middlewares/deliveryPartner.middleware');
 const { validate } = require('../../middlewares/validate.middleware');
 const { ROLES } = require('../../utils/roles');
+
+const { secureImageUploadMiddleware, uploadImage } = require('../uploads/uploads.controller');
 
 const {
   getMe,
@@ -82,12 +85,12 @@ router.post(
 router.post(
   '/slots/:id/release',
   protect,
-  rbac(ROLES.ADMIN, ROLES.DELIVERY),
+  rbac(ROLES.ADMIN),
   releaseSlot
 );
 
 // Protected routes for delivery partners
-router.use(protect, rbac(ROLES.DELIVERY));
+router.use(protect, requireDeliveryPartner);
 
 router.get('/me', validate(getMeSchema), getMe);
 router.get('/orders', validate(listAvailableOrdersSchema), listOrdersForDeliveryApp);
@@ -104,6 +107,7 @@ router.put('/location', validate(updateLocationSchema), updateLocation);
 router.post('/location/update', validate(updateLocationSchema), updateLocation);
 router.get('/earnings', validate(getEarningsSchema), getEarnings);
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
+router.post('/upload/proof', ...secureImageUploadMiddleware, uploadImage);
 
 // Rider's optimized route (own deliveries)
 router.get('/my-route', getMyOptimizedRoute);

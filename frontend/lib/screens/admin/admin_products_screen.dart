@@ -3,6 +3,7 @@ import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_image_picker_field.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
 /// Admin products — full CRUD against `/api/admin/products`.
 class AdminProductsScreen extends StatefulWidget {
   const AdminProductsScreen({super.key});
@@ -153,8 +154,11 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
   Future<void> _openForm({Map<String, dynamic>? product}) async {
     final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: product?['name']?.toString() ?? '');
-    final priceController = TextEditingController(
-      text: product != null ? '${product['price']}' : '',
+    final salePriceController = TextEditingController(
+      text: product != null ? '${product['salePrice'] ?? product['price']}' : '',
+    );
+    final mrpController = TextEditingController(
+      text: product?['mrp']?.toString() ?? '',
     );
     final stockController = TextEditingController(
       text: product != null ? '${product['stockQty'] ?? 0}' : '',
@@ -163,8 +167,14 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
     final descController = TextEditingController(text: product?['description']?.toString() ?? '');
     String? imageUrl = product?['imageUrl']?.toString();
     if (imageUrl != null && imageUrl.isEmpty) imageUrl = null;
-    String? categoryId = product?['categoryId']?.toString();    if (categoryId != null && categoryId.isEmpty) categoryId = null;
+    String? categoryId = product?['categoryId']?.toString();
+    if (categoryId != null && categoryId.isEmpty) categoryId = null;
     var isActive = product?['isActive'] != false;
+
+    int? previewDiscount(double sale, double? mrp) {
+      if (mrp == null || mrp <= sale + 0.01) return null;
+      return ((1 - sale / mrp) * 100).round().clamp(1, 99);
+    }
 
     await showModalBottomSheet<void>(
       context: context,
@@ -215,16 +225,66 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
                       ),
                       const SizedBox(height: 12),
                       TextFormField(
-                        controller: priceController,
+                        controller: salePriceController,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: const InputDecoration(
-                          labelText: 'Price',
+                          labelText: 'Selling Price',
+                          helperText: 'Customer pays this amount',
                           prefixText: '₹ ',
                         ),
+                        onChanged: (_) => setModalState(() {}),
                         validator: (v) {
                           final p = double.tryParse(v?.trim() ?? '');
-                          if (p == null || p <= 0) return 'Valid price required';
+                          if (p == null || p <= 0) return 'Valid selling price required';
                           return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        controller: mrpController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'MRP (optional)',
+                          helperText: 'Higher than selling price to show % OFF badge',
+                          prefixText: '₹ ',
+                        ),
+                        onChanged: (_) => setModalState(() {}),
+                        validator: (v) {
+                          final raw = v?.trim() ?? '';
+                          if (raw.isEmpty) return null;
+                          final mrp = double.tryParse(raw);
+                          final sale = double.tryParse(salePriceController.text.trim());
+                          if (mrp == null || mrp <= 0) return 'Enter valid MRP';
+                          if (sale != null && mrp <= sale) {
+                            return 'MRP must be higher than selling price';
+                          }
+                          return null;
+                        },
+                      ),
+                      Builder(
+                        builder: (context) {
+                          final sale = double.tryParse(salePriceController.text.trim());
+                          final mrp = double.tryParse(mrpController.text.trim());
+                          final discount = sale != null ? previewDiscount(sale, mrp) : null;
+                          if (discount == null) return const SizedBox.shrink();
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Customer app will show $discount% OFF badge',
+                                style: const TextStyle(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          );
                         },
                       ),
                       const SizedBox(height: 12),
@@ -260,31 +320,38 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
                         onPressed: () async {
                           if (!formKey.currentState!.validate()) return;
                           Navigator.pop(ctx);
-                          final price = double.parse(priceController.text.trim());
+                          final salePrice = double.parse(salePriceController.text.trim());
+                          final mrpRaw = mrpController.text.trim();
+                          final mrp = mrpRaw.isEmpty ? null : double.parse(mrpRaw);
                           final stock = int.tryParse(stockController.text.trim());
                           try {
                             if (product == null) {
                               await _adminService.createProduct(
                                 name: nameController.text.trim(),
-                                price: price,
+                                price: salePrice,
+                                mrp: mrp,
                                 categoryId: categoryId,
                                 stockQty: stock,
                                 unit: unitController.text.trim(),
                                 description: descController.text.trim(),
                                 imageUrl: imageUrl,
-                                isActive: isActive,                              );
+                                isActive: isActive,
+                              );
                               _toast('Product added');
                             } else {
                               await _adminService.updateProduct(
                                 product['id'] as String,
                                 name: nameController.text.trim(),
-                                price: price,
+                                price: salePrice,
+                                mrp: mrp,
+                                clearMrp: mrpRaw.isEmpty,
                                 categoryId: categoryId ?? '',
                                 stockQty: stock,
                                 unit: unitController.text.trim(),
                                 description: descController.text.trim(),
                                 imageUrl: imageUrl,
-                                isActive: isActive,                              );
+                                isActive: isActive,
+                              );
                               _toast('Product updated');
                             }
                             await _load();
@@ -313,6 +380,10 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.products,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       appBar: AppBar(
         title: const Text('Products'),
         backgroundColor: Colors.white,
@@ -350,7 +421,9 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
                             DataColumn(label: Text('Image')),
                             DataColumn(label: Text('Name')),
                             DataColumn(label: Text('Category')),
-                            DataColumn(label: Text('Price')),
+                            DataColumn(label: Text('Sale')),
+                            DataColumn(label: Text('MRP')),
+                            DataColumn(label: Text('% OFF')),
                             DataColumn(label: Text('Stock')),
                             DataColumn(label: Text('Active')),
                             DataColumn(label: Text('Actions')),
@@ -392,7 +465,23 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
                                   ),
                                 ),
                                 DataCell(Text(_categoryName(p['categoryId']?.toString() ?? ''))),
-                                DataCell(Text('₹${p['price']}')),
+                                DataCell(Text('₹${p['salePrice'] ?? p['price']}')),
+                                DataCell(Text(
+                                  p['mrp'] != null ? '₹${p['mrp']}' : '—',
+                                )),
+                                DataCell(Text(
+                                  p['discountPercent'] != null
+                                      ? '${p['discountPercent']}%'
+                                      : '—',
+                                  style: TextStyle(
+                                    color: p['discountPercent'] != null
+                                        ? AppColors.primary
+                                        : AppColors.textSecondary,
+                                    fontWeight: p['discountPercent'] != null
+                                        ? FontWeight.w700
+                                        : FontWeight.normal,
+                                  ),
+                                )),
                                 DataCell(
                                   SizedBox(
                                     width: 88,

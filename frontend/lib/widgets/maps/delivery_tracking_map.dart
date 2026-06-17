@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../config/env_config.dart';
+import '../../config/google_maps_setup.dart';
 import '../../config/store_config.dart';
 import '../../core/constants/app_constants.dart';
+import '../../services/maps_platform_config.dart';
 import '../../services/maps_service.dart';
+import '../../utils/order_eta_util.dart';
 import 'map_marker_helper.dart';
 
 typedef RouteInfoCallback = void Function({
@@ -75,12 +78,27 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
   int? _etaMinutes;
   bool _iconsReady = false;
   bool _loadingRoute = false;
+  bool _isMapReady = false;
+  String? _mapError;
   Timer? _autoCameraTimer;
+  Timer? _mapTimeoutTimer;
 
   static final LatLng _fallback = LatLng(
     StoreConfig.storeLatitude,
     StoreConfig.storeLongitude,
   );
+
+  bool get _isTerminalStatus {
+    final s = widget.orderStatus.toLowerCase();
+    return s == 'delivered' || s == 'cancelled';
+  }
+
+  LatLng? get _effectiveRiderPosition {
+    if (widget.riderLatitude != null && widget.riderLongitude != null) {
+      return LatLng(widget.riderLatitude!, widget.riderLongitude!);
+    }
+    return _animatedRiderPosition;
+  }
 
   @override
   void initState() {
@@ -88,27 +106,42 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
-    
-    _autoCameraTimer = Timer.periodic(
-      const Duration(seconds: 8),
-      (_) => _smartCameraAdjust(),
     );
-    
+    if (!_isTerminalStatus) {
+      _pulseController!.repeat(reverse: true);
+      _autoCameraTimer = Timer.periodic(
+        const Duration(seconds: 8),
+        (_) => _smartCameraAdjust(),
+      );
+    }
+
     _initMap();
   }
 
   @override
   void didUpdateWidget(covariant DeliveryTrackingMap oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final riderMoved = widget.riderLatitude != oldWidget.riderLatitude ||
-        widget.riderLongitude != oldWidget.riderLongitude;
+    if (oldWidget.orderStatus != widget.orderStatus && _isTerminalStatus) {
+      _autoCameraTimer?.cancel();
+      _autoCameraTimer = null;
+      _moveController?.dispose();
+      _moveController = null;
+      setState(() => _animatedRiderPosition = null);
+    }
+
+    final riderMoved = !_isTerminalStatus &&
+        (widget.riderLatitude != oldWidget.riderLatitude ||
+            widget.riderLongitude != oldWidget.riderLongitude);
+    final riderAppeared = !_isTerminalStatus &&
+        oldWidget.riderLatitude == null &&
+        widget.riderLatitude != null;
     final deliveryMoved = widget.deliveryLatitude != oldWidget.deliveryLatitude ||
         widget.deliveryLongitude != oldWidget.deliveryLongitude;
+    final statusChanged = widget.orderStatus != oldWidget.orderStatus;
 
-    if (riderMoved) _handleRiderUpdate();
-    if (deliveryMoved) {
-      _setDeliveryLocation();
+    if (riderMoved || riderAppeared) _handleRiderUpdate();
+    if (deliveryMoved || riderMoved || riderAppeared || statusChanged) {
+      if (deliveryMoved) _setDeliveryLocation();
       _fetchRoutes();
     }
   }
@@ -144,63 +177,93 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
     }
   }
 
+  DrivingRouteResult _routeInfoAsResult({
+    required double originLat,
+    required double originLng,
+    required double destLat,
+    required double destLng,
+  }) {
+    final info = _mapsService.calculateRouteInfo(
+      startLatitude: originLat,
+      startLongitude: originLng,
+      endLatitude: destLat,
+      endLongitude: destLng,
+    );
+    return DrivingRouteResult(
+      points: const [],
+      distanceKm: info['distance'] as double,
+      durationMinutes: info['eta'] as int,
+      distanceFormatted: info['distanceFormatted'] as String,
+      durationFormatted: info['etaFormatted'] as String,
+    );
+  }
+
+  /// Store → customer metrics for header ETA before pickup.
+  Future<DrivingRouteResult?> _resolveStoreToCustomerMetrics(
+    LatLng delivery,
+  ) async {
+    final store = _storeLocation;
+    if (store == null) return null;
+
+    final apiRoute = await _mapsService.getDrivingRoute(
+      originLat: store.latitude,
+      originLng: store.longitude,
+      destLat: delivery.latitude,
+      destLng: delivery.longitude,
+    );
+    return apiRoute ??
+        _routeInfoAsResult(
+          originLat: store.latitude,
+          originLng: store.longitude,
+          destLat: delivery.latitude,
+          destLng: delivery.longitude,
+        );
+  }
+
   Future<void> _fetchRoutes() async {
     final delivery = _deliveryLocation;
     if (delivery == null) return;
 
     setState(() => _loadingRoute = true);
 
-    final storeRoute = _storeLocation != null
-        ? await _mapsService.getDrivingRoute(
-            originLat: _storeLocation!.latitude,
-            originLng: _storeLocation!.longitude,
-            destLat: delivery.latitude,
-            destLng: delivery.longitude,
-          )
+    final storeMetrics = await _resolveStoreToCustomerMetrics(delivery);
+    final storeRoute = storeMetrics != null && storeMetrics.points.isNotEmpty
+        ? storeMetrics
         : null;
 
-    DrivingRouteResult? activeRoute = storeRoute;
+    DrivingRouteResult? riderRoute;
     List<LatLng> riderPts = [];
+    final riderPos = _effectiveRiderPosition;
 
-    if (_animatedRiderPosition != null) {
-      final riderRoute = await _mapsService.getDrivingRoute(
-        originLat: _animatedRiderPosition!.latitude,
-        originLng: _animatedRiderPosition!.longitude,
+    if (riderPos != null) {
+      riderRoute = await _mapsService.getDrivingRoute(
+        originLat: riderPos.latitude,
+        originLng: riderPos.longitude,
         destLat: delivery.latitude,
         destLng: delivery.longitude,
       );
-      if (riderRoute != null) {
-        activeRoute = riderRoute;
+      if (riderRoute == null) {
+        riderRoute = _routeInfoAsResult(
+          originLat: riderPos.latitude,
+          originLng: riderPos.longitude,
+          destLat: delivery.latitude,
+          destLng: delivery.longitude,
+        );
+      } else {
         riderPts = riderRoute.points
             .map((p) => LatLng(p.lat, p.lng))
             .toList();
       }
     }
 
-    if (activeRoute == null) {
-      final origin = _animatedRiderPosition ?? _storeLocation;
-      if (origin != null) {
-        final fallback = _mapsService.calculateRouteInfo(
-          startLatitude: origin.latitude,
-          startLongitude: origin.longitude,
-          endLatitude: delivery.latitude,
-          endLongitude: delivery.longitude,
-        );
-        activeRoute = DrivingRouteResult(
-          points: [],
-          distanceKm: fallback['distance'] as double,
-          durationMinutes: fallback['eta'] as int,
-          distanceFormatted: fallback['distanceFormatted'] as String,
-          durationFormatted: fallback['etaFormatted'] as String,
-        );
-      }
-    }
+    // Header ETA/distance: rider → customer (fallback: store → customer).
+    final routeForEta = riderRoute ?? storeMetrics;
 
     if (!mounted) return;
 
     setState(() {
       _loadingRoute = false;
-      
+
       // Build primary route with exact start/end points
       if (storeRoute != null && storeRoute.points.isNotEmpty) {
         _primaryRoutePoints = [
@@ -213,29 +276,35 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
       } else if (_storeLocation != null && _animatedRiderPosition == null) {
         // Fallback: draw straight line from store to delivery
         _primaryRoutePoints = [_storeLocation!, delivery];
+      } else if (_storeLocation != null) {
+        _primaryRoutePoints = [_storeLocation!, delivery];
       } else {
         _primaryRoutePoints = [];
       }
-      
+
       // Build rider route with exact start/end points
       if (riderPts.isNotEmpty) {
         _riderRoutePoints = [
-          if (_animatedRiderPosition != null) _animatedRiderPosition!,
+          if (riderPos != null) riderPos,
           ...riderPts,
           delivery,
         ];
         _riderRoutePoints = _removeDuplicatePoints(_riderRoutePoints);
-      } else if (_animatedRiderPosition != null) {
+      } else if (riderPos != null) {
         // Fallback: draw straight line from rider to delivery
-        _riderRoutePoints = [_animatedRiderPosition!, delivery];
+        _riderRoutePoints = [riderPos, delivery];
       } else {
         _riderRoutePoints = [];
       }
-      
-      if (activeRoute != null) {
-        _etaText = activeRoute.durationFormatted;
-        _distanceText = activeRoute.distanceFormatted;
-        _etaMinutes = activeRoute.durationMinutes;
+
+      if (routeForEta != null) {
+        _distanceText = routeForEta.distanceFormatted;
+        _etaMinutes = composeCustomerEtaMinutes(
+          status: widget.orderStatus,
+          travelMinutes: routeForEta.durationMinutes,
+          distanceKm: routeForEta.distanceKm,
+        );
+        _etaText = formatEtaMinutesLabel(_etaMinutes!);
       }
     });
 
@@ -249,6 +318,7 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
   }
 
   void _handleRiderUpdate() {
+    if (_isTerminalStatus) return;
     if (widget.riderLatitude == null || widget.riderLongitude == null) {
       return;
     }
@@ -403,7 +473,7 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
 
   /// Smart camera adjustment - keeps route visible while following rider
   void _smartCameraAdjust() {
-    if (_mapController == null || !mounted) return;
+    if (_mapController == null || !mounted || _isTerminalStatus) return;
 
     final activeRoute = _riderRoutePoints.isNotEmpty
         ? _riderRoutePoints
@@ -469,7 +539,8 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
           markerId: const MarkerId('store'),
           position: _storeLocation!,
           icon: _storeIcon!,
-          anchor: const Offset(0.5, 0.977),
+          anchor: const Offset(0.5, 0.97),
+          zIndexInt: 1,
           infoWindow: InfoWindow(
             title: StoreConfig.storeName,
             snippet: 'Pickup store',
@@ -484,7 +555,8 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
           markerId: const MarkerId('delivery'),
           position: _deliveryLocation!,
           icon: _deliveryIcon!,
-          anchor: const Offset(0.5, 0.977),
+          anchor: const Offset(0.5, 0.97),
+          zIndexInt: 2,
           infoWindow: InfoWindow(
             title: 'Your address',
             snippet: widget.deliveryAddress ?? 'Delivery location',
@@ -493,7 +565,7 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
       );
     }
 
-    if (_animatedRiderPosition != null && _riderIcon != null) {
+    if (_animatedRiderPosition != null && _riderIcon != null && !_isTerminalStatus) {
       markers.add(
         Marker(
           markerId: const MarkerId('rider'),
@@ -516,38 +588,141 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
 
   Set<Polyline> _buildPolylines() {
     final lines = <Polyline>{};
+    const cap = Cap.roundCap;
+    const joint = JointType.round;
 
-    // Show primary route (store to delivery) when no rider or as background
-    if (_primaryRoutePoints.length >= 2 && _riderRoutePoints.isEmpty) {
-      lines.add(
-        Polyline(
-          polylineId: const PolylineId('store_route'),
-          points: _primaryRoutePoints,
-          color: AppColors.primary,
-          width: 5,
-          startCap: Cap.roundCap,
-          endCap: Cap.roundCap,
-          jointType: JointType.round,
-        ),
-      );
+    // Faint store → customer path (background when rider is active)
+    if (_primaryRoutePoints.length >= 2 && _riderRoutePoints.isNotEmpty) {
+      lines.addAll(_layeredRoute(
+        id: 'store_route_bg',
+        points: _primaryRoutePoints,
+        borderColor: AppColors.primary.withValues(alpha: 0.18),
+        glowColor: AppColors.primary.withValues(alpha: 0.08),
+        glowWidth: 7,
+        lineColor: AppColors.primary.withValues(alpha: 0.34),
+        lineWidth: 3,
+        dashed: true,
+        cap: cap,
+        joint: joint,
+      ));
     }
 
-    // Show rider route (rider to delivery) when rider is active
+    // Store → customer (before rider is assigned)
+    if (_primaryRoutePoints.length >= 2 && _riderRoutePoints.isEmpty) {
+      lines.addAll(_layeredRoute(
+        id: 'store_route',
+        points: _primaryRoutePoints,
+        borderColor: const Color(0xFF7F0A1E).withValues(alpha: 0.45),
+        glowColor: AppColors.primary.withValues(alpha: 0.16),
+        glowWidth: 9,
+        lineColor: AppColors.primary.withValues(alpha: 0.92),
+        lineWidth: 5,
+        highlightColor: Colors.white.withValues(alpha: 0.28),
+        dashed: true,
+        cap: cap,
+        joint: joint,
+      ));
+    }
+
+    // Active rider → customer route
     if (_riderRoutePoints.length >= 2) {
-      lines.add(
-        Polyline(
-          polylineId: const PolylineId('rider_route'),
-          points: _riderRoutePoints,
-          color: AppColors.success,
-          width: 6,
-          startCap: Cap.roundCap,
-          endCap: Cap.roundCap,
-          jointType: JointType.round,
-        ),
-      );
+      lines.addAll(_layeredRoute(
+        id: 'rider_route',
+        points: _riderRoutePoints,
+        borderColor: const Color(0xFF065F46).withValues(alpha: 0.72),
+        glowColor: AppColors.success.withValues(alpha: 0.22),
+        glowWidth: 11,
+        lineColor: const Color(0xFF10B981),
+        lineWidth: 5,
+        highlightColor: Colors.white.withValues(alpha: 0.38),
+        cap: cap,
+        joint: joint,
+      ));
     }
 
     return lines;
+  }
+
+  /// Multi-layer route: border + glow + main stroke (+ optional center highlight).
+  List<Polyline> _layeredRoute({
+    required String id,
+    required List<LatLng> points,
+    Color? borderColor,
+    required Color glowColor,
+    required double glowWidth,
+    required Color lineColor,
+    required double lineWidth,
+    Color? highlightColor,
+    bool dashed = false,
+    required Cap cap,
+    required JointType joint,
+  }) {
+    final patterns = dashed
+        ? <PatternItem>[PatternItem.dash(18), PatternItem.gap(12)]
+        : const <PatternItem>[];
+
+    final layers = <Polyline>[];
+
+    if (borderColor != null) {
+      layers.add(
+        Polyline(
+          polylineId: PolylineId('${id}_border'),
+          points: points,
+          color: borderColor,
+          width: (lineWidth + 4).round(),
+          startCap: cap,
+          endCap: cap,
+          jointType: joint,
+          patterns: patterns,
+          geodesic: true,
+          zIndex: 0,
+        ),
+      );
+    }
+
+    layers.addAll([
+      Polyline(
+        polylineId: PolylineId('${id}_glow'),
+        points: points,
+        color: glowColor,
+        width: glowWidth.round(),
+        startCap: cap,
+        endCap: cap,
+        jointType: joint,
+        geodesic: true,
+        zIndex: 1,
+      ),
+      Polyline(
+        polylineId: PolylineId(id),
+        points: points,
+        color: lineColor,
+        width: lineWidth.round(),
+        startCap: cap,
+        endCap: cap,
+        jointType: joint,
+        patterns: patterns,
+        geodesic: true,
+        zIndex: 2,
+      ),
+    ]);
+
+    if (highlightColor != null) {
+      layers.add(
+        Polyline(
+          polylineId: PolylineId('${id}_highlight'),
+          points: points,
+          color: highlightColor,
+          width: 2,
+          startCap: cap,
+          endCap: cap,
+          jointType: joint,
+          geodesic: true,
+          zIndex: 3,
+        ),
+      );
+    }
+
+    return layers;
   }
 
   String _statusHeadline() {
@@ -597,9 +772,11 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
 
     final map = GoogleMap(
       initialCameraPosition: CameraPosition(target: initialTarget, zoom: 14),
-      onMapCreated: (controller) {
-        _mapController = controller;
-        _fitCamera();
+      onMapCreated: _onMapCreated,
+      onCameraIdle: () {
+        if (!mounted || _isMapReady) return;
+        _mapTimeoutTimer?.cancel();
+        setState(() => _isMapReady = true);
       },
       markers: _buildMarkers(),
       polylines: _buildPolylines(),
@@ -645,6 +822,34 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
               hasRider: _animatedRiderPosition != null,
             ),
           ),
+        if (_mapError != null)
+          Positioned.fill(
+            child: Container(
+              color: Colors.white.withValues(alpha: 0.92),
+              padding: const EdgeInsets.all(24),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.map_outlined,
+                      size: 40,
+                      color: AppColors.textMuted,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _mapError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
       ],
     );
 
@@ -683,8 +888,55 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
     );
   }
 
+  Future<void> _onMapCreated(GoogleMapController controller) async {
+    if (!mounted) {
+      try {
+        controller.dispose();
+      } catch (_) {}
+      return;
+    }
+
+    _mapController = controller;
+    _mapTimeoutTimer?.cancel();
+    _isMapReady = false;
+    _mapError = null;
+
+    if (!EnvConfig.hasGoogleMapsApiKey) {
+      if (mounted) {
+        setState(() {
+          _mapError =
+              'Map unavailable — API key missing.\n\n${GoogleMapsSetup.setupChecklist}';
+        });
+      }
+      return;
+    }
+
+    final native = await MapsPlatformConfig.getNativeConfig();
+    if (native != null && !native.isReady) {
+      if (mounted) {
+        setState(() {
+          _mapError = GoogleMapsSetup.manifestKeyMissingError();
+        });
+      }
+      return;
+    }
+
+    _fitCamera();
+
+    _mapTimeoutTimer = Timer(const Duration(seconds: 15), () async {
+      if (!mounted || _isMapReady || _mapError != null) return;
+      final nativeCfg = await MapsPlatformConfig.getNativeConfig();
+      setState(() {
+        _mapError = GoogleMapsSetup.tilesLoadError(
+          applicationId: nativeCfg?.applicationId,
+        );
+      });
+    });
+  }
+
   @override
   void dispose() {
+    _mapTimeoutTimer?.cancel();
     _moveController?.dispose();
     _pulseController?.dispose();
     _autoCameraTimer?.cancel();

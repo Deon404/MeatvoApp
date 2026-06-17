@@ -3,6 +3,7 @@ import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_image_picker_field.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
 class AdminBannersScreen extends StatefulWidget {
   const AdminBannersScreen({super.key});
 
@@ -207,6 +208,10 @@ class _AdminBannersScreenState extends State<AdminBannersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.banners,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       appBar: AppBar(
         title: const Text('Banners'),
         backgroundColor: Colors.white,

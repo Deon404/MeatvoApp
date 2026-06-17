@@ -4,6 +4,7 @@ const multer = require('multer');
 const asyncHandler = require('express-async-handler');
 const { ok, fail } = require('../../utils/response');
 const fileSecurity = require('../../security/file.security');
+const { buildSignedUploadUrl, UPLOAD_PATH_PREFIX } = require('../../utils/uploadSigning');
 
 const UPLOAD_DIR = path.join(__dirname, '../../../uploads/images');
 
@@ -63,22 +64,33 @@ const handleMulterError = (err, req, res, next) => {
 const uploadImageMiddleware = upload.single('image');
 
 const uploadImage = asyncHandler(async (req, res) => {
-  const relativePath = `/uploads/images/${req.file.filename}`;
   const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const storagePath = `${UPLOAD_PATH_PREFIX}${req.file.filename}`;
+  const signedUrl = buildSignedUploadUrl(baseUrl, req.file.filename);
+  const relativePath = signedUrl.replace(baseUrl, '');
 
   return ok(
     res,
     {
-      url: `${baseUrl}${relativePath}`,
+      url: signedUrl,
       path: relativePath,
+      storagePath,
       filename: req.file.filename,
     },
     'Image uploaded'
   );
 });
 
+const secureImageUploadMiddleware = [
+  uploadImageMiddleware,
+  handleMulterError,
+  fileSecurity.validateFile,
+  fileSecurity.scanFiles,
+];
+
 module.exports = {
   uploadImageMiddleware,
   handleMulterError,
   uploadImage,
+  secureImageUploadMiddleware,
 };

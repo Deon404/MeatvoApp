@@ -46,8 +46,51 @@ String formatMinutesAway(int? etaMinutes, DateTime? estimatedDeliveryTime) {
   return '~$hours hr $mins mins away';
 }
 
+/// UI spec §9.15 / §9.16 — "Arriving in 12 min" for active order cards.
+String formatArrivingInLabel(int? etaMinutes) {
+  if (etaMinutes == null || etaMinutes <= 0) return '';
+  if (etaMinutes < 60) return 'Arriving in $etaMinutes min';
+  final hours = etaMinutes ~/ 60;
+  final mins = etaMinutes % 60;
+  if (mins == 0) return 'Arriving in $hours hr';
+  return 'Arriving in ${hours}h ${mins}m';
+}
+
 /// True when the order is still active but the estimated delivery time has passed.
 bool isEtaPassed(DateTime? estimatedDeliveryTime, [DateTime? reference]) {
   if (estimatedDeliveryTime == null) return false;
   return (reference ?? DateTime.now()).isAfter(estimatedDeliveryTime);
+}
+
+/// Picks a future arrival time for UI — prefers live ETA minutes over stale server timestamps.
+DateTime? resolveDisplayEstimatedAt({
+  int? etaMinutes,
+  DateTime? liveEstimatedAt,
+  DateTime? fallbackEstimatedAt,
+  DateTime? reference,
+}) {
+  final now = reference ?? DateTime.now();
+  if (etaMinutes != null && etaMinutes > 0) {
+    return now.add(Duration(minutes: etaMinutes));
+  }
+  for (final candidate in [liveEstimatedAt, fallbackEstimatedAt]) {
+    if (candidate != null && candidate.isAfter(now)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/// Distance-based ETA for order detail banner and active order cards.
+String formatOrderDistanceEta(
+  BuildContext context, {
+  DateTime? estimatedDeliveryTime,
+  int? etaMinutes,
+}) {
+  if (estimatedDeliveryTime == null) return '~45-60 mins';
+  final now = DateTime.now();
+  final diff = estimatedDeliveryTime.difference(now).inMinutes;
+  if (diff <= 0) return 'Arriving soon';
+  if (diff < 60) return '~$diff mins';
+  return 'by ${TimeOfDay.fromDateTime(estimatedDeliveryTime).format(context)}';
 }

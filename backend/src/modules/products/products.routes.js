@@ -9,6 +9,7 @@ const { ROLES } = require('../../utils/roles');
 const {
   listProducts,
   getProductById,
+  getProductRating,
   getCategories,
   getFeaturedProducts,
   searchProducts,
@@ -35,6 +36,8 @@ router.get('/categories', optionalAuth, getCategories);
 router.get('/featured', optionalAuth, getFeaturedProducts);
 
 router.get('/search', optionalAuth, searchProducts);
+
+router.get('/:id/rating', optionalAuth, getProductRating);
 
 router.get('/:id', optionalAuth, getProductById);
 

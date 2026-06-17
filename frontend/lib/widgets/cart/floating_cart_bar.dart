@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../domain/order_pricing.dart';
 import '../../models/cart_model.dart';
+import '../../providers/store_settings_provider.dart';
 import '../../services/cart_service.dart';
+import '../../widgets/store/store_closed_sheet.dart';
 
 /// Floating pill cart bar with shared cart state.
-class FloatingCartBar extends StatelessWidget {
+class FloatingCartBar extends ConsumerWidget {
   const FloatingCartBar({
     super.key,
     required this.onViewCartTapped,
@@ -15,8 +18,9 @@ class FloatingCartBar extends StatelessWidget {
   final VoidCallback onViewCartTapped;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final mv = context.meatvo;
+    final storeSettings = ref.watch(storeSettingsSyncProvider);
 
     return ValueListenableBuilder<CartModel>(
       valueListenable: CartService.cartNotifier,
@@ -24,8 +28,10 @@ class FloatingCartBar extends StatelessWidget {
         final visible = cart.isNotEmpty;
         final itemCount = cart.totalQuantity.toInt();
         final subtotal = cart.subtotal;
-        // Use centralized pricing logic to match cart/checkout
-        final pricing = OrderPricingCalculator.calculate(subtotal: subtotal);
+        final pricing = OrderPricingCalculator.calculate(
+          subtotal: subtotal,
+          deliveryChargeAmount: storeSettings.deliveryFee,
+        );
         final total = pricing.grandTotal;
 
         return AnimatedSlide(
@@ -45,7 +51,13 @@ class FloatingCartBar extends StatelessWidget {
                   color: mv.brandPrimary,
                   shadowColor: mv.brandPrimary.withValues(alpha: 0.3),
                   child: InkWell(
-                    onTap: onViewCartTapped,
+                    onTap: () {
+                      if (!storeSettings.isOpen) {
+                        StoreClosedSheet.show(context, storeSettings);
+                        return;
+                      }
+                      onViewCartTapped();
+                    },
                     borderRadius: BorderRadius.circular(mv.radii.navBar),
                     child: Ink(
                       decoration: BoxDecoration(
@@ -146,7 +158,7 @@ class FloatingCartBar extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              'View Cart',
+                              storeSettings.isOpen ? 'View Cart' : 'Store closed',
                               style:
                                   Theme.of(context).textTheme.labelLarge?.copyWith(
                                         color: Colors.white,

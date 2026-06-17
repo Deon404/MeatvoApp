@@ -57,7 +57,18 @@ const patchOrderCompatSchema = z.object({
         .optional(),
       deliveryUserId: z.union([z.string(), z.number()]).optional(),
     })
-    .partial(),
+    .optional(),
+  query: z.object({}).optional(),
+});
+
+const assignRiderToOrderSchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z
+    .object({
+      deliveryPartnerId: z.union([z.string(), z.number()]).optional(),
+      resetAttempts: z.boolean().optional(),
+    })
+    .optional(),
   query: z.object({}).optional(),
 });
 
@@ -88,6 +99,9 @@ const upsertProductCompatSchema = z.object({
       description: z.string().trim().optional().nullable(),
       imageUrl: z.string().trim().optional().nullable(),
       price: z.coerce.number().nonnegative().optional(),
+      salePrice: z.coerce.number().nonnegative().optional(),
+      mrp: z.coerce.number().nonnegative().optional().nullable(),
+      basePricePerKg: z.coerce.number().nonnegative().optional(),
       unit: z.string().trim().optional().nullable(),
       stockQty: z.coerce.number().int().nonnegative().optional(),
       categoryId: z.union([z.string(), z.number()]).optional().nullable(),
@@ -190,7 +204,7 @@ const updateSettingsSchema = z.object({
 
 const changeUserRoleSchema = z.object({
   body: z.object({
-    role: z.enum(['customer', 'delivery_partner', 'admin']),
+    role: z.enum(['customer', 'delivery_partner', 'admin', 'staff']),
   }),
   params: z.object({
     id: z.string().transform(Number),
@@ -236,6 +250,7 @@ module.exports = {
   toggleDeliveryPartnerSchema,
   listOrdersCompatSchema,
   patchOrderCompatSchema,
+  assignRiderToOrderSchema,
   listCompatSchema,
   upsertCategoryCompatSchema,
   upsertProductCompatSchema,

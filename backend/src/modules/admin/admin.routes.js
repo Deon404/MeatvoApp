@@ -12,6 +12,8 @@ const {
   putBanner,
   getTheme,
   putTheme,
+  getAppInfo,
+  putAppInfo,
 } = require('../settings/settings.controller');
 
 const {
@@ -24,9 +26,10 @@ const {
   patchDeliveryPartner,
   listOrdersCompat,
   patchOrderCompat,
+  assignRiderToOrder,
   listProducts,
-  createProduct,
-  updateProduct,
+  createProductCompat,
+  patchProductCompat,
   deleteProduct,
   updateStock,
   listCategories,
@@ -51,6 +54,7 @@ const {
   toggleDeliveryPartnerSchema,
   listOrdersCompatSchema,
   patchOrderCompatSchema,
+  assignRiderToOrderSchema,
   listCompatSchema,
   upsertCategoryCompatSchema,
   upsertProductCompatSchema,
@@ -69,13 +73,8 @@ const { updateOrderStatus, getOrder } = require('../orders/orders.controller');
 const { updateOrderStatusSchema, getOrderSchema } = require('../orders/orders.validation');
 
 const { getAdminFirebaseConfig } = require('../firebase/firebase.controller');
-const { getSchema, putThemeSchema, putBannerSchema } = require('../settings/settings.validation');
-const fileSecurity = require('../../security/file.security');
-const {
-  uploadImageMiddleware,
-  handleMulterError,
-  uploadImage,
-} = require('../uploads/uploads.controller');
+const { getSchema, putThemeSchema, putBannerSchema, putAppInfoSchema } = require('../settings/settings.validation');
+const { secureImageUploadMiddleware, uploadImage } = require('../uploads/uploads.controller');
 
 const adminOnly = [protect, rbac(ROLES.ADMIN)];
 
@@ -92,13 +91,14 @@ router.patch('/delivery-partners/:id', ...adminOnly, validate(patchDeliveryPartn
 router.get('/orders', ...adminOnly, validate(listOrdersCompatSchema), listOrdersCompat);
 router.get('/orders/:id', ...adminOnly, validate(getOrderSchema), getOrder);
 router.patch('/orders/:id', ...adminOnly, validate(patchOrderCompatSchema), patchOrderCompat);
+router.post('/orders/:id/assign-rider', ...adminOnly, validate(assignRiderToOrderSchema), assignRiderToOrder);
 router.patch('/orders/:id/status', ...adminOnly, validate(updateOrderStatusSchema), updateOrderStatus);
 
 // PRODUCTS
 router.get('/products', ...adminOnly, validate(listCompatSchema), listProducts);
-router.post('/products', ...adminOnly, validate(upsertProductCompatSchema), createProduct);
-router.patch('/products/:id', ...adminOnly, validate(upsertProductCompatSchema), updateProduct);
-router.put('/products/:id', ...adminOnly, validate(upsertProductCompatSchema), updateProduct);
+router.post('/products', ...adminOnly, validate(upsertProductCompatSchema), createProductCompat);
+router.patch('/products/:id', ...adminOnly, validate(upsertProductCompatSchema), patchProductCompat);
+router.put('/products/:id', ...adminOnly, validate(upsertProductCompatSchema), patchProductCompat);
 router.delete('/products/:id', ...adminOnly, validate(deleteProductCompatSchema), deleteProduct);
 router.patch('/products/:id/stock', ...adminOnly, validate(updateStockSchema), updateStock);
 
@@ -121,21 +121,15 @@ router.get('/settings/banner', ...adminOnly, validate(getSchema), getBanner);
 router.put('/settings/banner', ...adminOnly, validate(putBannerSchema), putBanner);
 router.get('/settings/theme', ...adminOnly, validate(getSchema), getTheme);
 router.put('/settings/theme', ...adminOnly, validate(putThemeSchema), putTheme);
+router.get('/settings/app-info', ...adminOnly, validate(getSchema), getAppInfo);
+router.put('/settings/app-info', ...adminOnly, validate(putAppInfoSchema), putAppInfo);
 
 router.get('/analytics', ...adminOnly, validate(listCompatSchema), getAnalytics);
 
 router.get('/firebase-config', ...adminOnly, getAdminFirebaseConfig);
 
 // IMAGE UPLOAD
-router.post(
-  '/upload/image',
-  ...adminOnly,
-  uploadImageMiddleware,
-  handleMulterError,
-  fileSecurity.validateFile,
-  fileSecurity.scanFiles,
-  uploadImage
-);
+router.post('/upload/image', ...adminOnly, ...secureImageUploadMiddleware, uploadImage);
 
 // Delivery zone + store open/close (TASK-002, TASK-005)
 router.put('/store/delivery-zone', ...adminOnly, validate(updateDeliveryZoneSchema), updateDeliveryZone);
@@ -143,6 +137,7 @@ router.patch('/store/toggle', ...adminOnly, validate(toggleStoreOpenSchema), tog
 
 // Route optimization for admins
 const { getAdminOptimizedRoute, assignMultiRiderRoutes } = require('../delivery/delivery.controller');
+
 router.get('/delivery/route/optimize', ...adminOnly, getAdminOptimizedRoute);
 router.post('/delivery/assign-routes', ...adminOnly, assignMultiRiderRoutes);
 

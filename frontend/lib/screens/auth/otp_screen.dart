@@ -4,19 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sms_autofill/sms_autofill.dart';
 
-import '../../core/constants/app_constants.dart';
+import '../../config/backend_resolver.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../navigation/app_destinations.dart';
 import '../../services/auth_service.dart';
+import 'auth_screen_shell.dart';
 
 class OtpScreen extends StatefulWidget {
   const OtpScreen({
     super.key,
     required this.phone,
     this.prefilledOtp,
+    this.initialResendSeconds,
+    this.otpAlreadySent = false,
   });
 
   final String phone;
   final String? prefilledOtp;
+  final int? initialResendSeconds;
+  final bool otpAlreadySent;
 
   @override
   State<OtpScreen> createState() => _OtpScreenState();
@@ -25,22 +32,17 @@ class OtpScreen extends StatefulWidget {
 class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
   static const _otpLength = 4;
 
-  static const _bgColor = Color(0xFFFFF5F5);
-  static const _brandRed = Color(0xFFC8102E);
-  static const _textPrimary = Color(0xFF1A1A1A);
-  static const _textMuted = Color(0xFF6B6B6B);
-  static const _buttonDisabled = Color(0xFFE0E0E0);
-  static const _buttonDisabledText = Color(0xFF9E9E9E);
-
   final List<TextEditingController> _controllers =
       List.generate(_otpLength, (_) => TextEditingController());
   final List<FocusNode> _focusNodes =
       List.generate(_otpLength, (_) => FocusNode());
+  final TextEditingController _autofillController = TextEditingController();
   final AuthService _authService = AuthService();
 
   Timer? _resendTimer;
   bool _isLoading = false;
   bool _canResend = false;
+  bool _autoVerifyScheduled = false;
   int _secondsLeft = 30;
   String? _errorText;
 
@@ -62,6 +64,10 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
   void initState() {
     super.initState();
     listenForCode();
+    for (final controller in _controllers) {
+      controller.addListener(_scheduleAutoVerify);
+    }
+    _autofillController.addListener(_onAutofillControllerChanged);
     _startResendTimer();
     _applyPrefill();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -73,7 +79,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
   void codeUpdated() {
     final digits = code?.replaceAll(RegExp(r'\D'), '');
     if (digits == null || digits.length < _otpLength || !mounted) return;
-    _applyOtpDigits(digits.substring(0, _otpLength), autoVerify: true);
+    _applyOtpDigits(digits.substring(0, _otpLength));
   }
 
   void _applyPrefill() {
@@ -82,16 +88,32 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     _applyOtpDigits(raw.substring(0, _otpLength));
   }
 
-  void _applyOtpDigits(String otp, {bool autoVerify = false}) {
+  void _applyOtpDigits(String otp) {
     for (var i = 0; i < _otpLength; i++) {
       _controllers[i].text = otp[i];
+      _controllers[i].selection = const TextSelection.collapsed(offset: 1);
     }
     if (_errorText != null) {
       setState(() => _errorText = null);
     }
-    if (autoVerify && !_isLoading) {
+    _scheduleAutoVerify();
+  }
+
+  void _onAutofillControllerChanged() {
+    final digits =
+        _autofillController.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length < _otpLength) return;
+    _applyOtpDigits(digits.substring(0, _otpLength));
+  }
+
+  void _scheduleAutoVerify() {
+    if (_autoVerifyScheduled || _isLoading || !_isOtpComplete) return;
+    _autoVerifyScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _autoVerifyScheduled = false;
+      if (!mounted || _isLoading || !_isOtpComplete) return;
       _verifyOtp();
-    }
+    });
   }
 
   @override
@@ -100,20 +122,26 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     unregisterListener();
     _resendTimer?.cancel();
     for (final c in _controllers) {
+      c.removeListener(_scheduleAutoVerify);
       c.dispose();
     }
+    _autofillController.removeListener(_onAutofillControllerChanged);
+    _autofillController.dispose();
     for (final f in _focusNodes) {
       f.dispose();
     }
     super.dispose();
   }
 
-  void _startResendTimer() {
+  void _startResendTimer({int? seconds}) {
     _resendTimer?.cancel();
+    final start = (seconds ?? widget.initialResendSeconds ?? 30).clamp(0, 600);
     setState(() {
-      _canResend = false;
-      _secondsLeft = 30;
+      _canResend = start <= 0;
+      _secondsLeft = start;
     });
+    if (start <= 0) return;
+
     _resendTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return timer.cancel();
       if (_secondsLeft <= 1) {
@@ -132,6 +160,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     for (final c in _controllers) {
       c.clear();
     }
+    _autofillController.clear();
     _focusNodes.first.requestFocus();
   }
 
@@ -159,9 +188,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
       _focusNodes[index - 1].requestFocus();
     }
 
-    if (_otpValue.length == _otpLength && !_isLoading) {
-      _verifyOtp();
-    }
+    _scheduleAutoVerify();
   }
 
   void _handlePaste(String digits, {required int startIndex}) {
@@ -177,9 +204,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
       _focusNodes[cursor].requestFocus();
     } else {
       _focusNodes.last.unfocus();
-      if (_otpValue.length == _otpLength && !_isLoading) {
-        _verifyOtp();
-      }
+      _scheduleAutoVerify();
     }
   }
 
@@ -212,6 +237,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
       final user = await _authService.verifyOtp(widget.phone, rawOtp);
       if (!mounted) return;
 
+      TextInput.finishAutofillContext(shouldSave: false);
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => destinationAfterAuth(role: user.role),
@@ -220,10 +246,11 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
       );
     } catch (error) {
       if (!mounted) return;
-      final message = error.toString().replaceFirst('Exception:', '').trim();
       setState(
-        () => _errorText =
-            message.isEmpty ? 'Invalid OTP. Please try again.' : message,
+        () => _errorText = BackendResolver.toUserMessage(
+          error,
+          fallback: 'Invalid OTP. Please try again.',
+        ),
       );
       _clearOtp();
     } finally {
@@ -246,17 +273,18 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
       listenForCode();
       _startResendTimer();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('OTP sent successfully!'),
-          backgroundColor: AppColors.success,
+        SnackBar(
+          content: const Text('OTP sent successfully!'),
+          backgroundColor: context.meatvo.freshBadge,
         ),
       );
     } catch (error) {
       if (!mounted) return;
-      final message = error.toString().replaceFirst('Exception:', '').trim();
       setState(
-        () => _errorText =
-            message.isEmpty ? 'Failed to resend OTP.' : message,
+        () => _errorText = BackendResolver.toUserMessage(
+          error,
+          fallback: 'Failed to resend OTP. Please try again.',
+        ),
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -271,262 +299,211 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
 
   @override
   Widget build(BuildContext context) {
-    final buttonColor = _isOtpComplete ? _brandRed : _buttonDisabled;
-    final buttonTextColor =
-        _isOtpComplete ? Colors.white : _buttonDisabledText;
+    final mv = context.meatvo;
+    final theme = Theme.of(context);
 
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      backgroundColor: _bgColor,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            'assets/images/login_background.png',
-            fit: BoxFit.cover,
-          ),
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withOpacity(0.95),
-                  Colors.white.withOpacity(0.90),
-                  const Color(0xFFFFF5F5).withOpacity(0.85),
-                ],
+    return AuthScreenShell(
+      children: [
+        const AuthBrandHeader(compact: true),
+        SizedBox(height: mv.spacing.lg),
+        AuthFormCard(
+          compact: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                'Verify OTP',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: mv.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-          ),
-          SafeArea(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-                final keyboardVisible = keyboardHeight > 0;
-                
-                return SingleChildScrollView(
-                  child: Container(
-                    height: constraints.maxHeight,
-                    padding: EdgeInsets.only(bottom: keyboardHeight > 0 ? 20 : 0),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'Meatvo',
-                          style: TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 32,
-                            fontWeight: FontWeight.w700,
-                            color: _textPrimary,
-                            letterSpacing: -0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Fresh • Hygienic • Reliable',
-                          style: TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 13,
-                            color: _textMuted,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        SizedBox(height: keyboardVisible ? 20 : 40),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Container(
-                            padding: const EdgeInsets.all(28),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.8),
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(
-                                color: Colors.white.withOpacity(0.6),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.06),
-                                  blurRadius: 30,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                const Text(
-                                  'Verify OTP',
-                                  style: TextStyle(
-                                    fontFamily: 'Poppins',
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w600,
-                                    color: _textPrimary,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      'Sent to $_maskedPhone',
-                                      style: const TextStyle(
-                                        fontFamily: 'Poppins',
-                                        fontSize: 13,
-                                        color: _textMuted,
-                                      ),
-                                    ),
-                                    TextButton(
-                                      onPressed: _isLoading
-                                          ? null
-                                          : () => Navigator.of(context).pop(),
-                                      style: TextButton.styleFrom(
-                                        padding:
-                                            const EdgeInsets.symmetric(horizontal: 4),
-                                        minimumSize: Size.zero,
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      child: const Text(
-                                        'Change',
-                                        style: TextStyle(
-                                          fontFamily: 'Poppins',
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                          color: _brandRed,
-                                          decoration: TextDecoration.underline,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 32),
-                                AutofillGroup(
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: List.generate(_otpLength, (index) {
-                                      return Padding(
-                                        padding: EdgeInsets.only(
-                                          right: index < _otpLength - 1 ? 8 : 0,
-                                        ),
-                                        child: _OtpBox(
-                                          controller: _controllers[index],
-                                          focusNode: _focusNodes[index],
-                                          onChanged: (value) =>
-                                              _onOtpChanged(index, value),
-                                          onKeyEvent: (_, event) =>
-                                              _onKeyEvent(index, event),
-                                          enabled: !_isLoading,
-                                          hasError: _errorText != null,
-                                          autofillHints: index == 0
-                                              ? const [AutofillHints.oneTimeCode]
-                                              : null,
-                                        ),
-                                      );
-                                    }),
-                                  ),
-                                ),
-                                if (_errorText != null) ...[
-                                  const SizedBox(height: 16),
-                                  Text(
-                                    _errorText!,
-                                    style: const TextStyle(
-                                      fontFamily: 'Poppins',
-                                      fontSize: 13,
-                                      color: Colors.red,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                        SizedBox(height: keyboardVisible ? 20 : 40),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: double.infinity,
-                                height: 56,
-                                child: ElevatedButton(
-                                  onPressed: _isLoading || !_isOtpComplete
-                                      ? null
-                                      : _verifyOtp,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: buttonColor,
-                                    foregroundColor: buttonTextColor,
-                                    disabledBackgroundColor: buttonColor,
-                                    disabledForegroundColor: buttonTextColor,
-                                    elevation: _isOtpComplete ? 8 : 0,
-                                    shadowColor: _brandRed.withOpacity(0.4),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                  ),
-                                  child: _isLoading
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            color: Colors.white,
-                                          ),
-                                        )
-                                      : const Text(
-                                          'Verify & Continue',
-                                          style: TextStyle(
-                                            fontFamily: 'Poppins',
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w600,
-                                            letterSpacing: 0.5,
-                                          ),
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              _canResend
-                                  ? TextButton(
-                                      onPressed: _isLoading ? null : _resendOtp,
-                                      style: TextButton.styleFrom(
-                                        padding: EdgeInsets.zero,
-                                        minimumSize: Size.zero,
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      child: const Text(
-                                        'Resend OTP',
-                                        style: TextStyle(
-                                          fontFamily: 'Poppins',
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.w600,
-                                          color: _brandRed,
-                                        ),
-                                      ),
-                                    )
-                                  : Text(
-                                      _timerLabel,
-                                      style: const TextStyle(
-                                        fontFamily: 'Poppins',
-                                        fontSize: 13,
-                                        color: _textMuted,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                            ],
-                          ),
-                        ),
-                      ],
+              SizedBox(height: mv.spacing.xs),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'Sent to $_maskedPhone',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: mv.textSecondary,
                     ),
                   ),
-                );
-              },
-            ),
+                  TextButton(
+                    onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.symmetric(horizontal: mv.spacing.xxs),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(
+                      'Change',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: mv.brandPrimary,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.underline,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (widget.otpAlreadySent) ...[
+                SizedBox(height: mv.spacing.md),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: mv.spacing.sm,
+                    vertical: mv.spacing.sm,
+                  ),
+                  decoration: BoxDecoration(
+                    color: mv.freshBadge.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(mv.radii.md),
+                    border: Border.all(
+                      color: mv.freshBadge.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 18,
+                        color: mv.freshBadge,
+                      ),
+                      SizedBox(width: mv.spacing.xs),
+                      Expanded(
+                        child: Text(
+                          'An OTP was already sent to this number. '
+                          'Please use the code from your previous SMS.',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: mv.textPrimary,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              SizedBox(height: mv.spacing.xl),
+              AutofillGroup(
+                child: Column(
+                  children: [
+                    SizedBox(
+                      height: 0,
+                      width: 0,
+                      child: Opacity(
+                        opacity: 0,
+                        child: TextField(
+                          controller: _autofillController,
+                          autofillHints: const [AutofillHints.oneTimeCode],
+                          keyboardType: TextInputType.number,
+                          maxLength: _otpLength,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: const InputDecoration(
+                            counterText: '',
+                            border: InputBorder.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(_otpLength, (index) {
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            right: index < _otpLength - 1 ? mv.spacing.xs : 0,
+                          ),
+                          child: _OtpBox(
+                            controller: _controllers[index],
+                            focusNode: _focusNodes[index],
+                            onChanged: (value) => _onOtpChanged(index, value),
+                            onKeyEvent: (_, event) => _onKeyEvent(index, event),
+                            enabled: !_isLoading,
+                            hasError: _errorText != null,
+                          ),
+                        );
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+              if (_errorText != null) ...[
+                SizedBox(height: mv.spacing.md),
+                Text(
+                  _errorText!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: mv.error,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ],
           ),
-        ],
-      ),
+        ),
+        SizedBox(height: mv.spacing.lg),
+        SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: ElevatedButton(
+            onPressed: _isLoading || !_isOtpComplete ? null : _verifyOtp,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: mv.brandPrimary,
+              foregroundColor: MeatvoColors.white,
+              disabledBackgroundColor: MeatvoColors.surfaceMuted,
+              disabledForegroundColor: mv.textMuted,
+              elevation: _isOtpComplete ? 4 : 0,
+              shadowColor: mv.brandPrimary.withValues(alpha: 0.35),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(mv.radii.lg),
+              ),
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: MeatvoColors.white,
+                    ),
+                  )
+                : Text(
+                    'Verify & Continue',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: _isOtpComplete ? MeatvoColors.white : mv.textMuted,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+          ),
+        ),
+        SizedBox(height: mv.spacing.md),
+        _canResend
+            ? TextButton(
+                onPressed: _isLoading ? null : _resendOtp,
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  'Resend OTP',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: mv.brandPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              )
+            : Text(
+                _timerLabel,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: mv.textMuted,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+      ],
     );
   }
 }
@@ -539,7 +516,6 @@ class _OtpBox extends StatefulWidget {
     required this.onKeyEvent,
     this.enabled = true,
     this.hasError = false,
-    this.autofillHints,
   });
 
   final TextEditingController controller;
@@ -548,17 +524,12 @@ class _OtpBox extends StatefulWidget {
   final KeyEventResult Function(FocusNode, KeyEvent) onKeyEvent;
   final bool enabled;
   final bool hasError;
-  final Iterable<String>? autofillHints;
 
   @override
   State<_OtpBox> createState() => _OtpBoxState();
 }
 
 class _OtpBoxState extends State<_OtpBox> {
-  static const _brandRed = Color(0xFFC8102E);
-  static const _textPrimary = Color(0xFF1A1A1A);
-  static const _borderDefault = Color(0xFFE5E5E5);
-
   @override
   void initState() {
     super.initState();
@@ -590,21 +561,23 @@ class _OtpBoxState extends State<_OtpBox> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final theme = Theme.of(context);
     final focused = widget.focusNode.hasFocus;
     final filled = widget.controller.text.isNotEmpty;
 
     Color borderColor;
     double borderWidth = 1.5;
     if (widget.hasError) {
-      borderColor = Colors.red;
+      borderColor = mv.error;
       borderWidth = 2;
     } else if (focused) {
-      borderColor = _brandRed;
+      borderColor = mv.brandPrimary;
       borderWidth = 2;
     } else if (filled) {
-      borderColor = _brandRed;
+      borderColor = mv.brandPrimary;
     } else {
-      borderColor = _borderDefault;
+      borderColor = mv.border;
     }
 
     return SizedBox(
@@ -614,14 +587,14 @@ class _OtpBoxState extends State<_OtpBox> {
         onKeyEvent: (node, event) => widget.onKeyEvent(node, event),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            color: mv.surfaceCard,
+            borderRadius: BorderRadius.circular(mv.radii.md),
             border: Border.all(color: borderColor, width: borderWidth),
             boxShadow: focused || filled
                 ? [
                     BoxShadow(
-                      color: (widget.hasError ? Colors.red : _brandRed)
-                          .withOpacity(0.15),
+                      color: (widget.hasError ? mv.error : mv.brandPrimary)
+                          .withValues(alpha: 0.15),
                       blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),
@@ -636,12 +609,9 @@ class _OtpBoxState extends State<_OtpBox> {
             keyboardType: TextInputType.number,
             textAlign: TextAlign.center,
             maxLength: 1,
-            autofillHints: widget.autofillHints,
-            style: const TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 24,
+            style: theme.textTheme.headlineSmall?.copyWith(
+              color: mv.textPrimary,
               fontWeight: FontWeight.w700,
-              color: _textPrimary,
             ),
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             decoration: const InputDecoration(

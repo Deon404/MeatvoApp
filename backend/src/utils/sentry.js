@@ -8,10 +8,12 @@ class SentryService {
 
   initialize() {
     try {
-      const dsn = process.env.SENTRY_DSN;
-      
-      if (!dsn) {
-        logger.warn('sentry_not_configured', { message: 'SENTRY_DSN not found in environment variables' });
+      const dsn = String(process.env.SENTRY_DSN || '').trim();
+
+      if (!dsn || dsn.includes('placeholder') || dsn.includes('@o0.ingest')) {
+        logger.warn('sentry_not_configured', {
+          message: 'SENTRY_DSN missing or placeholder — set a real DSN from sentry.io for production monitoring',
+        });
         return;
       }
 

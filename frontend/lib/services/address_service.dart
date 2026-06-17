@@ -43,10 +43,10 @@ class AddressService {
       final detail = e.error?.toString().trim();
       if (detail != null &&
           detail.isNotEmpty &&
-          detail.contains('Server tak nahi pahunch rahe')) {
+          detail.contains(BackendResolver.connectionErrorPrefix)) {
         return detail;
       }
-      return BackendResolver.connectionHelpMessage();
+      return BackendResolver.connectionUserMessage();
     }
 
     final data = e.response?.data;

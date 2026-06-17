@@ -37,8 +37,8 @@ This document summarizes the complete implementation of the professional deliver
 - ✅ 60% less battery drain, 70% less data usage
 
 **Files Modified:**
-- `old_meatvo/lib/services/rider_service.dart`
-- `old_meatvo/lib/services/rider_location_service.dart` (already existed, now primary)
+- `frontend/lib/services/rider_service.dart`
+- `frontend/lib/services/rider_location_service.dart` (already existed, now primary)
 
 **Impact:** Reduced battery consumption and network usage while maintaining accurate tracking.
 
@@ -82,7 +82,7 @@ RIDER_NEARBY → DELIVERED
 - ✅ 30s polling fallback for reliability
 
 **Files Created:**
-- `old_meatvo/lib/providers/rider_provider.dart` - Complete state management
+- `frontend/lib/providers/rider_provider.dart` - Complete state management
 
 **State Structure:**
 ```dart
@@ -259,7 +259,7 @@ withBuffer = 8.7 + 2 = 10.7 min
 - ✅ 2-second debounce for batch syncing
 
 **Files Created:**
-- `old_meatvo/lib/services/offline_service.dart`
+- `frontend/lib/services/offline_service.dart`
 
 **Flow:**
 ```
@@ -293,7 +293,7 @@ withBuffer = 8.7 + 2 = 10.7 min
 - ✅ Pull-to-refresh for latest data
 
 **Files Created:**
-- `old_meatvo/lib/screens/rider/rider_analytics_screen.dart`
+- `frontend/lib/screens/rider/rider_analytics_screen.dart`
 
 **Features:**
 - 📊 Earnings line chart (last 7 days)
@@ -387,12 +387,12 @@ withBuffer = 8.7 + 2 = 10.7 min
 6. `backend/src/services/orderLifecycle.service.js` - Earnings integration
 
 ### Flutter Files Created (3 new files)
-1. `old_meatvo/lib/providers/rider_provider.dart` - State management
-2. `old_meatvo/lib/services/offline_service.dart` - Offline queue
-3. `old_meatvo/lib/screens/rider/rider_analytics_screen.dart` - Analytics UI
+1. `frontend/lib/providers/rider_provider.dart` - State management
+2. `frontend/lib/services/offline_service.dart` - Offline queue
+3. `frontend/lib/screens/rider/rider_analytics_screen.dart` - Analytics UI
 
 ### Flutter Files Modified (1 file)
-1. `old_meatvo/lib/services/rider_service.dart` - Location consolidation
+1. `frontend/lib/services/rider_service.dart` - Location consolidation
 
 ### Documentation Created (3 files)
 1. `UI_IMPLEMENTATION_GUIDE.md` - Complete UI specifications
@@ -428,7 +428,7 @@ curl http://localhost:8080/api/delivery/my-route -H "Authorization: Bearer <toke
 
 ### 3. Flutter Build
 ```bash
-cd old_meatvo
+cd frontend
 
 # Clean build
 flutter clean

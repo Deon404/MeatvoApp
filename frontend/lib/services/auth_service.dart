@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
@@ -5,7 +7,22 @@ import '../config/api_config.dart';
 import '../config/backend_resolver.dart';
 import '../config/env_config.dart';
 import 'api_service.dart';
+import 'error_tracking_service.dart';
+import 'push_notification_service.dart';
 import 'storage_service.dart';
+
+/// Result of POST `/auth/send-otp`.
+class SendOtpResult {
+  const SendOtpResult({
+    this.devOtp,
+    this.alreadySent = false,
+    this.remainingSeconds,
+  });
+
+  final String? devOtp;
+  final bool alreadySent;
+  final int? remainingSeconds;
+}
 
 /// Authentication via custom Node backend ([EnvConfig.apiBaseUrl]) — **no Supabase**.
 ///
@@ -47,7 +64,10 @@ class AuthService {
   // ── OTP flow ────────────────────────────────────────────────────────────
 
   /// Compatibility alias — returns [devOTP] when backend includes it (development).
-  Future<String?> sendOTP(String phoneNumber) => sendOtp(phoneNumber);
+  Future<String?> sendOTP(String phoneNumber) async {
+    final result = await sendOtp(phoneNumber);
+    return result.devOtp;
+  }
 
   /// Same intent as former `supabase.auth.signInWithOtp` — sends OTP to phone.
   ///
@@ -58,8 +78,9 @@ class AuthService {
     bool? shouldCreateUser,
     Map<String, dynamic>? data,
     String? captchaToken,
-  }) =>
-      sendOtp(phone);
+  }) async {
+    await sendOtp(phone);
+  }
 
   /// Same E.164 format used for send-otp and verify-otp (must match Redis key).
   static String formatPhoneE164(String phone) {
@@ -67,7 +88,7 @@ class AuthService {
   }
 
   /// POST `{backend}/api/auth/send-otp` — returns dev OTP when SMS skipped in development.
-  Future<String?> sendOtp(String phone, {bool resend = false}) async {
+  Future<SendOtpResult> sendOtp(String phone, {bool resend = false}) async {
     try {
       final res = await _api
           .post(
@@ -79,19 +100,27 @@ class AuthService {
           )
           .timeout(
             ApiConfig.authTimeout,
-            onTimeout: () => throw Exception(BackendResolver.connectionHelpMessage()),
+            onTimeout: () {
+              BackendResolver.logConnectionDevHint();
+              throw Exception(BackendResolver.connectionUserMessage());
+            },
           );
 
-      final root = res.data;
-      if (root is Map<String, dynamic>) {
-        final data = root['data'];
-        if (data is Map<String, dynamic>) {
-          final dev = data['devOTP']?.toString();
-          if (dev != null && dev.isNotEmpty) return dev;
+      String? devOtp;
+      if (!EnvConfig.isProduction && !kReleaseMode) {
+        final root = res.data;
+        if (root is Map<String, dynamic>) {
+          final data = root['data'];
+          if (data is Map<String, dynamic>) {
+            final dev = data['devOTP']?.toString();
+            if (dev != null && dev.isNotEmpty) devOtp = dev;
+          }
         }
       }
-      return null;
+      return SendOtpResult(devOtp: devOtp);
     } on DioException catch (e) {
+      final existing = _parseExistingOtpResponse(e);
+      if (existing != null) return existing;
       throw Exception(_extractErrorMessage(e, 'Failed to send OTP'));
     } catch (e) {
       throw Exception('Failed to send OTP: $e');
@@ -131,10 +160,18 @@ class AuthService {
       await _storage.saveTokens(token, refreshToken);
       await _storage.saveUser(user);
 
-      // Verify tokens were actually saved
-      final savedAccessToken = await _storage.getAccessToken();
-      final savedRefreshToken = await _storage.getRefreshToken();
-      debugPrint('[AuthService] Tokens saved - Access: ${savedAccessToken?.substring(0, 20)}..., Refresh: ${savedRefreshToken?.substring(0, 20)}...');
+      await ErrorTrackingService.setUser(
+        id: user.id,
+        username: user.phoneNumber,
+        data: {'role': user.role},
+      );
+
+      // Register push token in background — do not block login on FCM retries.
+      unawaited(PushNotificationService().syncTokenWithBackend());
+
+      if (kDebugMode) {
+        debugPrint('[AuthService] Session established for user ${user.id}');
+      }
 
       return user;
     } on DioException catch (e) {
@@ -195,7 +232,7 @@ class AuthService {
     return getMe();
   }
 
-  /// Local-only profile update to keep existing screens working.
+  /// PATCH `{backend}/api/users/profile`
   Future<UserModel> updateProfile({
     String? name,
     String? email,
@@ -203,6 +240,31 @@ class AuthService {
   }) async {
     final current = await _storage.getUser();
     if (current == null) throw Exception('User not logged in');
+
+    try {
+      final res = await _api.patch(
+        ApiUserPaths.profile,
+        data: {
+          if (name != null) 'name': name,
+          if (email != null) 'email': email,
+          if (profileImageUrl != null) 'profile_image_url': profileImageUrl,
+        },
+      );
+      final data = res.data;
+      if (data is Map && data['success'] == true && data['data'] is Map) {
+        final profile = Map<String, dynamic>.from(data['data'] as Map);
+        final updated = current.copyWith(
+          name: profile['name']?.toString() ?? name ?? current.name,
+          email: profile['email']?.toString() ?? email ?? current.email,
+          profileImageUrl:
+              profile['profile_image_url']?.toString() ?? profileImageUrl ?? current.profileImageUrl,
+        );
+        await _storage.saveUser(updated);
+        return updated;
+      }
+    } catch (_) {
+      // Fall back to local save if offline
+    }
 
     final updated = current.copyWith(
       name: name ?? current.name,
@@ -225,13 +287,44 @@ class AuthService {
     } catch (_) {
       // Ignore logout network failure and clear local session.
     } finally {
+      await ErrorTrackingService.clearUser();
       await _storage.clear();
     }
   }
 
-  Future<void> resendOTP(String phoneNumber) => sendOtp(phoneNumber, resend: true);
+  Future<void> resendOTP(String phoneNumber) async {
+    await sendOtp(phoneNumber, resend: true);
+  }
 
   // ── Helpers ─────────────────────────────────────────────────────────────
+
+  SendOtpResult? _parseExistingOtpResponse(DioException e) {
+    if (e.response?.statusCode != 429) return null;
+
+    final raw = e.response?.data;
+    if (raw is! Map) return null;
+
+    final map = Map<String, dynamic>.from(raw);
+    final nestedError = map['error'];
+    final message = (map['message'] ??
+            (nestedError is Map ? nestedError['message'] : null) ??
+            '')
+        .toString()
+        .toLowerCase();
+    if (!message.contains('already sent')) return null;
+
+    int? remainingSeconds;
+    final payload = map['data'];
+    if (payload is Map) {
+      final value = payload['remainingSeconds'];
+      if (value is num) remainingSeconds = value.toInt();
+    }
+
+    return SendOtpResult(
+      alreadySent: true,
+      remainingSeconds: remainingSeconds,
+    );
+  }
 
   String _formatPhoneForSendOtp(String input) {
     var normalized = input.trim().replaceAll(RegExp(r'\s+'), '');
@@ -259,7 +352,8 @@ class AuthService {
         e.type == DioExceptionType.sendTimeout ||
         e.type == DioExceptionType.receiveTimeout ||
         e.type == DioExceptionType.connectionError) {
-      return BackendResolver.connectionHelpMessage();
+      BackendResolver.logConnectionDevHint();
+      return BackendResolver.connectionUserMessage();
     }
 
     final data = e.response?.data;

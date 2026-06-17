@@ -5,6 +5,7 @@ import '../../services/rider_service.dart';
 import '../../services/maps_service.dart';
 import '../../services/navigation_service.dart';
 import '../../services/api_service.dart';
+import '../../services/contact_action_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/widgets/map_markers.dart';
 import '../../config/store_config.dart';
@@ -24,6 +25,7 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
   final MapsService _mapsService = MapsService();
   final NavigationService _navigationService = NavigationService();
   final ApiService _api = ApiService();
+  final ContactActionService _contactService = ContactActionService();
 
   GoogleMapController? _mapController;
   Map<String, dynamic>? _routeData;
@@ -416,7 +418,7 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
             const SizedBox(height: 24),
             Row(
               children: [
-                if ((stop['customerPhone'] as String).isNotEmpty)
+                if ((stop['customerPhone'] as String).isNotEmpty) ...[
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () => _callCustomer(stop['customerPhone'] as String),
@@ -429,8 +431,21 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
                       ),
                     ),
                   ),
-                if ((stop['customerPhone'] as String).isNotEmpty)
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _smsCustomer(stop['customerPhone'] as String),
+                      icon: const Icon(Icons.message_outlined, size: 20),
+                      label: const Text('SMS'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: const BorderSide(color: AppColors.primary),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () => _navigateToStop(stop),
@@ -452,22 +467,16 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
   }
 
   Future<void> _callCustomer(String phone) async {
-    try {
-      final uri = Uri.parse('tel:$phone');
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Could not make call'),
-              backgroundColor: AppColors.error,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('Error making call: $e');
+    final success = await _contactService.makeCall(phone);
+    if (!success && mounted) {
+      _contactService.showContactError(context, 'call', phone);
+    }
+  }
+
+  Future<void> _smsCustomer(String phone) async {
+    final success = await _contactService.sendSMS(phone);
+    if (!success && mounted) {
+      _contactService.showContactError(context, 'message', phone);
     }
   }
 

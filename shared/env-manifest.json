@@ -153,28 +153,62 @@
       "description": "Maximum OTP verification attempts per session"
     },
     "PHONEPE_MERCHANT_ID": {
-      "required": "production",
+      "required": "optional",
       "default": null,
       "type": "string",
-      "description": "PhonePe merchant ID; used in backend and Flutter app"
+      "deprecated": true,
+      "description": "[DEPRECATED] PhonePe merchant ID — replaced by Cashfree"
     },
     "PHONEPE_SALT_KEY": {
-      "required": "production",
+      "required": "optional",
       "default": null,
       "type": "string",
-      "description": "PhonePe salt key for checksum signing; used in backend and Flutter app"
+      "deprecated": true,
+      "description": "[DEPRECATED] PhonePe salt key — replaced by CASHFREE_SECRET_KEY"
     },
     "PHONEPE_SALT_INDEX": {
       "required": "optional",
       "default": null,
       "type": "string",
-      "description": "PhonePe salt index (PAYMENT_REQUIRED); used in backend and Flutter app"
+      "deprecated": true,
+      "description": "[DEPRECATED] PhonePe salt index — no longer used"
     },
     "PHONEPE_ENVIRONMENT": {
       "required": "optional",
       "default": "UAT",
       "type": "string",
-      "description": "PhonePe API environment (UAT or PRODUCTION)"
+      "deprecated": true,
+      "description": "[DEPRECATED] PhonePe API environment — replaced by CASHFREE_API_BASE"
+    },
+    "CASHFREE_APP_ID": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "Cashfree app ID for payment gateway"
+    },
+    "CASHFREE_SECRET_KEY": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "Cashfree secret key for API authentication and webhook verification"
+    },
+    "CASHFREE_API_BASE": {
+      "required": "optional",
+      "default": "https://sandbox.cashfree.com/pg",
+      "type": "string",
+      "description": "Cashfree API base URL (sandbox or production)"
+    },
+    "CASHFREE_RETURN_URL": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Cashfree payment return/verify callback URL"
+    },
+    "CASHFREE_WEBHOOK_URL": {
+      "required": "optional",
+      "default": null,
+      "type": "string",
+      "description": "Cashfree webhook notification URL"
     },
     "GOOGLE_MAPS_API_KEY": {
       "required": "production",

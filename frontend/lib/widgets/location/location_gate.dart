@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/address_service.dart';
-import '../../services/auth_service.dart';
-import 'location_onboarding_sheet.dart';
+import 'delivery_location_coordinator.dart';
 
-/// Shows Licious-style location sheet on startup when no default delivery address.
+/// Guards home shell — skips auto sheet right after setup completes.
 class LocationGate extends ConsumerStatefulWidget {
   final Widget child;
 
@@ -28,21 +27,15 @@ class _LocationGateState extends ConsumerState<LocationGate> {
     if (_hasChecked || !mounted) return;
     _hasChecked = true;
 
+    if (DeliveryLocationSession.setupJustCompleted) {
+      DeliveryLocationSession.consumeSetupCompleted();
+      return;
+    }
+
     try {
       final defaultAddress = await AddressService().getDefaultAddress();
       if (!mounted || defaultAddress != null) return;
-
-      String? firstName;
-      try {
-        final profile = await AuthService().getCurrentUserProfile();
-        final name = profile?.name?.trim();
-        if (name != null && name.isNotEmpty) {
-          firstName = name.split(RegExp(r'\s+')).first;
-        }
-      } catch (_) {}
-
-      if (!mounted) return;
-      await LocationOnboardingSheet.show(context, userName: firstName);
+      // No auto sheet — first-time users are handled by PostAuthGate → LocationSetupScreen.
     } catch (_) {
       // Gate failure should not block home shell.
     }

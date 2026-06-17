@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/app_theme.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../cart/premium_cart_card.dart';
 import 'checkout_selection_card.dart';
 
@@ -38,6 +39,7 @@ class CheckoutPaymentMethods extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Column(
@@ -45,18 +47,18 @@ class CheckoutPaymentMethods extends StatelessWidget {
       children: [
         const PremiumCartSectionTitle(title: 'Pay with'),
         PremiumCartCard(
-          padding: const EdgeInsets.all(AppSpacing.sm),
+          padding: EdgeInsets.all(mv.spacing.sm),
           child: Column(
             children: CheckoutPaymentOption.values.map((option) {
               final isSelected = selected == option;
               return Padding(
-                padding: const EdgeInsets.only(bottom: AppSpacing.xs),
+                padding: EdgeInsets.only(bottom: mv.spacing.xs),
                 child: CheckoutSelectionCard(
                   isSelected: isSelected,
                   onTap: () => onSelected(option),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.md,
-                    vertical: AppSpacing.sm + 2,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: mv.spacing.md,
+                    vertical: mv.spacing.sm + 2,
                   ),
                   child: Row(
                     children: [
@@ -64,17 +66,16 @@ class CheckoutPaymentMethods extends StatelessWidget {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: AppThemeColors.surface2,
-                          borderRadius:
-                              BorderRadius.circular(AppRadius.radiusMd),
+                          color: MeatvoColors.surfaceMuted,
+                          borderRadius: BorderRadius.circular(mv.radii.md),
                         ),
                         child: Icon(
                           option.icon,
-                          color: AppThemeColors.primary,
+                          color: mv.brandPrimary,
                           size: 20,
                         ),
                       ),
-                      const SizedBox(width: AppSpacing.sm),
+                      SizedBox(width: mv.spacing.sm),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -88,7 +89,7 @@ class CheckoutPaymentMethods extends StatelessWidget {
                             Text(
                               option.subtitle,
                               style: textTheme.bodySmall?.copyWith(
-                                color: AppThemeColors.textMuted,
+                                color: mv.textMuted,
                               ),
                             ),
                           ],
@@ -102,19 +103,19 @@ class CheckoutPaymentMethods extends StatelessWidget {
             }).toList(),
           ),
         ),
-        const SizedBox(height: AppSpacing.xs),
+        SizedBox(height: mv.spacing.xs),
         Row(
           children: [
             Icon(
               Icons.verified_user_outlined,
               size: 14,
-              color: AppThemeColors.success.withValues(alpha: 0.9),
+              color: mv.freshBadge.withValues(alpha: 0.9),
             ),
             const SizedBox(width: 4),
             Text(
               'Secured payments via PhonePe',
               style: textTheme.bodySmall?.copyWith(
-                color: AppThemeColors.textMuted,
+                color: mv.textMuted,
                 fontSize: 11,
               ),
             ),

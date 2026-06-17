@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
+import '../../config/backend_resolver.dart';
 import '../../services/admin_service.dart';
-import '../../services/auth_service.dart';
 import '../../services/socket_service.dart';
 import '../../core/constants/app_constants.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
+import '../../widgets/admin/assignment_failed_alert_banner.dart';
 import '../../widgets/admin/new_order_alert_banner.dart';
-import '../auth/phone_screen.dart';
-import 'admin_banners_screen.dart';
-import 'admin_categories_screen.dart';
-import 'admin_orders_map_screen.dart';
+import '../../widgets/common/error_state.dart';
 import 'admin_orders_screen.dart';
-import 'admin_products_screen.dart';
-import 'admin_riders_screen.dart';
-import 'admin_settings_screen.dart';
-import 'admin_users_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -25,8 +20,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final _adminService = AdminService();
   final _socketService = SocketService();
   AdminNewOrderAlertController? _alertController;
+  AdminAssignmentFailedAlertController? _assignmentFailedController;
   Map<String, dynamic>? _stats;
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -40,7 +37,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   @override
   void dispose() {
     _socketService.offNewOrder();
+    _socketService.offAssignmentFailed();
     _alertController?.dispose();
+    _assignmentFailedController?.dispose();
     super.dispose();
   }
 
@@ -54,13 +53,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       overlayState: overlay,
       onTap: (_) => _openOrdersFromAlert(),
     );
+    _assignmentFailedController = AdminAssignmentFailedAlertController(
+      overlayState: overlay,
+      onTap: (_) => _openOrdersFromAlert(),
+    );
     _setupSocket();
   }
 
   Future<void> _setupSocket() async {
     await _socketService.connect();
-    _socketService.emit('join_admin_room', null);
     _socketService.onNewOrder(_handleNewOrder);
+    _socketService.onAssignmentFailed(_handleAssignmentFailed);
+  }
+
+  void _handleAssignmentFailed(dynamic data) {
+    if (!mounted) return;
+
+    final alert = AssignmentFailedAlertData.fromSocket(data);
+    if (alert.orderId == 0) return;
+
+    _assignmentFailedController?.show(alert);
   }
 
   void _handleNewOrder(dynamic data) {
@@ -90,23 +102,27 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Future<void> _loadStats() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     try {
       final stats = await _adminService.getDashboardStats();
+      if (!mounted) return;
       setState(() {
         _stats = stats;
         _isLoading = false;
+        _loadError = null;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading stats: $e'),
-            backgroundColor: AppColors.primary,
-          ),
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = BackendResolver.toUserMessage(
+          e,
+          fallback: 'Could not load dashboard stats.',
         );
-      }
+      });
     }
   }
 
@@ -128,21 +144,22 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     ]);
     
     // Responsive font sizes
-    final titleFontSize = isSmallScreen ? 18.0 : (isTablet ? 24.0 : 20.0);
-    final cardTitleFontSize = isSmallScreen ? 13.0 : (isTablet ? 18.0 : 16.0);
-    final cardIconSize = isSmallScreen ? 40.0 : (isTablet ? 56.0 : 48.0);
     final statValueFontSize = isSmallScreen ? 20.0 : (isTablet ? 28.0 : 24.0);
     final statIconSize = isSmallScreen ? 24.0 : (isTablet ? 32.0 : 28.0);
     
     // Responsive spacing
     final horizontalPadding = isSmallScreen ? 12.0 : (isTablet ? 24.0 : 16.0);
-    final cardPadding = isSmallScreen ? 12.0 : (isTablet ? 24.0 : 20.0);
     final gridSpacing = isSmallScreen ? 8.0 : (isTablet ? 16.0 : 12.0);
-    final childAspectRatio = isSmallScreen ? 1.3 : (isTablet ? 1.0 : 1.2);
     
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: AppColors.warmBg,
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.dashboard,
+        todayOrders: todayOrders,
+        todayRevenue: todayRevenue,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       appBar: AppBar(
         title: const Text('Admin Dashboard'),
         backgroundColor: AppColors.cardBg,
@@ -150,17 +167,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         elevation: 0,
         actions: [
           IconButton(
-            onPressed: _confirmLogout,
-            tooltip: 'Log out',
-            icon: const Icon(Icons.logout),
-            color: AppColors.primary,
+            onPressed: _loadStats,
+            tooltip: 'Refresh stats',
+            icon: const Icon(Icons.refresh),
+            color: AppColors.textSecondary,
           ),
         ],
       ),
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
+            : _loadError != null && _stats == null
+                ? ErrorStateWidget(
+                    title: 'Dashboard unavailable',
+                    message: _loadError,
+                    icon: Icons.cloud_off_outlined,
+                    iconColor: AppColors.primary,
+                    onRetry: _loadStats,
+                  )
+                : RefreshIndicator(
               onRefresh: _loadStats,
               color: AppColors.primary,
               child: SingleChildScrollView(
@@ -204,102 +229,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       statValueFontSize: statValueFontSize,
                       statIconSize: statIconSize,
                     ),
-                    SizedBox(height: 24),
-                    
-                    // Quick Actions Section
-                    Text(
-                      'Quick Actions',
-                      style: TextStyle(
-                        fontSize: titleFontSize,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textDark,
-                      ),
-                    ),
-                    SizedBox(height: gridSpacing),
-                    GridView.count(
-                      crossAxisCount: 2,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisSpacing: gridSpacing,
-                      mainAxisSpacing: gridSpacing,
-                      childAspectRatio: childAspectRatio,
-                      children: [
-                        _buildActionCard(
-                          'Orders',
-                          Icons.receipt_long,
-                          AppColors.bluePrimary,
-                          () => _open(context, const AdminOrdersScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Route Map',
-                          Icons.map,
-                          AppColors.primary,
-                          () => _open(context, const AdminOrdersMapScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Riders',
-                          Icons.delivery_dining,
-                          AppColors.warning,
-                          () => _open(context, const AdminRidersScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Products',
-                          Icons.inventory_2,
-                          AppColors.success,
-                          () => _open(context, const AdminProductsScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Categories',
-                          Icons.category,
-                          AppColors.bluePrimary,
-                          () => _open(context, const AdminCategoriesScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Banners',
-                          Icons.view_carousel,
-                          AppColors.success,
-                          () => _open(context, const AdminBannersScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Settings',
-                          Icons.settings,
-                          AppColors.textSecondary,
-                          () => _open(context, const AdminSettingsScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                        _buildActionCard(
-                          'Users',
-                          Icons.people,
-                          AppColors.primary,
-                          () => _open(context, const AdminUsersScreen()),
-                          iconSize: cardIconSize,
-                          fontSize: cardTitleFontSize,
-                          padding: cardPadding,
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 24),
-                    _buildLogoutButton(),
                     SizedBox(height: horizontalPadding),
                   ],
                 ),
@@ -307,72 +236,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ),
       ),
     );
-  }
-
-  Widget _buildLogoutButton() {
-    return SizedBox(
-      width: double.infinity,
-      child: OutlinedButton.icon(
-        onPressed: _confirmLogout,
-        icon: const Icon(Icons.logout, color: AppColors.primary),
-        label: const Text(
-          'Log out',
-          style: TextStyle(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        style: OutlinedButton.styleFrom(
-          side: const BorderSide(color: AppColors.primary),
-          minimumSize: const Size(double.infinity, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _confirmLogout() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Log out?'),
-        content: const Text(
-          'You will need to sign in again to access the admin dashboard.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
-            child: const Text('Log out'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    try {
-      await AuthService().signOut();
-      if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute<void>(builder: (_) => const PhoneScreen()),
-        (_) => false,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Could not log out. Please try again.'),
-          backgroundColor: AppColors.primary,
-        ),
-      );
-    }
   }
 
   Widget _buildStatCard(
@@ -437,60 +300,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => screen),
-    );
-  }
-
-  Widget _buildActionCard(
-    String title,
-    IconData icon,
-    Color color,
-    VoidCallback onTap, {
-    double? iconSize,
-    double? fontSize,
-    double? padding,
-  }) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isSmallScreen = screenWidth < 360;
-    final defaultIconSize = iconSize ?? 48.0;
-    final defaultFontSize = fontSize ?? 16.0;
-    final defaultPadding = padding ?? 20.0;
-    final spacing = isSmallScreen ? 8.0 : 12.0;
-    
-    return Card(
-      elevation: 0,
-      color: AppColors.cardBg,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border, width: 1),
-      ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: EdgeInsets.all(defaultPadding),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: defaultIconSize, color: color),
-              SizedBox(height: spacing),
-              Flexible(
-                child: Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: defaultFontSize,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textDark,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 

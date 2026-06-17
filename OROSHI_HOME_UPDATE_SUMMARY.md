@@ -1,7 +1,7 @@
 # Home Screen Update Summary
 
 ## Overview
-Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new modern design style while keeping ALL existing functionality intact.
+Successfully updated `frontend/lib/screens/home/home_screen.dart` with new modern design style while keeping ALL existing functionality intact.
 
 ## Preserved Functionality ✅
 - ✅ homeViewModelProvider
@@ -19,7 +19,7 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 ## Visual Updates 🎨
 
 ### 1. Top Bar (HomeTopBar)
-**File:** `old_meatvo/lib/features/home/widgets/home_top_bar.dart`
+**File:** `frontend/lib/features/home/widgets/home_top_bar.dart`
 
 **Changes:**
 - Background color: `Color(0xFFFAF9F7)` (warm background, no shadow)
@@ -31,7 +31,7 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 - Height: 60px
 
 ### 2. Search Bar (NEW: HomeSearchBar)
-**File:** `old_meatvo/lib/features/home/widgets/home_search_bar.dart`
+**File:** `frontend/lib/features/home/widgets/home_search_bar.dart`
 
 **Changes:**
 - Static search bar (not expandable)
@@ -43,7 +43,7 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 - OnTap → navigates to SearchScreen
 
 ### 3. Banner Carousel (Updated HeroBannerCarousel)
-**File:** `old_meatvo/lib/features/home/widgets/hero_banner_carousel.dart`
+**File:** `frontend/lib/features/home/widgets/hero_banner_carousel.dart`
 
 **Changes:**
 - Fixed height: 150px
@@ -56,7 +56,7 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 - Subtle shadow: `blurRadius: 8, offset: (0, 2)`
 
 ### 4. Category Row (NEW: HomeCategoryRow)
-**File:** `old_meatvo/lib/features/home/widgets/home_category_row.dart`
+**File:** `frontend/lib/features/home/widgets/home_category_row.dart`
 
 **Features:**
 - "Shop by Category" label with "See All" link (red text)
@@ -71,7 +71,7 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 - CachedNetworkImage with fallback to colored initial
 
 ### 5. Product Sections (NEW: HomeProductSection)
-**File:** `old_meatvo/lib/features/home/widgets/home_product_section.dart`
+**File:** `frontend/lib/features/home/widgets/home_product_section.dart`
 
 **Features:**
 - Section title with "See All" link
@@ -92,14 +92,14 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 2. **Fresh Today** - using `state.featuredProducts`
 
 ### 6. Home Screen Background
-**File:** `old_meatvo/lib/screens/home/home_screen.dart`
+**File:** `frontend/lib/screens/home/home_screen.dart`
 
 **Changes:**
 - Background color: `Color(0xFFFAF9F7)`
 - RefreshIndicator color: `Colors.red.shade600`
 
 ### 7. Home Body Layout
-**File:** `old_meatvo/lib/widgets/home/home_body.dart`
+**File:** `frontend/lib/widgets/home/home_body.dart`
 
 **New Layout Order:**
 1. HomeSearchBar (static, tap to SearchScreen)
@@ -125,15 +125,15 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 - CustomScrollView with BouncingScrollPhysics maintained
 
 ## Files Created 📝
-1. `old_meatvo/lib/features/home/widgets/home_search_bar.dart`
-2. `old_meatvo/lib/features/home/widgets/home_category_row.dart`
-3. `old_meatvo/lib/features/home/widgets/home_product_section.dart`
+1. `frontend/lib/features/home/widgets/home_search_bar.dart`
+2. `frontend/lib/features/home/widgets/home_category_row.dart`
+3. `frontend/lib/features/home/widgets/home_product_section.dart`
 
 ## Files Modified ✏️
-1. `old_meatvo/lib/features/home/widgets/home_top_bar.dart`
-2. `old_meatvo/lib/features/home/widgets/hero_banner_carousel.dart`
-3. `old_meatvo/lib/widgets/home/home_body.dart`
-4. `old_meatvo/lib/screens/home/home_screen.dart`
+1. `frontend/lib/features/home/widgets/home_top_bar.dart`
+2. `frontend/lib/features/home/widgets/hero_banner_carousel.dart`
+3. `frontend/lib/widgets/home/home_body.dart`
+4. `frontend/lib/screens/home/home_screen.dart`
 
 ## Design Tokens Used 🎨
 - Primary red: `Colors.red.shade600` (buttons, borders, prices)
@@ -164,7 +164,7 @@ Successfully updated `old_meatvo/lib/screens/home/home_screen.dart` with new mod
 ## Notes 📌
 - All existing API calls, state management, and error handling preserved
 - Carousel_slider package already in pubspec.yaml
-- SearchScreen already exists at `old_meatvo/lib/screens/search/search_screen.dart`
+- SearchScreen already exists at `frontend/lib/screens/search/search_screen.dart`
 - No linter errors detected
 - Layout optimized for minimal scrolling (aunty-friendly UX)
 - Active categories (Chicken, Eggs) get red border

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/app_theme.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 
 /// Numbered section header for checkout steps.
 class CheckoutSectionHeader extends StatelessWidget {
@@ -19,10 +20,11 @@ class CheckoutSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: EdgeInsets.only(bottom: mv.spacing.sm),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -30,19 +32,19 @@ class CheckoutSectionHeader extends StatelessWidget {
             width: 28,
             height: 28,
             decoration: BoxDecoration(
-              color: AppThemeColors.primaryLight,
-              borderRadius: BorderRadius.circular(AppRadius.radiusSm),
+              color: MeatvoColors.primaryLight,
+              borderRadius: BorderRadius.circular(mv.radii.sm),
             ),
             alignment: Alignment.center,
             child: Text(
               '$step',
               style: textTheme.labelLarge?.copyWith(
-                color: AppThemeColors.primary,
+                color: mv.brandPrimary,
                 fontWeight: FontWeight.w700,
               ),
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          SizedBox(width: mv.spacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -50,7 +52,7 @@ class CheckoutSectionHeader extends StatelessWidget {
                 Text(
                   title,
                   style: textTheme.titleMedium?.copyWith(
-                    color: AppThemeColors.textPrimary,
+                    color: mv.textPrimary,
                     letterSpacing: -0.2,
                     fontWeight: FontWeight.w600,
                   ),
@@ -59,9 +61,7 @@ class CheckoutSectionHeader extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     subtitle!,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: AppThemeColors.textMuted,
-                    ),
+                    style: textTheme.bodySmall?.copyWith(color: mv.textMuted),
                   ),
                 ],
               ],

@@ -21,7 +21,7 @@ const normalizePhone = (raw) => {
   return input; // fall back; final regex validation will catch it
 };
 
-const OTP_LENGTH = Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 6);
+const OTP_LENGTH = Number(process.env.MSG91_OTP_LENGTH || process.env.OTP_LENGTH || 4);
 
 /** OTP codes are numeric; SMS may drop leading zeros in display. */
 const normalizeOtp = (raw) => {
@@ -78,11 +78,29 @@ const enableMfaSchema = z.object({
   query: z.object({}).optional(),
 });
 
+const verifyMfaSchema = z.object({
+  body: z.object({
+    token: z.string().regex(/^\d{6}$/, 'Token must be 6 digits'),
+  }),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+const disableMfaSchema = z.object({
+  body: z.object({
+    token: z.string().regex(/^\d{6}$/, 'Token must be 6 digits'),
+  }),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
 module.exports = {
   sendOtpSchema,
   verifyOtpSchema,
   refreshTokenSchema,
   enableMfaSchema,
+  verifyMfaSchema,
+  disableMfaSchema,
   normalizePhone,
   normalizeOtp,
 };

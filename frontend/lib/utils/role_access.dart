@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_navigator_key.dart';
 import '../navigation/app_destinations.dart';
 import '../services/auth_service.dart';
+import '../services/rider_service.dart';
 import 'role_access_exception.dart';
 
 bool isDeliveryPartnerRole(String? role) {
@@ -10,6 +11,10 @@ bool isDeliveryPartnerRole(String? role) {
   return normalized == 'rider' ||
       normalized == 'delivery' ||
       normalized == 'delivery_partner';
+}
+
+bool isStaffRole(String? role) {
+  return role?.toLowerCase().trim() == 'staff';
 }
 
 String roleAccessDeniedMessage(String _) {
@@ -61,12 +66,40 @@ Future<bool> ensureDeliveryPartnerAccess(BuildContext context) async {
     return false;
   }
 
-  if (!isDeliveryPartnerRole(user.role)) {
+  if (isDeliveryPartnerRole(user.role)) {
+    return true;
+  }
+
+  try {
+    await RiderService().getRiderProfile();
+    return true;
+  } catch (_) {
+    // No approved delivery partner profile.
+  }
+
+  if (context.mounted) {
+    await redirectToRoleHome(role: user.role);
+  }
+  return false;
+}
+
+/// Returns false and redirects when the user is not kitchen staff.
+Future<bool> ensureStaffAccess(BuildContext context) async {
+  final user = await AuthService().getMe();
+  if (user == null) {
+    await AuthService().signOut();
     if (context.mounted) {
-      await redirectToRoleHome(role: user.role);
+      await redirectToRoleHome(message: 'Session expired. Please sign in again.');
     }
     return false;
   }
 
-  return true;
+  if (isStaffRole(user.role)) {
+    return true;
+  }
+
+  if (context.mounted) {
+    await redirectToRoleHome(role: user.role);
+  }
+  return false;
 }

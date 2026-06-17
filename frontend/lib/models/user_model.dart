@@ -54,6 +54,7 @@ class UserModel {
       'ADMIN' => 'admin',
       'DELIVERY' || 'DELIVERY_PARTNER' => 'rider',
       'CUSTOMER' => 'customer',
+      'STAFF' => 'staff',
       _ => rawRole.toLowerCase(),
     };
 

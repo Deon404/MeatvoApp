@@ -43,23 +43,19 @@ class CatalogState {
       );
 
   List<ProductWithVariants> get filteredProducts {
-    // Determine the effective category. If the requested `selectedCategory`
-    // has zero matching products (e.g. admin renamed the category but the
-    // customer app sent the old/default name like "Chicken" or "Fish"),
-    // we silently fall back to the first category that actually has
-    // products — this prevents the historical "white / empty screen" bug
-    // where filtering produced 0 rows.
     final hasMatch = allProducts.any(
       (p) => _matchesCategory(p, selectedCategory),
     );
-    final effectiveCategory = hasMatch
+    // Never fall back to another category while refreshing — prevents
+    // chicken products flashing on an empty Eggs/Fish tab mid-switch.
+    final effectiveCategory = (isRefreshing || isLoading || hasMatch)
         ? selectedCategory
         : (_firstCategoryWithProducts() ?? selectedCategory);
 
     var products = allProducts.where((product) {
-      if (!_matchesCategory(product, effectiveCategory)) return false;
-
-      if (searchQuery.isNotEmpty) {
+      if (searchQuery.isEmpty) {
+        if (!_matchesCategory(product, effectiveCategory)) return false;
+      } else {
         final name = product.product.name.toLowerCase();
         final description = (product.product.description ?? '').toLowerCase();
         if (!name.contains(searchQuery) && !description.contains(searchQuery)) {

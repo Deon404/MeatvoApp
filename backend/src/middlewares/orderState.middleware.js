@@ -17,7 +17,7 @@ const {
 const validateStateTransition = async (req, res, next) => {
   try {
     const orderId = Number(req.params.id || req.body.orderId);
-    const newState = req.body.status || req.body.state;
+    const newState = req.body.newState;
     
     if (!orderId || !newState) {
       return fail(res, 400, 'Order ID and new state are required');
@@ -118,8 +118,8 @@ const validateOrderOwnership = async (req, res, next) => {
     const userId = req.user?.id;
     const userRole = req.user?.role;
 
-    // Admin can access any order
-    if (userRole === 'admin') {
+    // Admin and kitchen staff can access any order
+    if (userRole === 'admin' || userRole === 'staff') {
       return next();
     }
 
@@ -160,6 +160,15 @@ const validateOrderOwnership = async (req, res, next) => {
         });
         return fail(res, 403, 'This order is not assigned to you');
       }
+    }
+
+    if (userRole !== 'admin' && userRole !== 'customer' && userRole !== 'delivery') {
+      logger.warn('unauthorized_order_access_unknown_role', {
+        orderId,
+        userId,
+        userRole,
+      });
+      return fail(res, 403, 'Insufficient permissions');
     }
 
     next();

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../theme/app_theme.dart';
 
 /// Shared premium surface for cart sections.
@@ -19,16 +20,15 @@ class PremiumCartCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final card = Container(
       margin: margin,
       padding: padding,
       decoration: BoxDecoration(
-        color: AppThemeColors.white,
-        borderRadius: BorderRadius.circular(AppRadius.radiusXl),
-        border: Border.all(
-          color: AppThemeColors.border.withValues(alpha: 0.85),
-        ),
-        boxShadow: AppShadows.card,
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.xl),
+        border: Border.all(color: mv.border.withValues(alpha: 0.85)),
+        boxShadow: mv.shadowCard,
       ),
       child: child,
     );
@@ -39,7 +39,7 @@ class PremiumCartCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(AppRadius.radiusXl),
+        borderRadius: BorderRadius.circular(mv.radii.xl),
         child: card,
       ),
     );
@@ -58,12 +58,12 @@ class PremiumCartSectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
-    // Smart-cast local — `trailing!` bang removed.
     final trailingWidget = trailing;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      padding: EdgeInsets.only(bottom: mv.spacing.sm),
       child: Row(
         children: [
           Expanded(
@@ -72,7 +72,7 @@ class PremiumCartSectionTitle extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: textTheme.titleMedium?.copyWith(
-                color: AppThemeColors.textPrimary,
+                color: mv.textPrimary,
                 letterSpacing: -0.2,
               ),
             ),

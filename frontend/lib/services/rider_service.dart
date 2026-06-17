@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -29,6 +30,15 @@ class RiderService {
   String? _activeOrderId;
   bool _isOnDelivery = false;
   final MapsService _mapsService = MapsService();
+
+  List<Map<String, dynamic>>? _ordersCache;
+  DateTime? _ordersCacheAt;
+  static const Duration _ordersCacheTtl = Duration(seconds: 8);
+
+  void _invalidateOrdersCache() {
+    _ordersCache = null;
+    _ordersCacheAt = null;
+  }
 
   bool _isInsufficientPermissions(DioException e) {
     if (e.response?.statusCode != 403) return false;
@@ -106,12 +116,17 @@ class RiderService {
       }
 
       final groupedLists = <Map<String, dynamic>>[];
+      final seenIds = <String>{};
       for (final key in const ['available', 'active', 'delivered']) {
         final value = map[key];
         if (value is List) {
-          groupedLists.addAll(
-            value.map((e) => Map<String, dynamic>.from(e as Map)),
-          );
+          for (final entry in value) {
+            final order = Map<String, dynamic>.from(entry as Map);
+            final id = order['id']?.toString();
+            if (id != null && seenIds.contains(id)) continue;
+            if (id != null) seenIds.add(id);
+            groupedLists.add(order);
+          }
         }
       }
       if (groupedLists.isNotEmpty) {
@@ -146,7 +161,7 @@ class RiderService {
         return 'picked_up';
       case 'on_way':
       case 'on_the_way':
-        return 'picked_up';
+        return 'on_the_way';
       case 'delivered':
         return 'delivered';
       case 'cancelled':
@@ -290,11 +305,24 @@ class RiderService {
 
   Future<List<Map<String, dynamic>>> _fetchAssignedOrdersRaw({
     String? status,
+    bool forceRefresh = false,
   }) async {
-    var orders = _extractList(
-      await _api.get(ApiDeliveryPaths.orders),
-      'Failed to get rider orders',
-    ).map(_normalizeOrder).toList();
+    final cacheFresh = !forceRefresh &&
+        _ordersCache != null &&
+        _ordersCacheAt != null &&
+        DateTime.now().difference(_ordersCacheAt!) < _ordersCacheTtl;
+
+    List<Map<String, dynamic>> orders;
+    if (cacheFresh) {
+      orders = List<Map<String, dynamic>>.from(_ordersCache!);
+    } else {
+      orders = _extractList(
+        await _api.get(ApiDeliveryPaths.orders),
+        'Failed to get rider orders',
+      ).map(_normalizeOrder).toList();
+      _ordersCache = orders;
+      _ordersCacheAt = DateTime.now();
+    }
 
     if (status != null && status.isNotEmpty) {
       final normalizedStatus = _normalizeStatus(status);
@@ -416,17 +444,37 @@ class RiderService {
   /// Accept an order assignment.
   /// [assignmentId] is treated as the orderId for the backend endpoint.
   Future<void> acceptOrder(String assignmentId) async {
+    await acceptOrders([assignmentId]);
+  }
+
+  /// Accept one or more order assignments (batch delivery).
+  Future<void> acceptOrders(List<String> orderIds) async {
+    if (orderIds.isEmpty) {
+      throw Exception('No orders to accept');
+    }
+
+    final accepted = <String>[];
     try {
-      final res = await _api.post(ApiDeliveryPaths.orderAccept(assignmentId));
-      if (res.data['success'] != true) {
-        throw Exception(res.data['message'] ?? 'Failed to accept order');
+      for (final orderId in orderIds) {
+        final res = await _api.post(ApiDeliveryPaths.orderAccept(orderId));
+        if (res.data['success'] != true) {
+          throw Exception(res.data['message'] ?? 'Failed to accept order $orderId');
+        }
+        accepted.add(orderId);
       }
-      _activeOrderId = assignmentId;
+      _activeOrderId = orderIds.first;
       _updateDeliveryState('OUT_FOR_DELIVERY');
+      _invalidateOrdersCache();
     } on DioException catch (e) {
+      if (accepted.isNotEmpty) {
+        _invalidateOrdersCache();
+      }
       throw Exception(
           'Failed to accept order: ${e.response?.data?['message'] ?? e.message}');
     } catch (e) {
+      if (accepted.isNotEmpty) {
+        _invalidateOrdersCache();
+      }
       throw Exception('Failed to accept order: $e');
     }
   }
@@ -452,6 +500,7 @@ class RiderService {
         throw Exception(res.data['message'] ?? 'Failed to update order status');
       }
       _updateDeliveryState(normalized);
+      _invalidateOrdersCache();
     } on DioException catch (e) {
       throw Exception(
           'Failed to update order status: ${e.response?.data?['message'] ?? e.message}');
@@ -465,23 +514,32 @@ class RiderService {
   }
 
   Future<void> rejectOrder(String assignmentId, [String reason = '']) async {
-    try {
-      final res = await _api.post(
-        ApiDeliveryPaths.orderReject(assignmentId),
-        data: {
-          if (reason.trim().isNotEmpty) 'reason': reason.trim(),
-        },
-      );
-      if (res.data['success'] != true) {
-        throw Exception(res.data['message'] ?? 'Failed to reject order');
-      }
-      _updateDeliveryState('CANCELLED');
-    } on DioException catch (e) {
-      throw Exception(
-          'Failed to reject order: ${e.response?.data?['message'] ?? e.message}');
-    } catch (e) {
-      throw Exception('Failed to reject order: $e');
+    await rejectOrders([assignmentId], reason);
+  }
+
+  Future<void> rejectOrders(List<String> orderIds, [String reason = '']) async {
+    if (orderIds.isEmpty) {
+      throw Exception('No orders to reject');
     }
+
+    for (final orderId in orderIds) {
+      try {
+        final res = await _api.post(
+          ApiDeliveryPaths.orderReject(orderId),
+          data: {
+            if (reason.trim().isNotEmpty) 'reason': reason.trim(),
+          },
+        );
+        if (res.data['success'] != true) {
+          throw Exception(res.data['message'] ?? 'Failed to reject order $orderId');
+        }
+      } on DioException catch (e) {
+        throw Exception(
+            'Failed to reject order: ${e.response?.data?['message'] ?? e.message}');
+      }
+    }
+    _updateDeliveryState('CANCELLED');
+    _invalidateOrdersCache();
   }
 
   Future<void> markOrderPickedUp(String assignmentId) async {
@@ -497,8 +555,51 @@ class RiderService {
   Future<void> markOrderDelivered(
     String assignmentId, {
     Map<String, dynamic>? deliveryProof,
+    String? proofUrl,
   }) async {
-    await updateOrderStatus(assignmentId, 'DELIVERED');
+    final url = proofUrl ?? deliveryProof?['proofUrl']?.toString();
+    if (url != null && url.isNotEmpty) {
+      final res = await _api.patch(
+        ApiDeliveryPaths.orderStatus(assignmentId),
+        data: {'status': 'DELIVERED', 'proofUrl': url},
+      );
+      if (res.data['success'] != true) {
+        throw Exception(res.data['message'] ?? 'Failed to mark delivered');
+      }
+    } else {
+      await updateOrderStatus(assignmentId, 'DELIVERED');
+    }
+    _updateDeliveryState('DELIVERED');
+    _invalidateOrdersCache();
+  }
+
+  Future<String> uploadDeliveryProof(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        throw Exception('Image file not found');
+      }
+      final filename = filePath.replaceAll('\\', '/').split('/').last;
+      final formData = FormData.fromMap({
+        'image': await MultipartFile.fromFile(
+          filePath,
+          filename: filename.isEmpty ? 'proof.jpg' : filename,
+        ),
+      });
+      final data = _extractMap(
+        await _api.postMultipart(ApiDeliveryPaths.uploadProof, formData),
+        'Proof upload failed',
+      );
+      final url = (data['url'] ?? data['path'] ?? data['storagePath'] ?? '')
+          .toString()
+          .trim();
+      if (url.isEmpty) throw Exception('Upload response missing URL');
+      return url;
+    } on DioException catch (e) {
+      throw Exception(
+        'Proof upload failed: ${e.response?.data?['message'] ?? e.message}',
+      );
+    }
   }
 
   // ── Earnings ──────────────────────────────────────────────────────────────
@@ -511,6 +612,25 @@ class RiderService {
       ),
       'Failed to get rider earnings',
     );
+  }
+
+  Future<EarningsData> getEarnings({String period = 'today'}) async {
+    try {
+      final data = await _fetchEarningsPeriod(period);
+      return EarningsData.fromApi(
+        todayData: data,
+        weekData: data,
+        monthData: data,
+      );
+    } on DioException catch (e) {
+      await ErrorTrackingService.captureException(e, tag: 'rider_earnings');
+      throw Exception(
+        'Failed to get rider earnings: ${e.response?.data?['message'] ?? e.message}',
+      );
+    } catch (e, st) {
+      await ErrorTrackingService.captureException(e, stackTrace: st, tag: 'rider_earnings');
+      throw Exception('Failed to get rider earnings: $e');
+    }
   }
 
   Future<EarningsData> getRiderEarnings({double? lifetimeTotal}) async {
@@ -603,8 +723,11 @@ class RiderService {
 
   // ── Assignment detail ──────────────────────────────────────────────────────
 
-  Future<Map<String, dynamic>> getOrderAssignment(String assignmentId) async {
-    final orders = await _fetchAssignedOrdersRaw();
+  Future<Map<String, dynamic>> getOrderAssignment(
+    String assignmentId, {
+    bool forceRefresh = false,
+  }) async {
+    final orders = await _fetchAssignedOrdersRaw(forceRefresh: forceRefresh);
     final matchedOrder = orders.where((o) => o['id']?.toString() == assignmentId);
     if (matchedOrder.isNotEmpty) {
       return _toLegacyAssignment(matchedOrder.first);
@@ -619,7 +742,7 @@ class RiderService {
   // ── Realtime polling ──────────────────────────────────────────────────────
 
   Stream<List<OrderModel>> watchNewOrders() {
-    return Stream.periodic(const Duration(seconds: 30)).asyncMap((_) async {
+    return Stream.periodic(const Duration(seconds: 10)).asyncMap((_) async {
       try {
         return await getAssignedOrders();
       } on RoleAccessException {
@@ -638,26 +761,38 @@ class RiderService {
     await _newOrdersSubscription?.cancel();
 
     final seenOrderIds = <String>{};
-    _newOrdersSubscription = watchNewOrders().listen(
-      (orders) {
-        final currentIds = orders.map((order) => order.id).toSet();
-        final hasChanges =
-            seenOrderIds.isNotEmpty && !setEquals(seenOrderIds, currentIds);
+    void handleOrders(List<OrderModel> orders) {
+      final currentIds = orders.map((order) => order.id).toSet();
+      final hasChanges =
+          seenOrderIds.isNotEmpty && !setEquals(seenOrderIds, currentIds);
 
-        if (seenOrderIds.isNotEmpty) {
-          for (final order
-              in orders.where((item) => !seenOrderIds.contains(item.id))) {
-            onNewAssignment(_toLegacyAssignment(order.toJson()));
-          }
-          if (hasChanges) {
-            onAssignmentUpdated?.call();
-          }
+      if (seenOrderIds.isNotEmpty) {
+        for (final order
+            in orders.where((item) => !seenOrderIds.contains(item.id))) {
+          onNewAssignment(_toLegacyAssignment(order.toJson()));
         }
+        if (hasChanges) {
+          onAssignmentUpdated?.call();
+        }
+      }
 
-        seenOrderIds
-          ..clear()
-          ..addAll(currentIds);
-      },
+      seenOrderIds
+        ..clear()
+        ..addAll(currentIds);
+    }
+
+    try {
+      final initialOrders = await getAssignedOrders();
+      handleOrders(initialOrders);
+    } on RoleAccessException catch (error) {
+      onRoleAccessDenied?.call(error);
+      return;
+    } catch (error) {
+      debugPrint('Initial order assignment sync failed: $error');
+    }
+
+    _newOrdersSubscription = watchNewOrders().listen(
+      handleOrders,
       onError: (Object error) {
         if (error is RoleAccessException) {
           unsubscribeFromOrderAssignments();

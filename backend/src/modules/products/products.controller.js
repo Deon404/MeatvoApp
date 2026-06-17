@@ -5,6 +5,7 @@ const logger = require('../../utils/logger').logger;
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 const { isProductFresh, getFreshnessBadge, getFreshnessWhereClause } = require('../../utils/freshness.util');
+const { signStoredImageUrl, normalizeStoredImageUrl } = require('../../utils/uploadSigning');
 
 const CACHE_TTL_PRODUCTS = 300; // 5min
 const CACHE_TTL_PRODUCT = 600; // 10min
@@ -43,7 +44,9 @@ const requireAdmin = (req) => {
  * Format product with full Meatvo schema
  * Adds calculated fields: display_price, freshness_badge, etc.
  */
-const formatProduct = (product, weight_g = null) => {
+const getRequestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+
+const formatProduct = (product, weight_g = null, baseUrl = null) => {
   if (!product) return null;
 
   const basePrice = Number(product.base_price_per_kg || product.price || 0);
@@ -53,6 +56,15 @@ const formatProduct = (product, weight_g = null) => {
       ? JSON.parse(product.marination_options)
       : product.marination_options;
 
+  const salePrice = basePrice * (weight / 1000);
+  const dbMrp = Number(product.mrp || 0);
+  const effectiveMrp = dbMrp > salePrice + 0.01 ? dbMrp : null;
+  const hasMrpDiscount = effectiveMrp != null;
+  const listPrice = hasMrpDiscount ? effectiveMrp : salePrice;
+  const discountPct = hasMrpDiscount
+    ? Math.round((1 - salePrice / effectiveMrp) * 100)
+    : null;
+
   return {
     id: product.id,
     name: product.name,
@@ -60,7 +72,10 @@ const formatProduct = (product, weight_g = null) => {
     category_id: product.category_id,
     category_name: product.category_name || '',
     base_price_per_kg: basePrice,
-    display_price: basePrice * (weight / 1000),
+    price: listPrice,
+    display_price: salePrice,
+    mrp: hasMrpDiscount ? effectiveMrp : null,
+    discount: discountPct,
     weight_variants: product.weight_variants || [250, 500, 1000],
     cut_types: product.cut_types || null,
     marination_options: marinationOptions || null,
@@ -68,7 +83,7 @@ const formatProduct = (product, weight_g = null) => {
     freshness_badge: getFreshnessBadge(product.freshness_date),
     is_fresh: isProductFresh(product.freshness_date),
     is_active: product.active !== false,
-    image_url: product.image_url || '',
+    image_url: signStoredImageUrl(product.image_url || '', baseUrl),
     stock: product.stock || 0,
     unit: product.unit || 'kg',
     created_at: product.created_at,
@@ -94,9 +109,19 @@ const getAllProducts = asyncHandler(async (req, res) => {
     available: q.available !== undefined ? q.available === 'true' : false // Default to fresh only
   };
 
+  const baseUrl = getRequestBaseUrl(req);
   const cacheKey = getListCacheKey(page, limit, filters);
   const cached = await redis.get(cacheKey);
-  if (cached) return ok(res, JSON.parse(cached));
+  if (cached) {
+    const data = JSON.parse(cached);
+    if (Array.isArray(data.products)) {
+      data.products = data.products.map((p) => ({
+        ...p,
+        image_url: signStoredImageUrl(p.image_url || '', baseUrl),
+      }));
+    }
+    return ok(res, data);
+  }
 
   // Build conditions
   const conditions = ['p.active = true'];
@@ -149,7 +174,7 @@ const getAllProducts = asyncHandler(async (req, res) => {
   );
 
   // Format products with full schema
-  const formattedProducts = products.map(p => formatProduct(p, weight_g));
+  const formattedProducts = products.map((p) => formatProduct(p, weight_g, baseUrl));
 
   const pages = Math.ceil(Number(total) / limit);
   const data = { products: formattedProducts, total: Number(total), page, pages, limit };
@@ -163,11 +188,12 @@ const listProducts = getAllProducts; // compat
 const getProductById = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const weight_g = req.query.weight_g ? Number(req.query.weight_g) : null;
+  const baseUrl = getRequestBaseUrl(req);
   const cacheKey = `products:id:${id}`;
   let cached = await redis.get(cacheKey);
   if (cached) {
     const data = JSON.parse(cached);
-    return ok(res, { product: formatProduct(data, weight_g) });
+    return ok(res, { product: formatProduct(data, weight_g, baseUrl) });
   }
 
   const { rows } = await query('SELECT * FROM products WHERE id = $1 AND active = true', [id]);
@@ -180,7 +206,7 @@ const getProductById = asyncHandler(async (req, res) => {
   }
 
   await redis.set(cacheKey, JSON.stringify(product), 'EX', CACHE_TTL_PRODUCT);
-  return ok(res, { product: formatProduct(product, weight_g) });
+  return ok(res, { product: formatProduct(product, weight_g, baseUrl) });
 });
 
 const getCategories = asyncHandler(async (req, res) => {
@@ -200,9 +226,16 @@ const getCategories = asyncHandler(async (req, res) => {
 });
 
 const getFeaturedProducts = asyncHandler(async (req, res) => {
+  const baseUrl = getRequestBaseUrl(req);
   const cacheKey = 'products:featured';
   let cached = await redis.get(cacheKey);
-  if (cached) return ok(res, { products: JSON.parse(cached) });
+  if (cached) {
+    const products = JSON.parse(cached).map((p) => ({
+      ...p,
+      image_url: signStoredImageUrl(p.image_url || '', baseUrl),
+    }));
+    return ok(res, { products });
+  }
 
   // Get fresh products only
   const { rows } = await query(
@@ -212,7 +245,7 @@ const getFeaturedProducts = asyncHandler(async (req, res) => {
      ORDER BY id DESC LIMIT 10`
   );
 
-  const formattedProducts = rows.map(p => formatProduct(p));
+  const formattedProducts = rows.map((p) => formatProduct(p, null, baseUrl));
   await redis.set(cacheKey, JSON.stringify(formattedProducts), 'EX', CACHE_TTL_FEATURED);
   return ok(res, { products: formattedProducts });
 });
@@ -277,16 +310,16 @@ const createProduct = asyncHandler(async (req, res) => {
       Array.isArray(cutTypes) ? cutTypes : null,
       marinationOptions ? JSON.stringify(marinationOptions) : null,
       body.freshness_date || null,
-      body.image_url || null,
+      body.image_url ? normalizeStoredImageUrl(body.image_url) : null,
       body.stock || 0,
       body.unit || null,
       body.active !== undefined ? body.active : true
     ]
   );
 
-  await redis.del('products:*');
+  await redis.deleteByPattern('products:*');
   logger.info('product_created', { id: rows[0].id });
-  return created(res, { product: formatProduct(rows[0]) });
+  return created(res, { product: formatProduct(rows[0], null, getRequestBaseUrl(req)) });
 });
 
 const updateProduct = asyncHandler(async (req, res) => {
@@ -309,6 +342,9 @@ const updateProduct = asyncHandler(async (req, res) => {
     if (key === 'marination_options' && typeof value === 'string') {
       try { value = JSON.parse(value); } catch (e) { }
     }
+    if (key === 'image_url' && value) {
+      value = normalizeStoredImageUrl(value);
+    }
 
     updates[key] = value;
   }
@@ -321,9 +357,9 @@ const updateProduct = asyncHandler(async (req, res) => {
     params
   );
   if (!rows[0]) return fail(res, 404, 'Product not found');
-  await redis.del('products:*');
+  await redis.deleteByPattern('products:*');
   logger.info('product_updated', { id });
-  return ok(res, { product: formatProduct(rows[0]) });
+  return ok(res, { product: formatProduct(rows[0], null, getRequestBaseUrl(req)) });
 });
 
 const deleteProduct = asyncHandler(async (req, res) => {
@@ -331,14 +367,37 @@ const deleteProduct = asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const { rows } = await query('UPDATE products SET active=false WHERE id=$1 RETURNING id', [id]);
   if (!rows[0]) return fail(res, 404, 'Product not found');
-  await redis.del('products:*');
+  await redis.deleteByPattern('products:*');
   logger.info('product_deleted', { id });
   return ok(res, { message: 'Soft deleted' });
+});
+
+const getProductRating = asyncHandler(async (req, res) => {
+  const productId = Number(req.params.id);
+  try {
+    const { rows } = await query(
+      `SELECT COALESCE(AVG(rating), 0) AS average_rating,
+              COUNT(*)::int AS review_count
+       FROM product_ratings
+       WHERE product_id = $1`,
+      [productId]
+    );
+    return ok(res, {
+      averageRating: Number(Number(rows[0]?.average_rating || 0).toFixed(1)),
+      reviewCount: Number(rows[0]?.review_count || 0),
+    }, 'Product rating');
+  } catch (err) {
+    if (err?.code === '42P01') {
+      return ok(res, { averageRating: 0, reviewCount: 0 }, 'Product rating');
+    }
+    throw err;
+  }
 });
 
 module.exports = {
   listProducts, getAllProducts,
   getProductById,
+  getProductRating,
   getCategories,
   getFeaturedProducts,
   searchProducts,

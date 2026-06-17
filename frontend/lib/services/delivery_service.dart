@@ -1,4 +1,5 @@
 import '../config/store_config.dart';
+import '../utils/address_display_util.dart';
 import '../services/maps_service.dart';
 
 /// Delivery Service
@@ -112,22 +113,7 @@ class DeliveryService {
   }
 
   String _buildAddressString(Map<String, dynamic> address) {
-    final parts = <String>[];
-    
-    if (address['address_line1'] != null) {
-      parts.add(address['address_line1'] as String);
-    }
-    if (address['address_line2'] != null) {
-      parts.add(address['address_line2'] as String);
-    }
-    if (address['city'] != null) {
-      parts.add(address['city'] as String);
-    }
-    if (address['state'] != null) {
-      parts.add(address['state'] as String);
-    }
-
-    return parts.join(', ');
+    return buildAddressStringFromMap(address);
   }
 }
 

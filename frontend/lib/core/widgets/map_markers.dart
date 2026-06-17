@@ -98,6 +98,40 @@ class MapMarkers {
     );
   }
 
+  // Order pin — shows order ID on map
+  static Future<BitmapDescriptor> orderIdPin(
+    String orderId, {
+    Color color = const Color(0xFFC8102E),
+    bool assigned = false,
+  }) async {
+    final label = orderId.length > 6
+        ? '#${orderId.substring(orderId.length - 6)}'
+        : '#$orderId';
+    final borderColor = assigned ? const Color(0xFF9E9E9E) : color;
+    final bgColor = assigned ? const Color(0xFFE0E0E0) : Colors.white;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: 2),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: borderColor,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    ).toBitmapDescriptor(
+      logicalSize: const Size(72, 28),
+      imageSize: const Size(144, 56),
+    );
+  }
+
   // Numbered stop — white circle, red border + number
   static Future<BitmapDescriptor> numberedStop(
     int number, {

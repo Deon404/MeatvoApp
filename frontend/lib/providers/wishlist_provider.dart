@@ -2,13 +2,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/product_variant_model.dart';
+import '../services/api_service.dart';
+import '../config/api_config.dart';
 import '../services/product_service.dart';
 
 const _wishlistStorageKey = 'wishlist_product_ids';
 
 final wishlistProvider =
     StateNotifierProvider<WishlistNotifier, List<String>>((ref) {
-  return WishlistNotifier()..load();
+  return WishlistNotifier(ref.read(apiServiceProvider))..load();
 });
 
 final wishlistProductsProvider =
@@ -17,22 +19,34 @@ final wishlistProductsProvider =
   if (ids.isEmpty) return [];
 
   final service = ref.read(productServiceProvider);
-  final products = <ProductWithVariants>[];
+  final results = await Future.wait(
+    ids.map((id) => service.getProductById(id)),
+  );
 
-  for (final id in ids) {
-    final product = await service.getProductById(id);
-    if (product != null) {
-      products.add(product);
-    }
-  }
-
-  return products;
+  return results.whereType<ProductWithVariants>().toList();
 });
 
 class WishlistNotifier extends StateNotifier<List<String>> {
-  WishlistNotifier() : super(const []);
+  WishlistNotifier(this._api) : super(const []);
+
+  final ApiService _api;
 
   Future<void> load() async {
+    try {
+      final res = await _api.get(ApiUserPaths.wishlist);
+      final data = res.data;
+      if (data is Map && data['success'] == true && data['data'] is Map) {
+        final payload = Map<String, dynamic>.from(data['data'] as Map);
+        final ids = (payload['productIds'] as List?)
+                ?.map((e) => e.toString())
+                .toList() ??
+            [];
+        state = ids;
+        await _persistLocal(ids);
+        return;
+      }
+    } catch (_) {}
+
     try {
       final prefs = await SharedPreferences.getInstance();
       state = prefs.getStringList(_wishlistStorageKey) ?? const [];
@@ -49,7 +63,13 @@ class WishlistNotifier extends StateNotifier<List<String>> {
 
     final updated = [...state, trimmed];
     state = updated;
-    await _persist(updated);
+    await _persistLocal(updated);
+    try {
+      await _api.post(
+        ApiUserPaths.wishlist,
+        data: {'product_id': int.tryParse(trimmed) ?? trimmed},
+      );
+    } catch (_) {}
   }
 
   Future<void> remove(String productId) async {
@@ -57,7 +77,10 @@ class WishlistNotifier extends StateNotifier<List<String>> {
 
     final updated = state.where((id) => id != productId).toList();
     state = updated;
-    await _persist(updated);
+    await _persistLocal(updated);
+    try {
+      await _api.delete('${ApiUserPaths.wishlist}/$productId');
+    } catch (_) {}
   }
 
   Future<void> toggle(String productId) async {
@@ -68,7 +91,16 @@ class WishlistNotifier extends StateNotifier<List<String>> {
     }
   }
 
-  Future<void> _persist(List<String> ids) async {
+  Future<void> syncToServer() async {
+    try {
+      await _api.put(
+        ApiUserPaths.wishlist,
+        data: {'productIds': state.map((id) => int.tryParse(id) ?? id).toList()},
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _persistLocal(List<String> ids) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(_wishlistStorageKey, ids);

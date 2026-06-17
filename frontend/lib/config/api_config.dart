@@ -38,6 +38,7 @@ abstract final class ApiOrderPaths {
   static const applyCoupon = '/orders/apply-coupon';
   static const orderById = '/orders/';
   static const cancelOrder = '/orders/';
+  static String deliveryOtp(String id) => '/orders/enhanced/$id/delivery-otp';
 }
 
 abstract final class ApiCouponPaths {
@@ -59,6 +60,7 @@ abstract final class ApiDeliveryPaths {
   static const updateProfile = '/delivery/profile';
   static const toggleOnline = '/delivery/online';
   static const location = '/delivery/location';
+  static const uploadProof = '/delivery/upload/proof';
   static String orderAccept(String id) => '/delivery/orders/$id/accept';
   static String orderReject(String id) => '/delivery/orders/$id/reject';
   static String orderStatus(String id) => '/delivery/orders/$id/status';
@@ -68,6 +70,11 @@ abstract final class ApiDeliveryPaths {
 abstract final class ApiUserPaths {
   static const addresses = '/addresses';
   static const profile = '/users/profile';
+  static const notifications = '/users/notifications';
+  static const wishlist = '/users/wishlist';
+  static const reviews = '/users/reviews';
+  static String reviewForOrder(String orderId) => '/users/reviews/order/$orderId';
+  static String productRating(String id) => '/products/$id/rating';
 }
 
 abstract final class ApiAdminPaths {
@@ -82,6 +89,10 @@ abstract final class ApiAdminPaths {
   static const uploadImage = '/admin/upload/image';
   static const deliveryRouteOptimize = '/admin/delivery/route/optimize';
   static const deliveryAssignRoutes = '/admin/delivery/assign-routes';
+  static const coupons = '/admin/coupons';
+  static const analytics = '/admin/analytics';
+
+  static String couponById(int id) => '/admin/coupons/$id';
 
   static String userById(String id) => '/admin/users/$id';
   static String userStatus(String id) => '/admin/users/$id/status';
@@ -94,6 +105,12 @@ abstract final class ApiRiderPaths {
   static const orders = ApiDeliveryPaths.orders;
   static const profile = ApiDeliveryPaths.profile;
   static String orderStatus(String id) => ApiDeliveryPaths.orderStatus(id);
+}
+
+abstract final class ApiStaffPaths {
+  static const orders = '/staff/orders';
+  static String startPacking(String id) => '/orders/enhanced/$id/start-packing';
+  static String markPacked(String id) => '/orders/enhanced/$id/mark-packed';
 }
 
 class ApiConfig {
@@ -152,6 +169,12 @@ class ApiConfig {
   static String get adminOrders => '$baseUrl${ApiAdminPaths.orders}';
   static String get adminProducts => '$baseUrl${ApiAdminPaths.products}';
   static String get adminUsers => '$baseUrl${ApiAdminPaths.users}';
+
+  static String get staffOrders => '$baseUrl${ApiStaffPaths.orders}';
+  static String staffStartPacking(String id) =>
+      '$baseUrl${ApiStaffPaths.startPacking(id)}';
+  static String staffMarkPacked(String id) =>
+      '$baseUrl${ApiStaffPaths.markPacked(id)}';
 
   static String get keyAccessToken => EnvConfig.secureStorageAccessTokenKey;
   static String get keyRefreshToken => EnvConfig.secureStorageRefreshTokenKey;

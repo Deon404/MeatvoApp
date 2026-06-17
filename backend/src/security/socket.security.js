@@ -38,9 +38,13 @@ class SocketSecurity {
 
       // Verify JWT token
       const jwt = require('jsonwebtoken');
-      const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-      
-      if (!decoded || !decoded.id) {
+      const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET, {
+        issuer: 'meatvo-app',
+        audience: 'meatvo-users',
+        algorithms: ['HS256'],
+      });
+
+      if (!decoded || !decoded.id || decoded.type !== 'access') {
         return next(new Error('Invalid token'));
       }
 
@@ -182,7 +186,7 @@ class SocketSecurity {
       // Validate event names
       const allowedEventNames = [
         'ping', 'pong', 'join_room', 'leave_room',
-        'order_update', 'location_update', 'chat_message',
+        'order_update', 'location_update',
         'notification', 'status_update'
       ];
 

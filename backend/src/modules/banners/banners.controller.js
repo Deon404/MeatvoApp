@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
+const { signStoredImageUrl, normalizeStoredImageUrl } = require('../../utils/uploadSigning');
 
 const listBanners = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
@@ -20,18 +21,30 @@ const listBanners = asyncHandler(async (req, res) => {
      ORDER BY sort_order ASC, id DESC`,
     params
   );
-  return ok(res, { banners: rows }, 'Banners');
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const banners = rows.map((b) => ({
+    ...b,
+    image_url: signStoredImageUrl(b.image_url || '', baseUrl),
+  }));
+  return ok(res, { banners }, 'Banners');
 });
 
 const createBanner = asyncHandler(async (req, res) => {
   const body = req.validated.body;
+  const imageUrl = normalizeStoredImageUrl(body.image_url);
   const { rows } = await query(
     `INSERT INTO banners (image_url, active, sort_order)
      VALUES ($1,$2,$3)
      RETURNING id, image_url, active, sort_order`,
-    [body.image_url, body.active ?? true, body.sort_order ?? 0]
+    [imageUrl, body.active ?? true, body.sort_order ?? 0]
   );
-  return created(res, { banner: rows[0] }, 'Banner created');
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return created(res, {
+    banner: {
+      ...rows[0],
+      image_url: signStoredImageUrl(rows[0].image_url || '', baseUrl),
+    },
+  }, 'Banner created');
 });
 
 const deleteBanner = asyncHandler(async (req, res) => {

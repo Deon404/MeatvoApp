@@ -23,7 +23,7 @@ const mfaRateLimiter = async (req, res, next) => {
     return next();
   } catch (redisError) {
     logger.error('redis_mfa_rate_limiter_error', { message: redisError.message });
-    return next();
+    return fail(res, 503, 'Service temporarily unavailable. Please try again.');
   }
 };
 

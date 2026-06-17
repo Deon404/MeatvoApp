@@ -31,19 +31,21 @@ const firebaseRoutes = require('./src/modules/firebase/firebase.routes');
 const paymentsRoutes = require('./src/modules/payments/payments.routes');
 const adminRoutes = require('./src/modules/admin/admin.routes');
 const deliveryRoutes = require('./src/modules/delivery/delivery.routes');
+const staffRoutes = require('./src/modules/staff/staff.routes');
 const storeRoutes = require('./src/modules/settings/store.routes');
 const healthRoutes = require('./src/routes/health');
 const debugRoutes = require('./src/routes/debug.routes');
 const { router: metricsRouter, collectMetrics } = require('./src/routes/metrics');
 const { errorHandler } = require('./src/middlewares/error.middleware');
 const { requestLogger } = require('./src/middlewares/requestLogger.middleware');
-const { apiRateLimiter, authIpRateLimiter } = require('./src/middlewares/rateLimiter');
+const { apiRateLimiter, authIpRateLimiter, adminRateLimiter } = require('./src/middlewares/rateLimiter');
 const { logger } = require('./src/utils/logger');
 const { ensureSchema } = require('./src/db/ensureSchema');
 const { initializeSecurity } = require('./src/security');
-const { adminOnly } = require('./src/middlewares/adminOnlyIp.middleware');
-
 const app = express();
+app.disable('x-powered-by');
+
+const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 
 if (String(process.env.TRUST_PROXY || '').toLowerCase() === 'true') {
   app.set('trust proxy', 1);
@@ -71,9 +73,11 @@ app.use(
       directives: {
         defaultSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://www.gstatic.com', 'https://unpkg.com'],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://www.gstatic.com', 'https://*.firebaseio.com', 'https://*.googleapis.com', 'https://unpkg.com', 'https://cdn.jsdelivr.net'],
+        scriptSrc: isProd
+          ? ["'self'", 'https://www.gstatic.com', 'https://*.firebaseio.com', 'https://*.googleapis.com', 'https://unpkg.com', 'https://cdn.jsdelivr.net']
+          : ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https://www.gstatic.com', 'https://*.firebaseio.com', 'https://*.googleapis.com', 'https://unpkg.com', 'https://cdn.jsdelivr.net'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com', 'https://www.gstatic.com'],
-        imgSrc: ["'self'", 'data:', 'https:', 'http:'],
+        imgSrc: isProd ? ["'self'", 'data:', 'https:'] : ["'self'", 'data:', 'https:', 'http:'],
         connectSrc: [
           "'self'",
           'ws:',
@@ -113,8 +117,9 @@ if (
 // Serve public folder for service worker
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Uploaded admin images
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Uploaded images — signed URL or admin JWT required (no public static serve)
+const uploadsRoutes = require('./src/modules/uploads/uploads.routes');
+app.use('/uploads', uploadsRoutes);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(requestLogger);
@@ -226,10 +231,12 @@ app.use('/api/v1/admin/coupons', couponsRoutes);
 app.use('/api/banners', bannersRoutes);
 app.use('/api/payments', paymentsRoutes);
 app.use('/api/v1/payments', paymentsRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/v1/admin', adminRoutes);
+app.use('/api/admin', adminRateLimiter, adminRoutes);
+app.use('/api/v1/admin', adminRateLimiter, adminRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/v1/delivery', deliveryRoutes);
+app.use('/api/staff', staffRoutes);
+app.use('/api/v1/staff', staffRoutes);
 app.use('/api/firebase', firebaseRoutes);
 app.use('/api/store', storeRoutes);   // Public: /status, /check-delivery
 
@@ -242,6 +249,14 @@ app.get('/customer', (req, res) => {
 
 const sendDeliveryPage = (res) => {
   const deliveryHtmlPath = path.join(__dirname, '../delivery/delivery.html');
+  if (!fs.existsSync(deliveryHtmlPath)) {
+    return res.type('html').send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Meatvo Delivery</title></head>
+<body style="font-family:sans-serif;padding:2rem;text-align:center;">
+<h1>Delivery web app unavailable</h1>
+<p>Use the Meatvo Flutter app for rider delivery.</p>
+</body></html>`);
+  }
   const mapsKey = String(process.env.GOOGLE_MAPS_API_KEY || '');
   const escapedMapsKey = mapsKey.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   const html = fs.readFileSync(deliveryHtmlPath, 'utf8')
@@ -271,9 +286,11 @@ const PORT = Number(process.env.PORT || 8080);
 const HOST = process.env.HOST || '0.0.0.0';
 const server = http.createServer(app);
 const socketIo = require('./src/socket/socket').initSocket(server);
+const { startPaymentReconciliation } = require('./src/services/payment-reconciliation.service');
 
 // Make io available globally for controllers
 app.set('io', socketIo);
+startPaymentReconciliation(socketIo);
 
 (async () => {
   try {
@@ -332,6 +349,8 @@ const gracefulShutdown = async (signal) => {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// nodemon sends SIGUSR2 on restart — release port before the next instance starts
+process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2'));
 
 process.on('uncaughtException', (err) => {
   logger.error('uncaught_exception', { message: err?.message, stack: err?.stack });
@@ -342,4 +361,7 @@ process.on('unhandledRejection', (reason) => {
   const message = reason instanceof Error ? reason.message : String(reason);
   const stack = reason instanceof Error ? reason.stack : undefined;
   logger.error('unhandled_rejection', { message, stack });
+  if (isProd) {
+    gracefulShutdown('unhandledRejection');
+  }
 });

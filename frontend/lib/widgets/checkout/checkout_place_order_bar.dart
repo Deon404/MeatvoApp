@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../theme/app_theme.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 
 class CheckoutBillBreakdown {
   const CheckoutBillBreakdown({
@@ -49,21 +50,20 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
     final bill = widget.bill;
     final isFreeDelivery = bill.deliveryCharge == 0;
 
     return Container(
       decoration: BoxDecoration(
-        color: AppThemeColors.surface,
+        color: mv.surfaceCard,
         border: Border(
-          top: BorderSide(
-            color: AppThemeColors.border.withValues(alpha: 0.6),
-          ),
+          top: BorderSide(color: mv.border.withValues(alpha: 0.6)),
         ),
         boxShadow: [
           BoxShadow(
-            color: AppThemeColors.black.withValues(alpha: 0.06),
+            color: MeatvoColors.black.withValues(alpha: 0.06),
             blurRadius: 20,
             offset: const Offset(0, -4),
           ),
@@ -80,10 +80,10 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                   ? CrossFadeState.showFirst
                   : CrossFadeState.showSecond,
               firstChild: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.sm,
-                  AppSpacing.md,
+                padding: EdgeInsets.fromLTRB(
+                  mv.spacing.md,
+                  mv.spacing.sm,
+                  mv.spacing.md,
                   0,
                 ),
                 child: Column(
@@ -97,7 +97,7 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                       _BillRow(
                         label: 'Discount',
                         value: '-₹${bill.discount.toStringAsFixed(0)}',
-                        valueColor: AppThemeColors.success,
+                        valueColor: mv.freshBadge,
                       ),
                     ],
                     const SizedBox(height: 4),
@@ -106,29 +106,28 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                       value: isFreeDelivery
                           ? 'FREE'
                           : '₹${bill.deliveryCharge.toStringAsFixed(0)}',
-                      valueColor:
-                          isFreeDelivery ? AppThemeColors.success : null,
+                      valueColor: isFreeDelivery ? mv.freshBadge : null,
                     ),
-                    const SizedBox(height: AppSpacing.xs),
-                    const Divider(height: 1, color: AppThemeColors.divider),
+                    SizedBox(height: mv.spacing.xs),
+                    Divider(height: 1, color: mv.border),
                   ],
                 ),
               ),
               secondChild: const SizedBox.shrink(),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
-                AppSpacing.md,
+              padding: EdgeInsets.fromLTRB(
+                mv.spacing.md,
+                mv.spacing.sm,
+                mv.spacing.md,
+                mv.spacing.md,
               ),
               child: Row(
                 children: [
                   Expanded(
                     child: InkWell(
                       onTap: _toggleBreakdown,
-                      borderRadius: BorderRadius.circular(AppRadius.radiusMd),
+                      borderRadius: BorderRadius.circular(mv.radii.md),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Column(
@@ -139,7 +138,7 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                                 Text(
                                   'Total payable',
                                   style: textTheme.bodySmall?.copyWith(
-                                    color: AppThemeColors.textMuted,
+                                    color: mv.textMuted,
                                   ),
                                 ),
                                 const SizedBox(width: 4),
@@ -148,7 +147,7 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                                       ? Icons.keyboard_arrow_down_rounded
                                       : Icons.keyboard_arrow_up_rounded,
                                   size: 16,
-                                  color: AppThemeColors.textMuted,
+                                  color: mv.textMuted,
                                 ),
                               ],
                             ),
@@ -157,6 +156,7 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                               '₹${bill.total.toStringAsFixed(0)}',
                               style: textTheme.titleLarge?.copyWith(
                                 fontWeight: FontWeight.w700,
+                                color: mv.textPrimary,
                               ),
                             ),
                           ],
@@ -164,7 +164,7 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.md),
+                  SizedBox(width: mv.spacing.md),
                   Expanded(
                     flex: 2,
                     child: _PlaceOrderButton(
@@ -199,25 +199,23 @@ class _PlaceOrderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return SizedBox(
       height: 52,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(AppRadius.radiusPill),
+          borderRadius: BorderRadius.circular(mv.radii.pill),
           gradient: LinearGradient(
             colors: isEnabled && !isLoading
-                ? const [Color(0xFFD4181C), AppThemeColors.primary]
-                : [
-                    AppThemeColors.textMuted,
-                    AppThemeColors.textMuted,
-                  ],
+                ? [mv.brandPrimaryDark, mv.brandPrimary]
+                : [mv.textMuted, mv.textMuted],
           ),
           boxShadow: isEnabled && !isLoading
               ? [
                   BoxShadow(
-                    color: AppThemeColors.primary.withValues(alpha: 0.3),
+                    color: mv.brandPrimary.withValues(alpha: 0.3),
                     blurRadius: 16,
                     offset: const Offset(0, 8),
                   ),
@@ -233,30 +231,30 @@ class _PlaceOrderButton extends StatelessWidget {
                     onTap!();
                   }
                 : null,
-            borderRadius: BorderRadius.circular(AppRadius.radiusPill),
+            borderRadius: BorderRadius.circular(mv.radii.pill),
             child: Center(
               child: isLoading
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 22,
                       height: 22,
                       child: CircularProgressIndicator(
                         strokeWidth: 2.2,
-                        color: AppThemeColors.white,
+                        color: MeatvoColors.white,
                       ),
                     )
                   : Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.shopping_bag_outlined,
-                          color: AppThemeColors.white,
+                          color: MeatvoColors.white,
                           size: 18,
                         ),
                         const SizedBox(width: 6),
                         Text(
                           label,
                           style: textTheme.titleSmall?.copyWith(
-                            color: AppThemeColors.white,
+                            color: MeatvoColors.white,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -283,6 +281,7 @@ class _BillRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Row(
@@ -290,14 +289,12 @@ class _BillRow extends StatelessWidget {
       children: [
         Text(
           label,
-          style: textTheme.bodySmall?.copyWith(
-            color: AppThemeColors.textSecondary,
-          ),
+          style: textTheme.bodySmall?.copyWith(color: mv.textSecondary),
         ),
         Text(
           value,
           style: textTheme.bodySmall?.copyWith(
-            color: valueColor ?? AppThemeColors.textPrimary,
+            color: valueColor ?? mv.textPrimary,
             fontWeight: FontWeight.w600,
           ),
         ),

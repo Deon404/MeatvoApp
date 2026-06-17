@@ -1,6 +1,6 @@
 # Checkout Pipeline Architecture
 
-End-to-end architecture for MeatvoApp checkout: cart validation, delivery slot booking, PhonePe payment (sandbox/production), atomic order creation, and webhook handling. Covers both the Node.js backend and the Flutter client (`old_meatvo/`).
+End-to-end architecture for MeatvoApp checkout: cart validation, delivery slot booking, PhonePe payment (sandbox/production), atomic order creation, and webhook handling. Covers both the Node.js backend and the Flutter client (`frontend/`).
 
 **Related docs:**
 - [PhonePe Payment Integration](./phonepe-payment-integration.md) — payment API details, env setup, checksum
@@ -28,7 +28,7 @@ Checkout is built from five coordinated subsystems that share PostgreSQL for ord
 
 ```mermaid
 flowchart TB
-  subgraph client [Flutter old_meatvo]
+  subgraph client [Flutter frontend]
     CartUI[CartScreen]
     CheckoutUI[CheckoutScreen]
     PayUI[PaymentService]
@@ -185,9 +185,9 @@ Fails if product missing/inactive or `stock < qty`.
 
 | File | Role |
 |------|------|
-| `old_meatvo/lib/services/cart_service.dart` | CRUD via `/api/cart`; maintains local `CartModel` notifier |
-| `old_meatvo/lib/models/cart_model.dart` | Local model with optional `variantId` (backend ignores variants) |
-| `old_meatvo/lib/screens/checkout/checkout_screen.dart` | Uses `widget.cart` passed from cart screen |
+| `frontend/lib/services/cart_service.dart` | CRUD via `/api/cart`; maintains local `CartModel` notifier |
+| `frontend/lib/models/cart_model.dart` | Local model with optional `variantId` (backend ignores variants) |
+| `frontend/lib/screens/checkout/checkout_screen.dart` | Uses `widget.cart` passed from cart screen |
 
 **Critical:** Before checkout, all cart mutations must go through `/api/cart`. The local `CartModel` in checkout is used for display and sends `items` to `POST /orders`, but the backend order is built from Redis.
 
@@ -284,12 +284,12 @@ If only `deliverySlot` meta is sent (no `deliverySlotId`), metadata is saved but
 
 | System | File | Used where |
 |--------|------|------------|
-| **API slots** (authoritative) | `old_meatvo/lib/services/delivery_slot_api_service.dart` | Checkout screen |
-| **Local slots** (legacy labels) | `old_meatvo/lib/services/delivery_time_slot_service.dart` | Cart screen Morning/Evening labels only |
+| **API slots** (authoritative) | `frontend/lib/services/delivery_slot_api_service.dart` | Checkout screen |
+| **Local slots** (legacy labels) | `frontend/lib/services/delivery_time_slot_service.dart` | Cart screen Morning/Evening labels only |
 
 Checkout (`checkout_screen.dart`) loads API slots and passes `deliverySlotId` + `deliverySlotMeta` to `createOrder`. The standalone `bookSlot()` API method exists in Dart but is **never called** — booking happens only inside `POST /orders`.
 
-See also: [Flutter Checkout Flow](../../old_meatvo/docs/checkout-flow.md)
+See also: [Flutter Checkout Flow](../../frontend/docs/checkout-flow.md)
 
 ---
 
@@ -384,8 +384,8 @@ sequenceDiagram
 
 | File | Methods |
 |------|---------|
-| `old_meatvo/lib/services/payment_service.dart` | `initiatePayment()`, `getPaymentStatusForOrder()`, `verifyPayment()` |
-| `old_meatvo/lib/screens/checkout/checkout_screen.dart` | `_PaymentStatusPoller` polls status after PhonePe redirect |
+| `frontend/lib/services/payment_service.dart` | `initiatePayment()`, `getPaymentStatusForOrder()`, `verifyPayment()` |
+| `frontend/lib/screens/checkout/checkout_screen.dart` | `_PaymentStatusPoller` polls status after PhonePe redirect |
 
 **Gap:** Flutter calls `POST /payments/verify` (`payment_service.dart` line 52) — this route **does not exist** on the backend. Use `GET /payments/:orderId/status` instead.
 
@@ -604,7 +604,7 @@ Prioritized known issues in the current implementation. These are documented for
 | Payment status screen | `_PaymentStatusPoller` in `checkout_screen.dart` | `GET /api/payments/:orderId/status` |
 | Order history | `order_service.dart` | `GET /api/orders` |
 
-Detailed Flutter flow: [old_meatvo/docs/checkout-flow.md](../../old_meatvo/docs/checkout-flow.md)
+Detailed Flutter flow: [frontend/docs/checkout-flow.md](../../frontend/docs/checkout-flow.md)
 
 ### Backend source files
 

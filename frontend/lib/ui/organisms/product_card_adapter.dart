@@ -1,4 +1,5 @@
 import '../../models/product_variant_model.dart';
+import '../../services/store_status_service.dart';
 import 'meatvo_product_card.dart';
 
 /// Maps [ProductWithVariants] to card display values.
@@ -16,6 +17,14 @@ abstract final class ProductCardAdapter {
     if (!product.product.isAvailable) return false;
     if (variant != null) return variant.isAvailable && variant.stock > 0;
     return (product.product.stock ?? 1) > 0;
+  }
+
+  static bool canOrder(StoreStatus store, ProductWithVariants product) {
+    return store.isOpen && canAdd(product);
+  }
+
+  static bool isOrderingPaused(StoreStatus store, ProductWithVariants product) {
+    return !store.isOpen && canAdd(product);
   }
 
   static String displayUnit(ProductWithVariants product) {
@@ -37,10 +46,21 @@ abstract final class ProductCardAdapter {
     return null;
   }
 
+  static double? discountPercent(ProductWithVariants product) {
+    final explicit = product.product.discount;
+    if (explicit != null && explicit > 0) return explicit;
+    final orig = originalPrice(product);
+    final current = displayPrice(product);
+    if (orig != null && orig > current + 0.01) {
+      return ((orig - current) / orig * 100).clamp(1, 99).toDouble();
+    }
+    return null;
+  }
+
   static double carouselWidth(double screenWidth) => screenWidth * 0.42;
 
   static double carouselHeight(double screenWidth) =>
-      gridCardHeight(screenWidth) * 0.95;
+      MeatvoProductCard.carouselCardHeight(carouselWidth(screenWidth));
 
   static double gridCardHeight(double screenWidth) =>
       MeatvoProductCard.gridCardHeight(screenWidth);

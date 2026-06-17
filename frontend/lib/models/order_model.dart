@@ -54,6 +54,7 @@ class OrderModel {
   final DateTime? deliveredAt;
   final DateTime? estimatedDeliveryTime;
   final int? etaMinutes;
+  final String? deliverySlotLabel;
 
   OrderModel({
     required this.id,
@@ -82,6 +83,7 @@ class OrderModel {
     this.deliveredAt,
     this.estimatedDeliveryTime,
     this.etaMinutes,
+    this.deliverySlotLabel,
   });
 
   /// Create OrderModel from JSON
@@ -137,6 +139,10 @@ class OrderModel {
         json['estimated_delivery_time'] ?? json['estimatedDeliveryTime'],
       ),
       etaMinutes: _parseIntOrNull(json['eta_minutes'] ?? json['etaMinutes']),
+      deliverySlotLabel: (json['delivery_slot_label'] ??
+              json['deliverySlotLabel'] ??
+              json['slot_name'])
+          ?.toString(),
     );
   }
 
@@ -169,6 +175,7 @@ class OrderModel {
       'delivered_at': deliveredAt?.toIso8601String(),
       'estimated_delivery_time': estimatedDeliveryTime?.toIso8601String(),
       'eta_minutes': etaMinutes,
+      'delivery_slot_label': deliverySlotLabel,
     };
   }
 
@@ -184,6 +191,7 @@ class OrderModel {
     double? deliveryLongitude,
     DateTime? estimatedDeliveryTime,
     int? etaMinutes,
+    String? deliverySlotLabel,
   }) {
     return OrderModel(
       id: id,
@@ -213,6 +221,7 @@ class OrderModel {
       estimatedDeliveryTime:
           estimatedDeliveryTime ?? this.estimatedDeliveryTime,
       etaMinutes: etaMinutes ?? this.etaMinutes,
+      deliverySlotLabel: deliverySlotLabel ?? this.deliverySlotLabel,
     );
   }
 }

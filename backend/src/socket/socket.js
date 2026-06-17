@@ -4,7 +4,7 @@ const { query } = require('../db/postgres');
 const socketSecurity = require('../security/socket.security');
 const jwtSecurity = require('../security/jwt.security');
 const { logger } = require('../utils/logger');
-const { updateRiderLocation } = require('../services/tracking.service');
+const { updateRiderLocation, verifyRiderAssignedToOrder } = require('../services/tracking.service');
 
 let io;
 
@@ -100,16 +100,61 @@ const initSocket = (httpServer) => {
       logger.debug('socket_customer_joined_room', { userId: requestedId });
     });
 
-    // Admin joins admin room
+    // Admin joins admin room (canonical + legacy)
     socket.on('join_admin_room', () => {
       if (socket.userRole !== 'admin') return;
       socket.join('admin_room');
+      socket.join('admin:orders');
       logger.debug('socket_admin_joined_room', { socketId: socket.id });
+    });
+
+    // Kitchen staff joins staff room (canonical + legacy)
+    socket.on('join_staff_room', () => {
+      if (socket.userRole !== 'staff') return;
+      socket.join('staff_room');
+      socket.join('staff:orders');
+      logger.debug('socket_staff_joined_room', { socketId: socket.id });
+    });
+
+    // Customer joins order-specific tracking room
+    socket.on('join_order_room', async (orderId) => {
+      const numericOrderId = Number(orderId);
+      if (!Number.isFinite(numericOrderId)) return;
+
+      const { rows } = await query(
+        'SELECT customer_id FROM orders WHERE id = $1',
+        [numericOrderId]
+      );
+      const order = rows[0];
+      if (!order) return;
+
+      const role = String(socket.userRole || '').toLowerCase();
+      if (role === 'customer' && Number(order.customer_id) !== socket.userId) {
+        logger.warn('socket_order_room_denied', {
+          orderId: numericOrderId,
+          userId: socket.userId,
+        });
+        return;
+      }
+      if (!['customer', 'admin', 'staff'].includes(role)) return;
+
+      socket.join(`order:${numericOrderId}`);
+      logger.debug('socket_order_room_joined', {
+        orderId: numericOrderId,
+        userId: socket.userId,
+        role,
+      });
     });
 
     // Delivery partner joins their room
     socket.on('join_delivery_room', () => {
+      const role = String(socket.userRole || '').toLowerCase();
+      if (!['rider', 'delivery', 'delivery_partner'].includes(role)) {
+        logger.warn('socket_delivery_room_denied', { userId: socket.userId, role });
+        return;
+      }
       socket.join(`delivery_${socket.userId}`);
+      socket.join(`rider:${socket.userId}`);
       logger.debug('socket_delivery_joined_room', { userId: socket.userId });
     });
 
@@ -125,9 +170,20 @@ const initSocket = (httpServer) => {
           return;
         }
 
-        const orderId = data?.orderId != null ? Number(data.orderId) : null;
+        let orderId = data?.orderId != null ? Number(data.orderId) : null;
         const lat = Number(data?.lat);
         const lng = Number(data?.lng);
+
+        if (Number.isFinite(orderId)) {
+          const assigned = await verifyRiderAssignedToOrder(socket.userId, orderId);
+          if (!assigned) {
+            logger.warn('socket_rider_location_unassigned_order', {
+              userId: socket.userId,
+              orderId,
+            });
+            orderId = null;
+          }
+        }
 
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
           logger.warn('socket_rider_location_invalid_coords', {

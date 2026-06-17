@@ -8,13 +8,20 @@ import '../../services/cart_service.dart';
 import '../../services/payment_service.dart';
 import '../../services/auth_service.dart';
 import '../../core/constants/app_constants.dart';
-import '../../utils/eta_display_util.dart';
-import '../../utils/order_display_util.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../utils/address_display_util.dart';
+import '../../utils/order_eta_util.dart';
 import '../../utils/order_status_util.dart';
-import '../../utils/responsive_helper.dart';
+import '../../utils/eta_display_util.dart';
 import '../../services/maps_service.dart';
 import '../../widgets/maps/delivery_tracking_map.dart';
-import '../../widgets/order_status_live_indicator.dart';
+import '../../widgets/order/order_cancel_grace_banner.dart';
+import '../../widgets/order/order_delivery_otp_card.dart';
+import '../../widgets/order/order_tracking_bottom_sheet.dart';
+import '../../widgets/order/order_tracking_header.dart';
+import '../../widgets/order/order_tracking_hero_card.dart';
+import '../../widgets/order/order_tracking_illustration.dart';
 import '../../widgets/delivery/delivery_partner_contact_card.dart';
 import '../cart/cart_screen.dart';
 
@@ -34,8 +41,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final PaymentService _paymentService = PaymentService();
   final AuthService _authService = AuthService();
   OrderModel? _order;
-  OrderModel? _previousOrder; // Track previous order state for status change detection
   bool _isLoading = true;
+  bool _isRefreshing = false;
   String? _errorMessage;
   bool _isCancelling = false;
   bool _isReordering = false;
@@ -46,11 +53,19 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final MapsService _mapsService = MapsService();
   double? _liveRiderLat;
   double? _liveRiderLng;
+  int? _liveEtaMinutes;
+  DateTime? _liveEstimatedAt;
   double? _resolvedDeliveryLat;
   double? _resolvedDeliveryLng;
-  String? _routeEta;
-  String? _routeDistance;
   bool _showPartnerCardAnimation = false;
+  bool _socketReconnecting = false;
+  bool _socketEverConnected = false;
+  String? _routeDistance;
+  int? _routeEtaMinutes;
+  String? _deliveryOtp;
+  bool _otpLoading = false;
+  String? _otpError;
+  bool _otpFetchAttempted = false;
 
   @override
   void initState() {
@@ -98,11 +113,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
-  Future<void> _loadOrderDetails() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  Future<void> _loadOrderDetails({bool refresh = false}) async {
+    if (refresh) {
+      setState(() {
+        _isRefreshing = true;
+        _errorMessage = null;
+      });
+    } else {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+    }
 
     try {
       final order = await _orderService.getOrderById(widget.orderId);
@@ -112,11 +134,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           _order = order;
           _liveRiderLat = order.riderLatitude;
           _liveRiderLng = order.riderLongitude;
+          _liveEtaMinutes = order.etaMinutes;
+          _liveEstimatedAt = resolveDisplayEstimatedAt(
+            etaMinutes: order.etaMinutes,
+            fallbackEstimatedAt: order.estimatedDeliveryTime,
+          );
           _resolvedDeliveryLat = deliveryCoords?['lat'];
           _resolvedDeliveryLng = deliveryCoords?['lng'];
           _isLoading = false;
+          _isRefreshing = false;
         });
         _startTrackingIfActive(order);
+        _maybeFetchDeliveryOtp(order);
         if (order.status == 'delivered') {
           _loadReview();
         }
@@ -126,6 +155,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         setState(() {
           _errorMessage = 'Failed to load order details: $e';
           _isLoading = false;
+          _isRefreshing = false;
         });
       }
     }
@@ -156,12 +186,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
-  bool _shouldShowTrackingMap() {
-    if (_order == null) return false;
-    if (!isOrderTrackable(_order!.status)) return false;
-    return _resolvedDeliveryLat != null && _resolvedDeliveryLng != null;
-  }
-
   void _startTrackingIfActive(OrderModel order) {
     final status = order.status.toLowerCase();
     if (status == 'delivered' || status == 'cancelled') {
@@ -173,13 +197,26 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       onOrderUpdate: (updated) {
         if (!mounted) return;
         setState(() {
-          _previousOrder = _order;
           _order = updated;
           if (_liveRiderLat == null && updated.riderLatitude != null) {
             _liveRiderLat = updated.riderLatitude;
             _liveRiderLng = updated.riderLongitude;
           }
+          if (updated.etaMinutes != null) {
+            _liveEtaMinutes = updated.etaMinutes;
+          }
+          _liveEstimatedAt = resolveDisplayEstimatedAt(
+            etaMinutes: _liveEtaMinutes ?? updated.etaMinutes,
+            liveEstimatedAt: _liveEstimatedAt,
+            fallbackEstimatedAt: updated.estimatedDeliveryTime,
+          );
+          if (normalizeOrderStatus(updated.status) == 'delivered' ||
+              isOrderCancelled(updated.status)) {
+            _liveEtaMinutes = null;
+            _liveEstimatedAt = null;
+          }
         });
+        _maybeFetchDeliveryOtp(updated);
         if (updated.status == 'delivered') {
           _loadReview();
         }
@@ -191,7 +228,81 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           _liveRiderLng = lng;
         });
       },
+      onEtaUpdate: (update) {
+        if (!mounted) return;
+        setState(() {
+          final status = _order?.status ?? '';
+          final distanceKm = parseRouteDistanceKm(_routeDistance) ?? 0;
+          _liveEtaMinutes = isOrderOutForDelivery(status)
+              ? update.etaMinutes
+              : composeCustomerEtaMinutes(
+                  status: status,
+                  travelMinutes: update.etaMinutes,
+                  distanceKm: distanceKm,
+                );
+          _liveEstimatedAt = DateTime.now().add(
+            Duration(minutes: _liveEtaMinutes ?? update.etaMinutes),
+          );
+          if (update.riderLat != null && update.riderLng != null) {
+            _liveRiderLat = update.riderLat;
+            _liveRiderLng = update.riderLng;
+          }
+        });
+      },
+      onConnectionState: (connected) {
+        if (!mounted) return;
+        setState(() {
+          if (connected) _socketEverConnected = true;
+          // Only warn after a successful connection was lost (not on first connect).
+          _socketReconnecting = _socketEverConnected && !connected;
+        });
+      },
     );
+  }
+
+  void _maybeFetchDeliveryOtp(OrderModel order) {
+    if (!isDeliveryOtpVisible(order.status)) {
+      if (_deliveryOtp != null || _otpFetchAttempted) {
+        setState(() {
+          _deliveryOtp = null;
+          _otpError = null;
+          _otpFetchAttempted = false;
+        });
+      }
+      return;
+    }
+    if (_otpFetchAttempted || _otpLoading) return;
+
+    setState(() {
+      _otpLoading = true;
+      _otpError = null;
+      _otpFetchAttempted = true;
+    });
+
+    _orderService.getDeliveryOtp(widget.orderId).then((otp) {
+      if (!mounted) return;
+      setState(() {
+        _deliveryOtp = otp;
+        _otpLoading = false;
+        if (otp == null) {
+          _otpError = 'Could not load delivery OTP';
+        }
+      });
+    }).catchError((e) {
+      if (!mounted) return;
+      setState(() {
+        _otpLoading = false;
+        _otpError = 'Could not load delivery OTP';
+      });
+    });
+  }
+
+  void _retryFetchOtp() {
+    setState(() {
+      _otpFetchAttempted = false;
+      _otpError = null;
+    });
+    if (_order != null) _maybeFetchDeliveryOtp(_order!);
   }
 
   Future<void> _cancelOrder() async {
@@ -209,7 +320,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            style: TextButton.styleFrom(foregroundColor: MeatvoColors.error),
             child: const Text('Yes, Cancel'),
           ),
         ],
@@ -228,7 +339,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Order cancelled successfully'),
-            backgroundColor: AppColors.success,
+            backgroundColor: MeatvoColors.success,
           ),
         );
         await _loadOrderDetails();
@@ -241,7 +352,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             content: Text(message.startsWith('Failed to cancel order')
                 ? message
                 : 'Failed to cancel order: $message'),
-            backgroundColor: AppColors.error,
+            backgroundColor: MeatvoColors.error,
           ),
         );
       }
@@ -284,7 +395,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Items added to cart successfully!'),
-            backgroundColor: AppColors.success,
+            backgroundColor: MeatvoColors.success,
             duration: Duration(seconds: 2),
           ),
         );
@@ -304,393 +415,312 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to add items to cart: $e'),
-            backgroundColor: AppColors.error,
+            backgroundColor: MeatvoColors.error,
           ),
         );
       }
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final showTrackingMap = !_isLoading &&
-        _errorMessage == null &&
-        _order != null &&
-        _shouldShowTrackingMap();
+  void _onRouteInfo({
+    required String? eta,
+    required String? distance,
+    required int? etaMinutes,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _routeDistance = distance;
+      if (etaMinutes != null) _routeEtaMinutes = etaMinutes;
+    });
+  }
 
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      backgroundColor: AppColors.warmBg,
-      extendBodyBehindAppBar: false,
-      appBar: showTrackingMap
-          ? null
-          : AppBar(
-              title: Text('Order #${formatOrderDisplayId(widget.orderId)}'),
-            ),
-      body: SafeArea(
-        top: !showTrackingMap,
-        left: !showTrackingMap,
-        right: !showTrackingMap,
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(color: AppColors.primary),
-              )
-            : _errorMessage != null
-                ? _buildErrorState()
-                : _order == null
-                    ? _buildEmptyState()
-                    : showTrackingMap
-                        ? _buildTrackingLayout()
-                        : _buildStandardLayout(),
-      ),
+  int? get _riderBasedEtaMinutes {
+    final lat = _liveRiderLat ?? _order?.riderLatitude;
+    final lng = _liveRiderLng ?? _order?.riderLongitude;
+    final customerLat = _resolvedDeliveryLat;
+    final customerLng = _resolvedDeliveryLng;
+    if (lat == null ||
+        lng == null ||
+        customerLat == null ||
+        customerLng == null) {
+      return null;
+    }
+    return computeRiderCustomerEta(
+      status: _order?.status ?? '',
+      riderLat: lat,
+      riderLng: lng,
+      customerLat: customerLat,
+      customerLng: customerLng,
     );
   }
 
-  Widget _buildStandardLayout() {
-    final etaBanner = _buildEtaBanner();
-
-    return RefreshIndicator(
-      onRefresh: _loadOrderDetails,
-      color: AppColors.primary,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          16 + keyboardInset(context),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildStatusCard(),
-            if (etaBanner != null) ...[
-              const SizedBox(height: 12),
-              etaBanner,
-            ],
-            const SizedBox(height: 16),
-            if (_order!.riderId != null)
-              DeliveryPartnerContactCard(
-                order: _order!,
-                showAnimation: _showPartnerCardAnimation,
-                onRefresh: _loadOrderDetails,
-              ),
-            if (_order!.riderId != null) const SizedBox(height: 16),
-            _buildOrderItems(),
-            const SizedBox(height: 16),
-            _buildDeliveryAddress(),
-            const SizedBox(height: 16),
-            _buildPriceBreakdown(),
-            const SizedBox(height: 16),
-            _buildPaymentDetailsSection(),
-            const SizedBox(height: 16),
-            if (_order!.status == 'delivered') ...[
-              _buildReviewSection(),
-              const SizedBox(height: 16),
-            ],
-            _buildActionButtons(),
-          ],
-        ),
-      ),
+  String? get _riderBasedDistanceText {
+    final lat = _liveRiderLat ?? _order?.riderLatitude;
+    final lng = _liveRiderLng ?? _order?.riderLongitude;
+    final customerLat = _resolvedDeliveryLat;
+    final customerLng = _resolvedDeliveryLng;
+    if (lat == null ||
+        lng == null ||
+        customerLat == null ||
+        customerLng == null) {
+      return null;
+    }
+    final km = distanceKmBetween(
+      startLat: lat,
+      startLng: lng,
+      endLat: customerLat,
+      endLng: customerLng,
     );
+    return formatDistanceKm(km * 1.2);
+  }
+
+  int? get _headerEtaMinutes {
+    final status = _order?.status ?? '';
+    final riderEta = _riderBasedEtaMinutes;
+    if (isOrderOutForDelivery(status)) {
+      return _liveEtaMinutes ??
+          _routeEtaMinutes ??
+          riderEta ??
+          _order?.etaMinutes;
+    }
+
+    return _routeEtaMinutes ??
+        riderEta ??
+        _liveEtaMinutes ??
+        _order?.etaMinutes;
+  }
+
+  String? get _headerDistanceText =>
+      _riderBasedDistanceText ?? _routeDistance;
+
+  DateTime? get _displayEstimatedAt => resolveDisplayEstimatedAt(
+        etaMinutes: _headerEtaMinutes,
+        liveEstimatedAt: _liveEstimatedAt,
+        fallbackEstimatedAt: _order?.estimatedDeliveryTime,
+      );
+
+  bool _shouldShowRiderSection() {
+    if (_order == null) return false;
+    return shouldShowPartnerSection(_order!.status);
+  }
+
+  bool get _showLiveMap {
+    if (_order == null) return false;
+    final hasRiderGps =
+        (_liveRiderLat ?? _order!.riderLatitude) != null &&
+        (_liveRiderLng ?? _order!.riderLongitude) != null;
+    final hasDeliveryCoords =
+        _resolvedDeliveryLat != null && _resolvedDeliveryLng != null;
+    return shouldShowLiveMap(
+      _order!.status,
+      hasRiderGps: hasRiderGps,
+      hasDeliveryCoords: hasDeliveryCoords,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: mv.surfaceWarm,
+        body: Center(
+          child: CircularProgressIndicator(color: mv.brandPrimary),
+        ),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Scaffold(
+        backgroundColor: mv.surfaceWarm,
+        appBar: AppBar(
+          backgroundColor: mv.surfaceWarm,
+          elevation: 0,
+        ),
+        body: SafeArea(child: _buildErrorState()),
+      );
+    }
+
+    if (_order == null) {
+      return Scaffold(
+        backgroundColor: mv.surfaceWarm,
+        appBar: AppBar(
+          backgroundColor: mv.surfaceWarm,
+          elevation: 0,
+        ),
+        body: SafeArea(child: _buildEmptyState()),
+      );
+    }
+
+    return _buildTrackingLayout();
   }
 
   Widget _buildTrackingLayout() {
-    final etaBanner = _buildEtaBanner();
+    final order = _order!;
+    final hasDeliveryCoords =
+        _resolvedDeliveryLat != null && _resolvedDeliveryLng != null;
+    final isDelivered = isOrderCompleted(order.status);
 
-    return Column(
-      children: [
-        _buildTrackingHeader(),
-        Expanded(
-          flex: 52,
-          child: DeliveryTrackingMap(
-            expandToFill: true,
-            riderLatitude: _liveRiderLat ?? _order!.riderLatitude,
-            riderLongitude: _liveRiderLng ?? _order!.riderLongitude,
-            deliveryLatitude: _resolvedDeliveryLat,
-            deliveryLongitude: _resolvedDeliveryLng,
-            deliveryAddress: _order!.deliveryAddress,
-            riderName: _order!.riderName,
-            orderStatus: _order!.status,
-            hideTopBanner: true,
-            onRouteInfo: ({
-              required eta,
-              required distance,
-              required etaMinutes,
-            }) {
-              if (!mounted) return;
-              setState(() {
-                _routeEta = eta;
-                _routeDistance = distance;
-              });
-            },
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: _showLiveMap && hasDeliveryCoords
+                ? DeliveryTrackingMap(
+                    expandToFill: true,
+                    hideTopBanner: true,
+                    onRouteInfo: _onRouteInfo,
+                    riderLatitude: _liveRiderLat ?? order.riderLatitude,
+                    riderLongitude: _liveRiderLng ?? order.riderLongitude,
+                    deliveryLatitude: _resolvedDeliveryLat,
+                    deliveryLongitude: _resolvedDeliveryLng,
+                    deliveryAddress: order.deliveryAddress,
+                    riderName: order.riderName,
+                    orderStatus: order.status,
+                  )
+                : OrderTrackingIllustration(status: order.status),
           ),
-        ),
-        Expanded(
-          flex: 48,
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: AppColors.cardBg,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.black.withValues(alpha: 0.12),
-                  blurRadius: 20,
-                  offset: const Offset(0, -6),
-                ),
-              ],
+          if (_showLiveMap)
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 72,
+              right: 16,
+              child: _LiveMapBadge(),
             ),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSheetHeader(),
-                  if (etaBanner != null) ...[
-                    const SizedBox(height: 12),
-                    etaBanner,
-                  ],
-                  const SizedBox(height: 16),
-                  CompactStatusTimeline(currentStatus: _order!.status),
-                  const SizedBox(height: 16),
-                  if (_order!.riderId != null)
-                    DeliveryPartnerContactCard(
-                      order: _order!,
-                      showAnimation: _showPartnerCardAnimation,
-                      onRefresh: _loadOrderDetails,
-                    ),
-                ],
-              ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: OrderTrackingHeader(
+              status: order.status,
+              riderName: order.riderName,
+              etaMinutes: _headerEtaMinutes,
+              distanceText: _headerDistanceText,
+              deliveredAt: order.deliveredAt,
+              isRefreshing: _isRefreshing,
+              onBack: () => Navigator.of(context).pop(),
+              onRefresh: () => _loadOrderDetails(refresh: true),
             ),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTrackingHeader() {
-    final hasRider = _liveRiderLat != null || _order?.riderLatitude != null;
-    final statusColor = hasRider ? AppColors.success : AppColors.info;
-    final statusImage = orderTrackingImageForStatus(_order!.status);
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final topInset = MediaQuery.paddingOf(context).top;
-
-    return AnnotatedRegion<SystemUiOverlayStyle>(
-      value: SystemUiOverlayStyle.light,
-      child: SizedBox(
-        width: screenWidth,
-        child: Container(
-          width: screenWidth,
-          padding: EdgeInsets.fromLTRB(8, topInset + 4, 8, 8),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [statusColor, statusColor.withValues(alpha: 0.9)],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: statusColor.withValues(alpha: 0.22),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Row(
-          children: [
-            IconButton(
-              onPressed: () => Navigator.maybePop(context),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(
-                minWidth: 32,
-                minHeight: 32,
-              ),
-              icon: const Icon(
-                Icons.arrow_back_ios_new_rounded,
-                color: AppColors.white,
-                size: 18,
-              ),
-              tooltip: 'Back',
-            ),
-            ClipOval(
-              child: Image.asset(
-                statusImage,
-                width: 34,
-                height: 34,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => Container(
-                  width: 34,
-                  height: 34,
-                  color: AppColors.white.withValues(alpha: 0.2),
-                  child: const Icon(
-                    Icons.image_not_supported_outlined,
-                    size: 18,
-                    color: AppColors.white,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _getTrackingHeadline(),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.white,
-                      height: 1.1,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
+          if (_socketReconnecting)
+            Positioned(
+              top: MediaQuery.paddingOf(context).top + 56,
+              left: 16,
+              right: 16,
+              child: Material(
+                color: MeatvoColors.warning.withValues(alpha: 0.95),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: Row(
                     children: [
-                      if (_routeEta != null) ...[
-                        const Icon(
-                          Icons.access_time_rounded,
-                          size: 13,
-                          color: AppColors.white,
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Reconnecting… updates fall back to 30s polling',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.white,
+                              ),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          _routeEta!,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.white,
-                            height: 1.1,
-                          ),
-                        ),
-                        if (_routeDistance != null) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            width: 3,
-                            height: 3,
-                            decoration: const BoxDecoration(
-                              color: AppColors.white,
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
-                      ],
-                      if (_routeDistance != null)
-                        Flexible(
-                          child: Text(
-                            _routeDistance!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.white,
-                              height: 1.1,
-                            ),
-                          ),
-                        ),
-                      if (_routeEta == null && _routeDistance == null)
-                        Flexible(
-                          child: Text(
-                            _getEtaText(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.white.withValues(alpha: 0.95),
-                              height: 1.1,
-                            ),
-                          ),
-                        ),
+                      ),
                     ],
                   ),
-                ],
+                ),
               ),
             ),
-            IconButton(
-              onPressed: _loadOrderDetails,
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(
-                minWidth: 32,
-                minHeight: 32,
-              ),
-              icon: const Icon(
-                Icons.refresh_rounded,
-                color: AppColors.white,
-                size: 20,
-              ),
-              tooltip: 'Refresh',
+          OrderTrackingBottomSheet(
+            orderId: widget.orderId,
+            status: order.status,
+            heroCard: OrderTrackingHeroCard(
+              status: order.status,
+              deliveryAddress: order.deliveryAddress,
+              etaMinutes: _headerEtaMinutes,
+              estimatedDeliveryTime: _displayEstimatedAt,
+              deliverySlotLabel: order.deliverySlotLabel,
+              progressFraction: trackingProgressFraction(order.status),
             ),
-          ],
+            graceBanner: OrderCancelGraceBanner(
+              createdAt: order.createdAt,
+              status: order.status,
+              isCancelling: _isCancelling,
+              onCancel: _cancelOrder,
+            ),
+            otpCard: isDeliveryOtpVisible(order.status)
+                ? OrderDeliveryOtpCard(
+                    otp: _deliveryOtp,
+                    isLoading: _otpLoading,
+                    errorMessage: _otpError,
+                    onRetry: _retryFetchOtp,
+                  )
+                : null,
+            partnerSection: _shouldShowRiderSection()
+                ? DeliveryPartnerSheetCard(
+                    order: order,
+                    showAnimation: _showPartnerCardAnimation,
+                  )
+                : null,
+            reorderButton: isDelivered
+                ? SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isReordering ? null : _reorder,
+                      icon: _isReordering
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  MeatvoColors.white,
+                                ),
+                              ),
+                            )
+                          : const Icon(Icons.replay_rounded),
+                      label: Text(_isReordering ? 'Adding...' : 'Reorder'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: MeatvoColors.brandPrimary,
+                        foregroundColor: MeatvoColors.white,
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  )
+                : null,
+            detailsContent: _buildSheetDetails(),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildSheetHeader() {
-    return Row(
+  Widget _buildSheetDetails() {
+    final mv = context.meatvo;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Text(
-            'Order #${formatOrderDisplayId(widget.orderId)}',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textDark,
-            ),
-          ),
-        ),
-        _buildOrderListStatusBadge(_order!.status),
+        _buildOrderItems(),
+        SizedBox(height: mv.spacing.md),
+        _buildDeliveryAddress(),
+        SizedBox(height: mv.spacing.md),
+        _buildPriceBreakdown(),
+        SizedBox(height: mv.spacing.md),
+        _buildPaymentDetailsSection(),
+        if (_order!.status == 'delivered') ...[
+          SizedBox(height: mv.spacing.md),
+          _buildReviewSection(),
+        ],
+        SizedBox(height: mv.spacing.lg),
+        _buildActionButtons(),
       ],
-    );
-  }
-
-  Widget _buildOrderListStatusBadge(String status) {
-    late final Color backgroundColor;
-    late final Color textColor;
-    late final String label;
-
-    switch (normalizeOrderStatus(status)) {
-      case 'delivered':
-        backgroundColor = AppColors.success.withValues(alpha: 0.15);
-        textColor = AppColors.success;
-        label = 'Delivered';
-        break;
-      case 'cancelled':
-        backgroundColor = AppColors.accentLight;
-        textColor = AppColors.error;
-        label = 'Cancelled';
-        break;
-      case 'placed':
-      case 'pending':
-        backgroundColor = AppColors.warning.withValues(alpha: 0.15);
-        textColor = AppColors.warning;
-        label = 'Placed';
-        break;
-      default:
-        backgroundColor = AppColors.warning.withValues(alpha: 0.15);
-        textColor = AppColors.warning;
-        label = 'Active';
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: textColor,
-        ),
-      ),
     );
   }
 
@@ -701,21 +731,21 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 64, color: AppColors.error),
+            Icon(Icons.error_outline, size: 64, color: MeatvoColors.error),
             const SizedBox(height: 16),
             Text(
               'Error Loading Order',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+                color: MeatvoColors.textPrimary,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               _errorMessage ?? 'Unknown error',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+              style: TextStyle(fontSize: 14, color: MeatvoColors.textSecondary),
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
@@ -723,8 +753,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               icon: const Icon(Icons.refresh),
               label: const Text('Retry'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.white,
+                backgroundColor: MeatvoColors.brandPrimary,
+                foregroundColor: MeatvoColors.white,
                 minimumSize: const Size(0, 48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -741,203 +771,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return const Center(child: Text('Order not found'));
   }
 
-  Widget? _buildEtaBanner() {
-    if (_order == null) return null;
-
-    final status = _order!.status.toLowerCase();
-    if (status == 'delivered' || status == 'cancelled') return null;
-
-    final eta = _order!.estimatedDeliveryTime;
-    if (eta == null) return null;
-
-    final isDelayed = isEtaPassed(eta);
-    final minutesLabel = formatMinutesAway(_order!.etaMinutes, eta);
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDelayed ? etaOrangeBg : etaGreenBg,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.access_time,
-            color: isDelayed ? etaOrange : etaGreen,
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  isDelayed
-                      ? 'Taking a bit longer than expected'
-                      : 'Estimated Delivery',
-                  style: TextStyle(
-                    fontSize: isDelayed ? 13 : 11,
-                    color: isDelayed ? etaOrange : AppColors.textSecondary,
-                    fontWeight:
-                        isDelayed ? FontWeight.w600 : FontWeight.w400,
-                  ),
-                ),
-                if (!isDelayed) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    formatDeliveryByTime(eta),
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: etaGreen,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (!isDelayed && minutesLabel.isNotEmpty)
-            Text(
-              minutesLabel,
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.textSecondary,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusCard() {
-    if (_order == null) return const SizedBox.shrink();
-
-    return Card(
-      elevation: 0,
-      color: AppColors.cardBg,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border, width: 1),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Order Status',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildStatusBadge(_order!.status),
-            const SizedBox(height: 12),
-            _buildStatusTimeline(),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusBadge(String status) {
-    Color backgroundColor;
-    Color textColor;
-    String label;
-    IconData icon;
-
-    switch (status.toLowerCase()) {
-      case 'placed':
-      case 'pending':
-        backgroundColor = AppColors.warning.withValues(alpha: 0.2);
-        textColor = AppColors.warning;
-        label = 'Order Placed';
-        icon = Icons.shopping_bag;
-        break;
-      case 'confirmed':
-        backgroundColor = AppColors.info.withValues(alpha: 0.2);
-        textColor = AppColors.info;
-        label = 'Order Confirmed';
-        icon = Icons.check_circle;
-        break;
-      case 'preparing':
-        backgroundColor = AppColors.warning.withValues(alpha: 0.2);
-        textColor = AppColors.warning;
-        label = 'Preparing';
-        icon = Icons.restaurant;
-        break;
-      case 'out_for_delivery':
-        backgroundColor = AppColors.info.withValues(alpha: 0.2);
-        textColor = AppColors.info;
-        label = 'Out for Delivery';
-        icon = Icons.local_shipping;
-        break;
-      case 'delivered':
-        backgroundColor = AppColors.success.withValues(alpha: 0.2);
-        textColor = AppColors.success;
-        label = 'Delivered';
-        icon = Icons.check_circle;
-        break;
-      case 'cancelled':
-        backgroundColor = AppColors.error.withValues(alpha: 0.2);
-        textColor = AppColors.error;
-        label = 'Cancelled';
-        icon = Icons.cancel;
-        break;
-      default:
-        backgroundColor = AppColors.info.withValues(alpha: 0.2);
-        textColor = AppColors.info;
-        label = status;
-        icon = Icons.info;
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, color: textColor, size: 24),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: textColor,
-              ),
-            ),
-          ),
-          // Live indicator for active orders
-          OrderStatusLiveIndicator(
-            status: _order!.status,
-            previousStatus: _previousOrder?.status,
-            showLiveBadge: !['delivered', 'cancelled'].contains(_order!.status.toLowerCase()),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusTimeline() {
-    if (_order == null) return const SizedBox.shrink();
-
-    // Use the new StatusTimelineWidget with real-time updates
-    return StatusTimelineWidget(
-      currentStatus: _order!.status,
-      statusTimestamps: {
-        'placed': _order!.createdAt,
-        'confirmed': _order!.updatedAt,
-        'delivered': _order!.deliveredAt,
-      },
-    );
-  }
-
   Widget _buildOrderItems() {
     if (_order == null || _order!.items.isEmpty) {
       return const SizedBox.shrink();
@@ -945,10 +778,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     return Card(
       elevation: 0,
-      color: AppColors.cardBg,
+      color: MeatvoColors.surfaceCard,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border, width: 1),
+        side: BorderSide(color: MeatvoColors.border, width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -960,7 +793,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+                color: MeatvoColors.textPrimary,
               ),
             ),
             const SizedBox(height: 12),
@@ -986,7 +819,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                    color: MeatvoColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -994,7 +827,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   '${item.quantity} ${item.unit} × ₹${item.price.toStringAsFixed(2)}',
                   style: TextStyle(
                     fontSize: 12,
-                    color: AppColors.textSecondary,
+                    color: MeatvoColors.textSecondary,
                   ),
                 ),
               ],
@@ -1005,7 +838,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             style: const TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+              color: MeatvoColors.textPrimary,
             ),
           ),
         ],
@@ -1018,10 +851,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     return Card(
       elevation: 0,
-      color: AppColors.cardBg,
+      color: MeatvoColors.surfaceCard,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border, width: 1),
+        side: BorderSide(color: MeatvoColors.border, width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1030,88 +863,30 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           children: [
             Row(
               children: [
-                Icon(Icons.location_on, color: AppColors.primary, size: 20),
+                Icon(Icons.location_on, color: MeatvoColors.brandPrimary, size: 20),
                 const SizedBox(width: 8),
                 const Text(
                   'Delivery Address',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+                    color: MeatvoColors.textPrimary,
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             Text(
-              _order!.deliveryAddress ?? 'Address not available',
+              formatAddressForDisplay(_order!.deliveryAddress),
               style: const TextStyle(
                 fontSize: 14,
-                color: AppColors.textPrimary,
+                color: MeatvoColors.textPrimary,
               ),
             ),
           ],
         ),
       ),
     );
-  }
-
-  String _getTrackingHeadline() {
-    final status = _order?.status.toLowerCase() ?? '';
-    switch (status) {
-      case 'placed':
-      case 'pending':
-        return 'Order placed successfully';
-      case 'confirmed':
-      case 'accepted':
-        return 'Order confirmed';
-      case 'preparing':
-      case 'packed':
-        return 'Preparing your order';
-      case 'out_for_delivery':
-      case 'on_way':
-        return 'Arriving soon';
-      case 'assigned':
-        return _order?.riderName != null
-            ? '${_order!.riderName} is on the way'
-            : 'Rider assigned';
-      case 'picked_up':
-        return 'Order picked up';
-      default:
-        return 'Tracking your order';
-    }
-  }
-
-  String _getEtaText() {
-    final status = _order?.status.toLowerCase() ?? '';
-    final hasRiderLocation =
-        _liveRiderLat != null || _order?.riderLatitude != null;
-
-    if (hasRiderLocation &&
-        (status == 'out_for_delivery' ||
-            status == 'on_way' ||
-            status == 'assigned' ||
-            status == 'picked_up')) {
-      return 'Live tracking • delivery partner on the move';
-    }
-
-    switch (status) {
-      case 'out_for_delivery':
-      case 'on_way':
-        return 'ETA • approx. 15–25 mins';
-      case 'picked_up':
-        return 'Leaving store shortly';
-      case 'assigned':
-        return 'Rider heading to pickup';
-      case 'preparing':
-      case 'packed':
-        return 'Fresh cuts being prepared';
-      case 'confirmed':
-      case 'accepted':
-        return 'Assigning delivery partner soon';
-      default:
-        return 'We will notify you at every step';
-    }
   }
 
   Widget _buildPriceBreakdown() {
@@ -1124,11 +899,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.cardBg,
+        color: MeatvoColors.surfaceCard,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: AppColors.black.withValues(alpha: 0.04),
+            color: MeatvoColors.black.withValues(alpha: 0.04),
             blurRadius: 12,
             offset: const Offset(0, 2),
           ),
@@ -1140,7 +915,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           const Text(
             'Bill Summary',
             style: TextStyle(
-              color: AppColors.textDark,
+              color: MeatvoColors.textPrimary,
               fontSize: 15,
               fontWeight: FontWeight.w600,
             ),
@@ -1158,25 +933,25 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   ? 'FREE'
                   : '₹${deliveryCharge.toStringAsFixed(0)}',
               valueColor:
-                  isFreeDelivery ? AppColors.success : null,
+                  isFreeDelivery ? MeatvoColors.success : null,
             ),
           if (discount > 0) ...[
             const SizedBox(height: 8),
             _buildPriceRow(
               'Discount',
               '-₹${discount.toStringAsFixed(0)}',
-              valueColor: AppColors.success,
+              valueColor: MeatvoColors.success,
             ),
           ],
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 12),
-            child: Divider(height: 1, color: AppColors.border),
+            child: Divider(height: 1, color: MeatvoColors.border),
           ),
           _buildPriceRow(
             'Total',
             '₹${_order!.finalAmount.toStringAsFixed(0)}',
             bold: true,
-            valueColor: AppColors.primary,
+            valueColor: MeatvoColors.brandPrimary,
           ),
         ],
       ),
@@ -1188,10 +963,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     return Card(
       elevation: 0,
-      color: AppColors.cardBg,
+      color: MeatvoColors.surfaceCard,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border, width: 1),
+        side: BorderSide(color: MeatvoColors.border, width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1203,7 +978,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+                color: MeatvoColors.textPrimary,
               ),
             ),
             const SizedBox(height: 16),
@@ -1221,7 +996,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             // Payment Status
             _buildPaymentDetailRow(
               'Payment Status',
-              _getPaymentStatusLabel(_order!.paymentStatus),
+              _getPaymentStatusLabel(
+                _order!.paymentStatus,
+                paymentMethod: _order!.paymentMethod,
+              ),
               statusColor: _getPaymentStatusColor(_order!.paymentStatus),
               icon: _getPaymentStatusIcon(_order!.paymentStatus),
             ),
@@ -1249,7 +1027,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
+                    color: MeatvoColors.textPrimary,
                   ),
                 ),
                 children: [
@@ -1293,8 +1071,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     _isRetryingPayment ? 'Processing...' : 'Retry Payment',
                   ),
                   style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    side: const BorderSide(color: AppColors.primary),
+                    foregroundColor: MeatvoColors.brandPrimary,
+                    side: const BorderSide(color: MeatvoColors.brandPrimary),
                     minimumSize: const Size(double.infinity, 48),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -1320,7 +1098,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (icon != null) ...[
-          Icon(icon, size: 18, color: statusColor ?? AppColors.textSecondary),
+          Icon(icon, size: 18, color: statusColor ?? MeatvoColors.textSecondary),
           const SizedBox(width: 8),
         ],
         Expanded(
@@ -1331,7 +1109,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 label,
                 style: const TextStyle(
                   fontSize: 12,
-                  color: AppColors.textSecondary,
+                  color: MeatvoColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 4),
@@ -1343,14 +1121,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
-                        color: statusColor ?? AppColors.textPrimary,
+                        color: statusColor ?? MeatvoColors.textPrimary,
                       ),
                     ),
                   ),
                   if (isCopyable)
                     IconButton(
                       icon: const Icon(Icons.copy, size: 18),
-                      color: AppColors.textSecondary,
+                      color: MeatvoColors.textSecondary,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints(),
                       onPressed: () {
@@ -1359,7 +1137,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                           const SnackBar(
                             content: Text('Copied to clipboard'),
                             duration: Duration(seconds: 2),
-                            backgroundColor: AppColors.success,
+                            backgroundColor: MeatvoColors.success,
                           ),
                         );
                       },
@@ -1373,7 +1151,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     );
   }
 
-  String _getPaymentStatusLabel(String? status) {
+  String _getPaymentStatusLabel(String? status, {String? paymentMethod}) {
+    if ((status == null || status.isEmpty) &&
+        paymentMethod?.toLowerCase() == 'cod') {
+      return 'Pay on delivery';
+    }
     switch (status) {
       case 'completed':
         return 'Paid';
@@ -1382,20 +1164,20 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       case 'failed':
         return 'Failed';
       default:
-        return status ?? 'Unknown';
+        return status?.isNotEmpty == true ? status! : 'Pending';
     }
   }
 
   Color _getPaymentStatusColor(String? status) {
     switch (status) {
       case 'completed':
-        return AppColors.success;
+        return MeatvoColors.success;
       case 'pending':
-        return AppColors.warning;
+        return MeatvoColors.warning;
       case 'failed':
-        return AppColors.error;
+        return MeatvoColors.error;
       default:
-        return AppColors.textSecondary;
+        return MeatvoColors.textSecondary;
     }
   }
 
@@ -1454,7 +1236,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           messenger?.showSnackBar(
             const SnackBar(
               content: Text('Payment successful!'),
-              backgroundColor: AppColors.success,
+              backgroundColor: MeatvoColors.success,
               duration: Duration(seconds: 3),
             ),
           );
@@ -1471,7 +1253,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           messenger?.showSnackBar(
             SnackBar(
               content: Text('Payment failed: $errorMessage'),
-              backgroundColor: AppColors.error,
+              backgroundColor: MeatvoColors.error,
               duration: const Duration(seconds: 4),
             ),
           );
@@ -1489,7 +1271,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       messenger?.showSnackBar(
         SnackBar(
           content: Text('Failed to retry payment: $e'),
-          backgroundColor: AppColors.error,
+          backgroundColor: MeatvoColors.error,
           duration: const Duration(seconds: 3),
         ),
       );
@@ -1508,7 +1290,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         Text(
           label,
           style: TextStyle(
-            color: AppColors.textMedium,
+            color: MeatvoColors.textSecondary,
             fontSize: 13,
             fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
           ),
@@ -1516,7 +1298,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         Text(
           value,
           style: TextStyle(
-            color: valueColor ?? AppColors.textDark,
+            color: valueColor ?? MeatvoColors.textPrimary,
             fontSize: 13,
             fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
           ),
@@ -1547,8 +1329,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   : const Icon(Icons.cancel),
               label: Text(_isCancelling ? 'Cancelling...' : 'Cancel Order'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.error,
-                side: const BorderSide(color: AppColors.error),
+                foregroundColor: MeatvoColors.error,
+                side: const BorderSide(color: MeatvoColors.error),
                 minimumSize: const Size(double.infinity, 48),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -1557,37 +1339,34 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
           ),
         if (canCancel) const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: _isReordering ? null : _reorder,
-            icon: _isReordering
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        AppColors.white,
+        if (isDelivered)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isReordering ? null : _reorder,
+              icon: _isReordering
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          MeatvoColors.white,
+                        ),
                       ),
-                    ),
-                  )
-                : const Icon(Icons.shopping_cart),
-            label: Text(
-              _isReordering
-                  ? 'Adding...'
-                  : (isDelivered ? 'Reorder' : 'Add to Cart'),
-            ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: AppColors.white,
-              minimumSize: const Size(double.infinity, 48),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                    )
+                  : const Icon(Icons.replay_rounded),
+              label: Text(_isReordering ? 'Adding...' : 'Reorder'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: MeatvoColors.brandPrimary,
+                foregroundColor: MeatvoColors.white,
+                minimumSize: const Size(double.infinity, 48),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -1599,10 +1378,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
     return Card(
       elevation: 0,
-      color: AppColors.cardBg,
+      color: MeatvoColors.surfaceCard,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: AppColors.border, width: 1),
+        side: BorderSide(color: MeatvoColors.border, width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1617,7 +1396,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+                    color: MeatvoColors.textPrimary,
                   ),
                 ),
                 if (_existingReview != null)
@@ -1627,14 +1406,14 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.success.withValues(alpha: 0.1),
+                      color: MeatvoColors.success.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Text(
                       'Reviewed',
                       style: TextStyle(
                         fontSize: 12,
-                        color: AppColors.success,
+                        color: MeatvoColors.success,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -1681,7 +1460,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppColors.divider.withValues(alpha: 0.3),
+              color: MeatvoColors.divider.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Column(
@@ -1692,7 +1471,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
+                    color: MeatvoColors.textSecondary,
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -1700,7 +1479,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                   feedback,
                   style: const TextStyle(
                     fontSize: 14,
-                    color: AppColors.textPrimary,
+                    color: MeatvoColors.textPrimary,
                   ),
                 ),
               ],
@@ -1713,8 +1492,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           icon: const Icon(Icons.edit),
           label: const Text('Edit Review'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.primary,
-            side: const BorderSide(color: AppColors.primary),
+            foregroundColor: MeatvoColors.brandPrimary,
+            side: const BorderSide(color: MeatvoColors.brandPrimary),
           ),
         ),
       ],
@@ -1729,7 +1508,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             label,
             style: const TextStyle(
               fontSize: 14,
-              color: AppColors.textSecondary,
+              color: MeatvoColors.textSecondary,
             ),
           ),
         ),
@@ -1737,7 +1516,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           children: List.generate(5, (index) {
             return Icon(
               index < rating ? Icons.star : Icons.star_border,
-              color: AppColors.warning,
+              color: MeatvoColors.warning,
               size: 20,
             );
           }),
@@ -1752,8 +1531,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       icon: const Icon(Icons.star),
       label: const Text('Rate & Review'),
       style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.primary,
-        foregroundColor: AppColors.white,
+        backgroundColor: MeatvoColors.brandPrimary,
+        foregroundColor: MeatvoColors.white,
         minimumSize: const Size(double.infinity, 48),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
@@ -1797,11 +1576,77 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           scaffoldMessenger.showSnackBar(
             const SnackBar(
               content: Text('Review submitted successfully!'),
-              backgroundColor: AppColors.success,
+              backgroundColor: MeatvoColors.success,
             ),
           );
         },
       ),
+    );
+  }
+}
+
+class _LiveMapBadge extends StatefulWidget {
+  @override
+  State<_LiveMapBadge> createState() => _LiveMapBadgeState();
+}
+
+class _LiveMapBadgeState extends State<_LiveMapBadge>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppColors.success.withValues(
+              alpha: 0.85 + _controller.value * 0.15,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.success.withValues(alpha: 0.3),
+                blurRadius: 8,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.circle, size: 8, color: AppColors.white),
+              SizedBox(width: 6),
+              Text(
+                'LIVE',
+                style: TextStyle(
+                  color: AppColors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -1862,7 +1707,7 @@ class _ReviewDialogState extends State<_ReviewDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please provide at least one rating'),
-          backgroundColor: AppColors.error,
+          backgroundColor: MeatvoColors.error,
         ),
       );
       return;
@@ -1887,7 +1732,7 @@ class _ReviewDialogState extends State<_ReviewDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to submit review: $e'),
-            backgroundColor: AppColors.error,
+            backgroundColor: MeatvoColors.error,
           ),
         );
       }
@@ -1911,7 +1756,7 @@ class _ReviewDialogState extends State<_ReviewDialog> {
           style: const TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
+            color: MeatvoColors.textPrimary,
           ),
         ),
         const SizedBox(height: 8),
@@ -1921,7 +1766,7 @@ class _ReviewDialogState extends State<_ReviewDialog> {
               onTap: () => onRatingChanged(index + 1),
               child: Icon(
                 index < (rating ?? 0) ? Icons.star : Icons.star_border,
-                color: AppColors.warning,
+                color: MeatvoColors.warning,
                 size: 32,
               ),
             );
@@ -1986,8 +1831,8 @@ class _ReviewDialogState extends State<_ReviewDialog> {
         ElevatedButton(
           onPressed: _isSubmitting ? null : _submitReview,
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primary,
-            foregroundColor: AppColors.white,
+            backgroundColor: MeatvoColors.brandPrimary,
+            foregroundColor: MeatvoColors.white,
             minimumSize: const Size(0, 48),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
@@ -1999,7 +1844,7 @@ class _ReviewDialogState extends State<_ReviewDialog> {
                   height: 20,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(AppColors.white),
+                    valueColor: AlwaysStoppedAnimation<Color>(MeatvoColors.white),
                   ),
                 )
               : const Text('Submit'),

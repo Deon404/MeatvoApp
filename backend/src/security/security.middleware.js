@@ -364,13 +364,13 @@ class SecurityMiddleware {
 const securityMiddleware = new SecurityMiddleware();
 
 module.exports = {
-  csrfProtection: securityMiddleware.csrfProtection,
-  cspProtection: securityMiddleware.cspProtection,
-  deviceTracking: securityMiddleware.deviceTracking,
-  sessionTracking: securityMiddleware.sessionTracking,
-  securityHeaders: securityMiddleware.securityHeaders,
-  xssProtection: securityMiddleware.xssProtection,
-  apiAbusePrevention: securityMiddleware.apiAbusePrevention,
+  csrfProtection: securityMiddleware.csrfProtection.bind(securityMiddleware),
+  cspProtection: securityMiddleware.cspProtection.bind(securityMiddleware),
+  deviceTracking: securityMiddleware.deviceTracking.bind(securityMiddleware),
+  sessionTracking: securityMiddleware.sessionTracking.bind(securityMiddleware),
+  securityHeaders: securityMiddleware.securityHeaders.bind(securityMiddleware),
+  xssProtection: securityMiddleware.xssProtection.bind(securityMiddleware),
+  apiAbusePrevention: securityMiddleware.apiAbusePrevention.bind(securityMiddleware),
   helmet: helmet,
   cookieParser: cookieParser
 };

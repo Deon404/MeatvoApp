@@ -17,6 +17,7 @@ class InlineLocationMapPanel extends StatefulWidget {
   final ValueChanged<double> onLatitudeChanged;
   final ValueChanged<double> onLongitudeChanged;
   final void Function(Map<String, dynamic>? address)? onAddressResolved;
+  final bool showServiceabilityBanner;
 
   const InlineLocationMapPanel({
     super.key,
@@ -25,6 +26,7 @@ class InlineLocationMapPanel extends StatefulWidget {
     required this.onLatitudeChanged,
     required this.onLongitudeChanged,
     this.onAddressResolved,
+    this.showServiceabilityBanner = true,
   });
 
   @override
@@ -137,6 +139,7 @@ class _InlineLocationMapPanelState extends State<InlineLocationMapPanel> {
     final target = _center!;
 
     return Stack(
+      fit: StackFit.expand,
       children: [
         GoogleMap(
           initialCameraPosition: CameraPosition(target: target, zoom: 16),
@@ -164,10 +167,12 @@ class _InlineLocationMapPanelState extends State<InlineLocationMapPanel> {
           left: 12,
           right: 12,
           bottom: 12,
-          child: ServiceabilityBanner(
-            isServiceable: _isServiceable,
-            distanceLabel: _distanceLabel,
-          ),
+          child: widget.showServiceabilityBanner
+              ? ServiceabilityBanner(
+                  isServiceable: _isServiceable,
+                  distanceLabel: _distanceLabel,
+                )
+              : const SizedBox.shrink(),
         ),
       ],
     );

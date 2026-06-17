@@ -12,11 +12,7 @@ class ContactActionService {
       }
 
       final uri = Uri(scheme: 'tel', path: cleanNumber);
-      if (await canLaunchUrl(uri)) {
-        return await launchUrl(uri);
-      } else {
-        throw Exception('Could not launch phone dialer');
-      }
+      return await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (e) {
       debugPrint('Error making call: $e');
       return false;
@@ -31,17 +27,22 @@ class ContactActionService {
         throw Exception('Invalid phone number');
       }
 
-      final uri = Uri(
+      final smsUri = Uri(
         scheme: 'sms',
         path: cleanNumber,
         queryParameters: message != null ? {'body': message} : null,
       );
 
-      if (await canLaunchUrl(uri)) {
-        return await launchUrl(uri);
-      } else {
-        throw Exception('Could not launch SMS app');
+      if (await launchUrl(smsUri, mode: LaunchMode.externalApplication)) {
+        return true;
       }
+
+      final smstoUri = Uri(
+        scheme: 'smsto',
+        path: cleanNumber,
+        queryParameters: message != null ? {'body': message} : null,
+      );
+      return await launchUrl(smstoUri, mode: LaunchMode.externalApplication);
     } catch (e) {
       debugPrint('Error sending SMS: $e');
       return false;

@@ -9,14 +9,6 @@ const createOrderSchema = z.object({
     lat: z.coerce.number().finite().optional(),
     lng: z.coerce.number().finite().optional(),
     addressId: z.coerce.number().int().positive().optional(),
-    deliverySlotId: z.coerce.number().int().positive().optional(),
-    deliverySlot: z
-      .object({
-        name: z.string().trim().min(1).max(40),
-        date: z.string().trim().min(8).max(20),
-        time: z.string().trim().min(3).max(40),
-      })
-      .optional(),
     couponCode: z.string().trim().min(2).max(40).optional(),
   }),
   params: z.object({}).optional(),
@@ -26,7 +18,13 @@ const createOrderSchema = z.object({
 const getOrdersSchema = z.object({
   body: z.object({}).optional(),
   params: z.object({}).optional(),
-  query: z.object({}).optional(),
+  query: z
+    .object({
+      page: z.coerce.number().int().positive().optional(),
+      limit: z.coerce.number().int().positive().max(100).optional(),
+    })
+    .partial()
+    .optional(),
 });
 
 const cancelOrderSchema = z.object({

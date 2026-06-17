@@ -14,7 +14,7 @@ try {
   tar -czf $Out `
     --exclude=.git `
     --exclude=node_modules `
-    --exclude=old_meatvo `
+    --exclude=frontend `
     --exclude=backend/node_modules `
     --exclude=backend/uploads `
     --exclude=backend/.env `

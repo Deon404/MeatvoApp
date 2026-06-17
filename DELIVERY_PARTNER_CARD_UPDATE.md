@@ -6,7 +6,7 @@ Updated the delivery partner card to display the partner's name and phone number
 ## Changes Made
 
 ### File Updated
-`old_meatvo\lib\widgets\delivery\delivery_partner_contact_card.dart`
+`frontend\lib\widgets\delivery\delivery_partner_contact_card.dart`
 
 ### Key Features Added
 

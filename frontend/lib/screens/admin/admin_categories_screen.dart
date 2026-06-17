@@ -3,6 +3,7 @@ import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_image_picker_field.dart';
+import '../../widgets/admin/admin_navigation_drawer.dart';
 class AdminCategoriesScreen extends StatefulWidget {
   const AdminCategoriesScreen({super.key});
 
@@ -174,6 +175,10 @@ class _AdminCategoriesScreenState extends State<AdminCategoriesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      drawer: AdminNavigationDrawer(
+        currentSection: AdminNavSection.categories,
+        onLogout: () => AdminNavigationDrawer.confirmLogout(context),
+      ),
       appBar: AppBar(
         title: const Text('Categories'),
         backgroundColor: Colors.white,

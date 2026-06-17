@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/env_config.dart';
 import '../config/google_maps_setup.dart';
 import '../config/store_config.dart';
+import '../utils/address_display_util.dart';
 
 /// Road-following route from Google Directions API.
 class DrivingRouteResult {
@@ -309,6 +310,10 @@ class MapsService {
       String? pincode;
       String? subLocality;
 
+      String? route;
+      String? streetNumber;
+      String? neighborhood;
+
       for (final raw in components) {
         final c = Map<String, dynamic>.from(raw as Map);
         final types = (c['types'] as List<dynamic>?)?.cast<String>() ?? [];
@@ -319,11 +324,34 @@ class MapsService {
         if (types.contains('sublocality') || types.contains('sublocality_level_1')) {
           subLocality = longName;
         }
+        if (types.contains('route')) route = longName;
+        if (types.contains('street_number')) streetNumber = longName;
+        if (types.contains('neighborhood')) neighborhood = longName;
+      }
+
+      final streetParts = <String>[];
+      if (streetNumber != null && streetNumber.isNotEmpty) {
+        streetParts.add(streetNumber);
+      }
+      if (route != null && route.isNotEmpty) streetParts.add(route);
+      if (streetParts.isEmpty && neighborhood != null && neighborhood.isNotEmpty) {
+        streetParts.add(neighborhood);
+      }
+      if (streetParts.isEmpty && subLocality != null && subLocality.isNotEmpty) {
+        streetParts.add(subLocality);
+      }
+
+      var addressLine1 = streetParts.isNotEmpty
+          ? streetParts.join(', ')
+          : stripPlusCode(result['formatted_address'] as String? ?? '');
+
+      if (addressLine1.isEmpty) {
+        addressLine1 = stripPlusCode(result['formatted_address'] as String? ?? '');
       }
 
       return {
         'place_name': subLocality ?? locality ?? '',
-        'address_line1': result['formatted_address'] as String? ?? '',
+        'address_line1': addressLine1,
         'address_line2': '',
         'landmark': subLocality,
         'city': locality ?? 'Bokaro',
@@ -359,23 +387,17 @@ class MapsService {
     }
   }
 
-  /// Build address line 1 from placemark
+  /// Build street line from placemark (house/flat is entered by user separately).
   String _buildAddressLine1(Placemark place) {
     final parts = <String>[];
-    
-    if (place.street != null && place.street!.isNotEmpty) {
+
+    if (place.thoroughfare != null && place.thoroughfare!.isNotEmpty) {
+      parts.add(place.thoroughfare!);
+    } else if (place.street != null && place.street!.isNotEmpty) {
       parts.add(place.street!);
     }
-    if (place.subThoroughfare != null && place.subThoroughfare!.isNotEmpty) {
-      parts.insert(0, place.subThoroughfare!);
-    }
-    if (place.thoroughfare != null && place.thoroughfare!.isNotEmpty) {
-      if (!parts.contains(place.thoroughfare!)) {
-        parts.add(place.thoroughfare!);
-      }
-    }
 
-    return parts.isNotEmpty ? parts.join(', ') : 'Address';
+    return parts.isNotEmpty ? parts.join(', ') : '';
   }
 
   /// Build address line 2 from placemark
@@ -566,7 +588,9 @@ class MapsService {
       final distanceMeters =
           (leg['distance']?['value'] as num?)?.toDouble() ?? 0;
       final durationSeconds =
-          (leg['duration']?['value'] as num?)?.toInt() ?? 0;
+          (leg['duration_in_traffic']?['value'] as num?)?.toInt() ??
+          (leg['duration']?['value'] as num?)?.toInt() ??
+          0;
 
       final overview = route['overview_polyline']?['points'] as String?;
       if (overview == null || overview.isEmpty) return null;
@@ -704,7 +728,8 @@ class MapsService {
 
     if (apiKey.isEmpty || query.trim().length < 3) {
       if (apiKey.isEmpty) {
-        lastPlacesError = 'Add GOOGLE_MAPS_API_KEY to .env and enable Places API';
+        lastPlacesError =
+            'Maps API key missing. Run: dart run tool/sync_env.dart then restart the app';
       }
       return [];
     }
@@ -902,6 +927,30 @@ class MapsService {
     }
   }
 
+  /// Read-only map thumbnail for a single delivery pin (no live platform view).
+  String getLocationPreviewMapUrl({
+    required double latitude,
+    required double longitude,
+    int width = 600,
+    int height = 240,
+    int zoom = 16,
+  }) {
+    final apiKey = EnvConfig.googleMapsApiKey;
+    if (apiKey.isEmpty) return '';
+
+    final params = [
+      'center=$latitude,$longitude',
+      'zoom=$zoom',
+      'size=${width}x$height',
+      'scale=2',
+      'maptype=roadmap',
+      'markers=color:red|$latitude,$longitude',
+      'key=$apiKey',
+    ].join('&');
+
+    return 'https://maps.googleapis.com/maps/api/staticmap?$params';
+  }
+
   /// Google Static Maps URL showing all [points] (e.g. admin route thumbnail).
   String getStaticMapUrl(List<LatLng> points) {
     if (points.isEmpty) return '';
@@ -941,25 +990,7 @@ class MapsService {
 
   /// Build full address string from address map
   String _buildAddressString(Map<String, dynamic> address) {
-    final parts = <String>[];
-    
-    if (address['address_line1'] != null) {
-      parts.add(address['address_line1'] as String);
-    }
-    if (address['address_line2'] != null) {
-      parts.add(address['address_line2'] as String);
-    }
-    if (address['city'] != null) {
-      parts.add(address['city'] as String);
-    }
-    if (address['state'] != null) {
-      parts.add(address['state'] as String);
-    }
-    if (address['pincode'] != null) {
-      parts.add(address['pincode'] as String);
-    }
-
-    return parts.join(', ');
+    return buildAddressStringFromMap(address);
   }
 }
 

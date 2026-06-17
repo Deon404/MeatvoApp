@@ -14,8 +14,13 @@ class BackendResolver {
   static const _prefKey = 'meatvo_resolved_backend_root';
   static String? _resolvedRoot;
   static bool _hasReachableBackend = false;
+  static DateTime? _lastProbeAttempt;
+  static Future<void>? _probeInFlight;
 
   static bool get hasReachableBackend => _hasReachableBackend;
+
+  /// True when env provides a backend URL — allow API attempts even if startup probe failed.
+  static bool get hasConfiguredBackend => EnvConfig.configuredBackendRoot != null;
 
   /// Reachable backend root, or [EnvConfig.apiBaseUrl] when probes all failed.
   static String get root {
@@ -48,6 +53,12 @@ class BackendResolver {
       if (normalized != null) candidates.add(normalized);
     }
 
+    if (EnvConfig.isDevelopment && !kIsWeb && Platform.isAndroid) {
+      // USB debugging (adb reverse tcp:8080 tcp:8080) — try before LAN IP.
+      add('http://127.0.0.1:8080');
+      add('http://10.0.2.2:8080');
+    }
+
     add(EnvConfig.configuredBackendRoot);
     add(saved);
 
@@ -70,7 +81,7 @@ class BackendResolver {
 
     for (final base in unique) {
       try {
-        final res = await probe.get<String>('$base/health');
+        final res = await probe.get<String>('$base/health/live');
         if (res.statusCode == 200) {
           _resolvedRoot = base;
           _hasReachableBackend = true;
@@ -116,17 +127,75 @@ class BackendResolver {
     // #endregion
   }
 
+  static const String connectionErrorPrefix = 'Cannot reach the server';
+
+  /// Short message shown in the app UI.
+  static String connectionUserMessage() {
+    return 'Unable to connect to the server. '
+        'Please check your internet connection and try again.';
+  }
+
+  /// Detailed setup hints — debug console only.
   static String connectionHelpMessage() {
     if (!kIsWeb && Platform.isAndroid) {
-      return 'Server tak nahi pahunch rahe.\n\n'
-          '• Physical phone (Wi‑Fi): old_meatvo/.env mein\n'
-          '  API_BASE_URL=http://YOUR_PC_IP:8080\n'
-          '• USB debugging: adb reverse tcp:8080 tcp:8080\n'
-          '  phir MEATVO_API_ROOT=http://127.0.0.1:8080\n'
+      return 'Cannot reach backend.\n\n'
+          '• Physical phone (Wi‑Fi): set API_BASE_URL=http://YOUR_PC_IP:8080 '
+          'in frontend/.env, then run: dart run tool/sync_env.dart\n'
+          '• USB debugging: adb reverse tcp:8080 tcp:8080, then '
+          'MEATVO_API_ROOT=http://127.0.0.1:8080\n'
           '• Emulator: MEATVO_API_ROOT=http://10.0.2.2:8080\n\n'
-          'Backend chal raha ho: cd backend && npm run dev';
+          'Start backend: cd backend && npm run dev';
     }
-    return 'Server tak nahi pahunch rahe. Backend start karein (npm run dev) '
-        'aur MEATVO_API_ROOT sahi set karein.';
+    return 'Cannot reach backend. Start it with: cd backend && npm run dev '
+        'and set MEATVO_API_ROOT in frontend/.env.';
+  }
+
+  /// Re-probe when startup failed or backend came up later (debounced).
+  static Future<void> ensureReachable() async {
+    if (_hasReachableBackend) return;
+
+    final now = DateTime.now();
+    if (_lastProbeAttempt != null &&
+        now.difference(_lastProbeAttempt!) < const Duration(seconds: 3)) {
+      return;
+    }
+
+    _probeInFlight ??= init().whenComplete(() {
+      _lastProbeAttempt = DateTime.now();
+      _probeInFlight = null;
+    });
+    await _probeInFlight;
+  }
+
+  static bool isConnectionError(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains(connectionErrorPrefix.toLowerCase()) ||
+        lower.contains('unable to connect to the server') ||
+        lower.contains('cannot reach') ||
+        lower.contains('connection error') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection timeout') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('network is unreachable') ||
+        lower.contains('socketexception') ||
+        lower.contains('server tak nahi');
+  }
+
+  static String toUserMessage(
+    Object error, {
+    String? fallback,
+  }) {
+    final raw = error.toString().replaceFirst('Exception:', '').trim();
+    if (isConnectionError(raw)) return connectionUserMessage();
+    if (raw.isEmpty) {
+      return fallback ?? 'Something went wrong. Please try again.';
+    }
+    return raw;
+  }
+
+  static void logConnectionDevHint() {
+    if (kDebugMode) {
+      debugPrint('Backend connection hint: ${connectionHelpMessage()}');
+    }
   }
 }

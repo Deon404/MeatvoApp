@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
+import '../../utils/address_display_util.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/order_display_util.dart';
 import '../orders/order_detail_screen.dart';
@@ -142,6 +143,7 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
                 const SizedBox(height: 16),
                 _roleOption(ctx, 'customer', 'Customer', Icons.person, currentRole),
                 _roleOption(ctx, 'delivery_partner', 'Rider', Icons.delivery_dining, currentRole),
+                _roleOption(ctx, 'staff', 'Staff', Icons.restaurant_menu, currentRole),
                 _roleOption(ctx, 'admin', 'Admin', Icons.admin_panel_settings, currentRole),
               ],
             ),
@@ -182,7 +184,7 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
     }
 
     try {
-      await _adminService.updateUserRole(userId, selectedRole);
+      await _adminService.updateUserRole(userId, _roleApiValue(selectedRole));
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -210,6 +212,15 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
     return value;
   }
 
+  String _roleApiValue(String uiRole) {
+    switch (uiRole) {
+      case 'rider':
+        return 'delivery_partner';
+      default:
+        return uiRole;
+    }
+  }
+
   Widget _roleOption(
     BuildContext ctx,
     String value,
@@ -234,6 +245,8 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
         return Colors.blue;
       case 'customer':
         return AppColors.success;
+      case 'staff':
+        return AppColors.warning;
       default:
         return AppColors.surface;
     }
@@ -247,6 +260,8 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
         return 'Rider';
       case 'customer':
         return 'Customer';
+      case 'staff':
+        return 'Staff';
       default:
         return 'Unknown';
     }
@@ -907,11 +922,7 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
 
   Widget _buildAddressCard(Map<String, dynamic> address) {
     final label = address['label'] as String? ?? 'home';
-    final addressLine1 = address['address_line1'] as String? ?? '';
-    final addressLine2 = address['address_line2'] as String?;
-    final city = address['city'] as String? ?? '';
-    final state = address['state'] as String? ?? '';
-    final pincode = address['pincode'] as String? ?? '';
+    final displayText = formatAddressForDisplay(address);
     final isDefault = address['is_default'] as bool? ?? false;
 
     return Card(
@@ -974,28 +985,10 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              addressLine1,
+              displayText,
               style: const TextStyle(
                 fontSize: 14,
                 color: AppColors.textPrimary,
-              ),
-            ),
-            if (addressLine2 != null && addressLine2.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                addressLine2,
-                style: const TextStyle(
-                  fontSize: 14,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ],
-            const SizedBox(height: 4),
-            Text(
-              '$city, $state - $pincode',
-              style: const TextStyle(
-                fontSize: 14,
-                color: AppColors.textSecondary,
               ),
             ),
           ],

@@ -6,6 +6,7 @@ const { protect } = require('../../middlewares/auth.middleware');
 const { validate } = require('../../middlewares/validate.middleware');
 const { initiatePayment, getPaymentStatus, handlePhonePeWebhook } = require('./payments.controller');
 const { verifyPayment } = require('./phonepe.controller');
+const cashfreeController = require('./cashfree.controller');
 const {
   initiatePaymentSchema,
   getPaymentStatusSchema,
@@ -51,6 +52,17 @@ router.post('/phonepe/initiate', protect, validate(initiatePaymentSchema), payme
 router.post('/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
 router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
 router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
+
+router.post('/cashfree/initiate', protect, paymentRateLimit, cashfreeController.initiatePayment);
+router.post(
+  '/cashfree/webhook',
+  webhookRateLimit,
+  express.raw({ type: 'application/json' }),
+  cashfreeController.handleWebhook
+);
+router.get('/cashfree/:orderId/status', protect, cashfreeController.getPaymentStatus);
+router.post('/cashfree/verify', protect, paymentRateLimit, cashfreeController.verifyPayment);
+
 router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), getPaymentStatus);
 
 // Public webhook route with rate limiting

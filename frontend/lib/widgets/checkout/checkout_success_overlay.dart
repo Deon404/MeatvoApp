@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../theme/app_theme.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 
 /// Brief success overlay shown before navigating to confirmation.
 class CheckoutSuccessOverlay extends StatefulWidget {
@@ -30,10 +31,7 @@ class _CheckoutSuccessOverlayState extends State<CheckoutSuccessOverlay>
       vsync: this,
       duration: const Duration(milliseconds: 700),
     );
-    _scale = CurvedAnimation(
-      parent: _controller,
-      curve: Curves.elasticOut,
-    );
+    _scale = CurvedAnimation(parent: _controller, curve: Curves.elasticOut);
     _fade = CurvedAnimation(
       parent: _controller,
       curve: const Interval(0, 0.5, curve: Curves.easeOut),
@@ -53,25 +51,26 @@ class _CheckoutSuccessOverlayState extends State<CheckoutSuccessOverlay>
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Material(
-      color: AppThemeColors.black.withValues(alpha: 0.45),
+      color: MeatvoColors.black.withValues(alpha: 0.45),
       child: Center(
         child: FadeTransition(
           opacity: _fade,
           child: ScaleTransition(
             scale: _scale,
             child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.xl,
-                vertical: AppSpacing.lg,
+              margin: EdgeInsets.symmetric(horizontal: mv.spacing.xl),
+              padding: EdgeInsets.symmetric(
+                horizontal: mv.spacing.xl,
+                vertical: mv.spacing.lg,
               ),
               decoration: BoxDecoration(
-                color: AppThemeColors.white,
-                borderRadius: BorderRadius.circular(AppRadius.radiusXl),
-                boxShadow: AppShadows.elevated,
+                color: mv.surfaceCard,
+                borderRadius: BorderRadius.circular(mv.radii.xl),
+                boxShadow: mv.shadowLg,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -80,29 +79,29 @@ class _CheckoutSuccessOverlayState extends State<CheckoutSuccessOverlay>
                     width: 72,
                     height: 72,
                     decoration: BoxDecoration(
-                      color: AppThemeColors.success.withValues(alpha: 0.12),
+                      color: mv.freshBadge.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.check_rounded,
                       size: 40,
-                      color: AppThemeColors.success,
+                      color: mv.freshBadge,
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.md),
+                  SizedBox(height: mv.spacing.md),
                   Text(
                     'Order placed!',
                     style: textTheme.titleLarge?.copyWith(
-                      color: AppThemeColors.textPrimary,
+                      color: mv.textPrimary,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.xs),
+                  SizedBox(height: mv.spacing.xs),
                   Text(
                     widget.message,
                     textAlign: TextAlign.center,
                     style: textTheme.bodyMedium?.copyWith(
-                      color: AppThemeColors.textSecondary,
+                      color: mv.textSecondary,
                     ),
                   ),
                 ],
@@ -123,37 +122,38 @@ class CheckoutLoadingOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
     return Material(
-      color: AppThemeColors.black.withValues(alpha: 0.35),
+      color: MeatvoColors.black.withValues(alpha: 0.35),
       child: Center(
         child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.xl,
-            vertical: AppSpacing.lg,
+          padding: EdgeInsets.symmetric(
+            horizontal: mv.spacing.xl,
+            vertical: mv.spacing.lg,
           ),
           decoration: BoxDecoration(
-            color: AppThemeColors.white,
-            borderRadius: BorderRadius.circular(AppRadius.radiusXl),
-            boxShadow: AppShadows.elevated,
+            color: mv.surfaceCard,
+            borderRadius: BorderRadius.circular(mv.radii.xl),
+            boxShadow: mv.shadowLg,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const SizedBox(
+              SizedBox(
                 width: 36,
                 height: 36,
                 child: CircularProgressIndicator(
                   strokeWidth: 3,
-                  color: AppThemeColors.primary,
+                  color: mv.brandPrimary,
                 ),
               ),
-              const SizedBox(height: AppSpacing.md),
+              SizedBox(height: mv.spacing.md),
               Text(
                 message,
                 style: textTheme.titleSmall?.copyWith(
-                  color: AppThemeColors.textPrimary,
+                  color: mv.textPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),

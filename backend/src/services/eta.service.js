@@ -215,7 +215,7 @@ async function handleRiderLocationUpdate(riderId, location, io) {
        JOIN order_assignments oa ON oa.order_id = o.id
        JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
        WHERE dp.user_id = $1
-         AND o.status IN ('OUT_FOR_DELIVERY', 'RIDER_ACCEPTED', 'RIDER_NEARBY')
+         AND o.status IN ('OUT_FOR_DELIVERY', 'RIDER_NEARBY')
          AND oa.status IN ('ACCEPTED', 'PICKED')`,
       [riderId]
     );

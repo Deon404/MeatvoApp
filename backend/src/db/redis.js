@@ -1,5 +1,6 @@
 const Redis = require('ioredis');
 const { logger } = require('../utils/logger');
+const { deleteByPattern: deleteKeysByPattern, patternToRegex } = require('../utils/redisPatternDelete');
 
 if (process.env.NODE_ENV === 'production' && !process.env.REDIS_URL) {
   console.error('FATAL: REDIS_URL required in production. Exiting.');
@@ -154,7 +155,7 @@ client.on('error', (err) => {
 // Kick off connection in background (don’t block server startup).
 client.connect().catch(() => {});
 
-const OTP_REDIS_KEY_PREFIXES = ['otp:', 'otp:send-lock:', 'lockout:', 'rl:otp:', 'rl:verify:'];
+const OTP_REDIS_KEY_PREFIXES = ['otp:', 'otp:send-lock:', 'lockout:'];
 
 const isOtpRedisKey = (key) =>
   typeof key === 'string' && OTP_REDIS_KEY_PREFIXES.some((p) => key.startsWith(p));
@@ -174,7 +175,9 @@ const waitForRedis = (maxMs = 5000) =>
 const withFallback = (fnName) =>
   async (...args) => {
     const key = args[0];
-    const otpCritical = isOtpRedisKey(key) && Boolean(process.env.REDIS_URL);
+    const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const otpCritical =
+      isOtpRedisKey(key) && Boolean(process.env.REDIS_URL) && isProduction;
 
     if (otpCritical) {
       if (!redisReady) await waitForRedis(5000);
@@ -188,6 +191,21 @@ const withFallback = (fnName) =>
     if (!allowFallback) return client[fnName](...args); // will throw; surface error
     return memory[fnName](...args);
   };
+
+const deleteByPattern = async (pattern) => {
+  if (redisReady || !allowFallback) {
+    return deleteKeysByPattern(pattern);
+  }
+  const regex = patternToRegex(pattern);
+  let deleted = 0;
+  for (const key of [...memory.store.keys()]) {
+    if (regex.test(key)) {
+      await memory.del(key);
+      deleted += 1;
+    }
+  }
+  return deleted;
+};
 
 const disconnect = async () => {
   try {
@@ -203,6 +221,7 @@ module.exports = {
   get: withFallback('get'),
   set: withFallback('set'),
   del: withFallback('del'),
+  deleteByPattern,
   incr: withFallback('incr'),
   expire: withFallback('expire'),
   sadd: withFallback('sadd'),
