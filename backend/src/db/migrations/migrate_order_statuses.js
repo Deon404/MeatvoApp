@@ -6,6 +6,8 @@
  * Run (pgAdmin):  use migrate_order_statuses.sql — do NOT paste this .js file into SQL
  */
 
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../../.env') });
+
 const { query } = require('../postgres');
 const { LEGACY_STATUS_MIGRATION } = require('../../utils/orderStatus');
 const { logger } = require('../../utils/logger');
