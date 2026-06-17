@@ -51,7 +51,8 @@ const getOtpTemplateVariables = () => {
   if (raw && raw.trim()) {
     return raw.split(',').map((s) => s.trim()).filter(Boolean);
   }
-  return ['OTP'];
+  // DLT template "Your OTP for Meatvo is ##var##" — must match MSG91 variable name
+  return ['var'];
 };
 
 const getMsg91Config = () => {
