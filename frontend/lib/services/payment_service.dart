@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
@@ -6,9 +8,30 @@ import 'package:flutter_cashfree_pg_sdk/api/cfpaymentgateway/cfpaymentgatewayser
 import 'package:flutter_cashfree_pg_sdk/api/cfsession/cfsession.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cftheme/cftheme.dart';
 import 'package:flutter_cashfree_pg_sdk/utils/cfenums.dart';
+
+import '../config/env_config.dart';
 import 'api_service.dart';
 
-/// Payment Service — custom Node.js backend + Cashfree hosted checkout
+/// Result of a Cashfree payment attempt (SDK + backend verify).
+class PaymentResult {
+  const PaymentResult({
+    required this.success,
+    required this.orderId,
+    this.gatewayPaymentId,
+    this.status,
+    this.errorCode,
+    this.errorMessage,
+  });
+
+  final bool success;
+  final String orderId;
+  final String? gatewayPaymentId;
+  final String? status;
+  final String? errorCode;
+  final String? errorMessage;
+}
+
+/// Payment Service — Node.js backend + Cashfree Web Checkout SDK.
 class PaymentService {
   final ApiService _api = ApiService();
 
@@ -22,21 +45,21 @@ class PaymentService {
   String? get paymentSessionId => _paymentSessionId;
   String? get cfOrderId => _cfOrderId;
 
-  // ── Initialization ─────────────────────────────────────────────────────────
+  CFEnvironment get _cashfreeEnvironment =>
+      EnvConfig.cashfreeUseProduction
+          ? CFEnvironment.PRODUCTION
+          : CFEnvironment.SANDBOX;
 
   Future<void> initialize() async {
     if (_isInitialized) return;
     _isInitialized = true;
-    debugPrint('✅ PaymentService initialized (Cashfree backend)');
+    debugPrint(
+      'PaymentService initialized (Cashfree ${_cashfreeEnvironment.name})',
+    );
   }
 
-  // ── Backend payment initiation ────────────────────────────────────────────
-
-  /// Initiate payment via backend — returns payment_session_id + cf_order_id.
   Future<Map<String, dynamic>> _initiatePaymentRequest({
     required String orderId,
-    required double amount,
-    required String phone,
   }) async {
     try {
       final res = await _api.post('/payments/cashfree/initiate', data: {
@@ -50,84 +73,126 @@ class PaymentService {
       return Map<String, dynamic>.from(res.data['data'] as Map);
     } on DioException catch (e) {
       throw Exception(
-          'Failed to initiate payment: ${e.response?.data?['message'] ?? e.message}');
+        'Failed to initiate payment: ${e.response?.data?['message'] ?? e.message}',
+      );
     } catch (e) {
       throw Exception('Failed to initiate payment: $e');
     }
   }
 
-  /// Verify payment via backend (Cashfree).
   Future<Map<String, dynamic>> _verifyPaymentRequest(String orderId) async {
-    try {
-      final res = await _api.post('/payments/cashfree/verify', data: {
-        'orderId': int.tryParse(orderId) ?? orderId,
-      });
-      if (res.data['success'] != true) {
-        throw Exception(res.data['message'] ?? 'Failed to verify payment');
-      }
-      return Map<String, dynamic>.from(res.data['data'] as Map);
-    } catch (_) {
-      rethrow;
+    final res = await _api.post('/payments/cashfree/verify', data: {
+      'orderId': int.tryParse(orderId) ?? orderId,
+    });
+    if (res.data['success'] != true) {
+      throw Exception(res.data['message'] ?? 'Failed to verify payment');
     }
+    return Map<String, dynamic>.from(res.data['data'] as Map);
   }
 
-  // ── Cashfree hosted checkout ────────────────────────────────────────────────
-
-  /// Opens Cashfree native checkout (UPI via Web Checkout SDK).
-  Future<void> openCashfreeCheckout(
-      String paymentSessionId, String orderId) async {
-    try {
-      var session = CFSessionBuilder()
-          .setEnvironment(CFEnvironment.SANDBOX) // change to PRODUCTION when live
-          .setOrderId(orderId)
-          .setPaymentSessionId(paymentSessionId)
-          .build();
-
-      var theme = CFThemeBuilder()
-          .setNavigationBarBackgroundColorColor('#C8102E')
-          .setNavigationBarTextColor('#FFFFFF')
-          .setPrimaryFont('Poppins')
-          .setSecondaryFont('Poppins')
-          .setPrimaryTextColor('#1A1A1A')
-          .setSecondaryTextColor('#666666')
-          .setBackgroundColor('#FAF9F7')
-          .setButtonBackgroundColor('#C8102E')
-          .setButtonTextColor('#FFFFFF')
-          .build();
-
-      var cfWebCheckout = CFWebCheckoutPaymentBuilder()
-          .setSession(session)
-          .setTheme(theme)
-          .build();
-
-      final cfPaymentGatewayService = CFPaymentGatewayService();
-      cfPaymentGatewayService.setCallback(
-        (String orderId) async {
-          debugPrint('✅ Cashfree payment success: $orderId');
-          await verifyPayment(transactionId: orderId);
-        },
-        (CFErrorResponse error, String orderId) {
-          debugPrint(
-              '❌ Cashfree payment error: ${error.getMessage()} for $orderId');
-        },
-      );
-
-      cfPaymentGatewayService.doPayment(cfWebCheckout);
-    } catch (e) {
-      debugPrint('❌ Cashfree checkout error: $e');
-      rethrow;
+  String _mapCashfreeError(CFErrorResponse error) {
+    final message = error.getMessage()?.trim() ?? '';
+    final lower = message.toLowerCase();
+    if (lower.contains('cancel') || lower.contains('dismiss')) {
+      return 'PAYMENT_CANCELLED';
     }
+    if (lower.contains('network')) return 'NETWORK_ERROR';
+    return 'PAYMENT_DECLINED';
   }
 
-  // ── Legacy method (kept for screen compatibility) ──────────────────────────
+  /// Opens Cashfree native checkout and completes when SDK callback fires.
+  Future<PaymentResult> _openCashfreeCheckout(
+    String paymentSessionId,
+    String orderId,
+  ) async {
+    final completer = Completer<PaymentResult>();
 
-  /// Initiate payment using backend and launch Cashfree hosted checkout.
-  /// POST /payments/cashfree/initiate
-  /// body: { orderId }
-  /// response: { data: { payment_session_id, cf_order_id, orderId } }
-  ///
-  /// Backward compatibility: old fields/callbacks are still accepted.
-  Future<Map<String, dynamic>> initiatePayment({
+    var session = CFSessionBuilder()
+        .setEnvironment(_cashfreeEnvironment)
+        .setOrderId(orderId)
+        .setPaymentSessionId(paymentSessionId)
+        .build();
+
+    var theme = CFThemeBuilder()
+        .setNavigationBarBackgroundColorColor('#C8102E')
+        .setNavigationBarTextColor('#FFFFFF')
+        .setPrimaryFont('Poppins')
+        .setSecondaryFont('Poppins')
+        .setPrimaryTextColor('#1A1A1A')
+        .setSecondaryTextColor('#666666')
+        .setBackgroundColor('#FAF9F7')
+        .setButtonBackgroundColor('#C8102E')
+        .setButtonTextColor('#FFFFFF')
+        .build();
+
+    var cfWebCheckout = CFWebCheckoutPaymentBuilder()
+        .setSession(session)
+        .setTheme(theme)
+        .build();
+
+    final cfPaymentGatewayService = CFPaymentGatewayService();
+    cfPaymentGatewayService.setCallback(
+      (String callbackOrderId) async {
+        if (completer.isCompleted) return;
+        try {
+          final verification =
+              await _verifyPaymentRequest(orderId);
+          final verified = verification['verified'] == true ||
+              verification['status']?.toString().toUpperCase() == 'SUCCESS';
+          if (!verified) {
+            completer.complete(
+              PaymentResult(
+                success: false,
+                orderId: orderId,
+                status: verification['status']?.toString(),
+                errorCode: 'PAYMENT_PENDING',
+                errorMessage: 'Payment verification pending. Please wait.',
+              ),
+            );
+            return;
+          }
+          completer.complete(
+            PaymentResult(
+              success: true,
+              orderId: orderId,
+              gatewayPaymentId:
+                  verification['gateway_payment_id']?.toString() ??
+                  callbackOrderId,
+              status: verification['status']?.toString() ?? 'SUCCESS',
+            ),
+          );
+        } catch (e) {
+          completer.complete(
+            PaymentResult(
+              success: false,
+              orderId: orderId,
+              errorCode: 'NETWORK_ERROR',
+              errorMessage: e.toString(),
+            ),
+          );
+        }
+      },
+      (CFErrorResponse error, String callbackOrderId) {
+        if (completer.isCompleted) return;
+        final code = _mapCashfreeError(error);
+        completer.complete(
+          PaymentResult(
+            success: false,
+            orderId: orderId,
+            errorCode: code,
+            errorMessage: error.getMessage() ?? 'Payment failed',
+          ),
+        );
+      },
+    );
+
+    cfPaymentGatewayService.doPayment(cfWebCheckout);
+    return completer.future;
+  }
+
+  /// Initiate payment via backend and launch Cashfree checkout.
+  /// Completes when the SDK callback + verify finish (or user cancels).
+  Future<PaymentResult> initiatePayment({
     required String orderId,
     required double amount,
     String? phone,
@@ -144,11 +209,7 @@ class PaymentService {
     try {
       if (!_isInitialized) await initialize();
 
-      final data = await _initiatePaymentRequest(
-        orderId: orderId,
-        amount: amount,
-        phone: phone ?? customerPhone ?? '',
-      );
+      final data = await _initiatePaymentRequest(orderId: orderId);
 
       final paymentSessionId = data['payment_session_id'] as String?;
       final cfOrderId = data['cf_order_id'] as String?;
@@ -156,42 +217,45 @@ class PaymentService {
       _paymentSessionId = paymentSessionId;
       _cfOrderId = cfOrderId;
 
-      if (paymentSessionId != null && paymentSessionId.isNotEmpty) {
-        await openCashfreeCheckout(paymentSessionId, orderId.toString());
-      } else {
+      if (paymentSessionId == null || paymentSessionId.isEmpty) {
         throw Exception('Missing payment session from backend');
       }
 
-      _onSuccess?.call({
-        'transactionId': cfOrderId ?? '',
-        'orderId': orderId,
-        'status': 'initiated',
-        'payment_session_id': paymentSessionId,
-        'cf_order_id': cfOrderId,
-        ...data,
-      });
-      return data;
+      final result = await _openCashfreeCheckout(
+        paymentSessionId,
+        orderId.toString(),
+      );
+
+      if (result.success) {
+        _onSuccess?.call({
+          'transactionId': result.gatewayPaymentId ?? cfOrderId ?? '',
+          'orderId': orderId,
+          'status': result.status ?? 'SUCCESS',
+          'payment_session_id': paymentSessionId,
+          'cf_order_id': cfOrderId,
+          ...data,
+        });
+      } else {
+        _onFailure?.call(result.errorMessage ?? 'Payment failed');
+      }
+
+      return result;
     } catch (e) {
-      debugPrint('❌ Payment initiation error: $e');
+      debugPrint('Payment initiation error: $e');
       _onFailure?.call(e.toString());
-      rethrow;
+      return PaymentResult(
+        success: false,
+        orderId: orderId,
+        errorMessage: e.toString(),
+      );
     }
   }
 
-  // ── Verify payment ─────────────────────────────────────────────────────────
-
-  /// Verify payment via backend.
-  /// POST /payments/cashfree/verify
-  /// body: { orderId }
-  /// response: { data: { verified, status } }
-  ///
-  /// [transactionId] is kept for backward compatibility — pass the order ID.
   Future<Map<String, dynamic>> verifyPayment({
     required String transactionId,
   }) =>
       _verifyPaymentRequest(transactionId);
 
-  /// GET /payments/cashfree/:orderId/status
   Future<Map<String, dynamic>> getPaymentStatusForOrder(String orderId) async {
     try {
       final res = await _api.get('/payments/cashfree/$orderId/status');
@@ -205,7 +269,8 @@ class PaymentService {
       return <String, dynamic>{};
     } on DioException catch (e) {
       throw Exception(
-          'Failed to fetch payment status: ${e.response?.data?['message'] ?? e.message}');
+        'Failed to fetch payment status: ${e.response?.data?['message'] ?? e.message}',
+      );
     }
   }
 
@@ -232,7 +297,7 @@ class PaymentService {
         _onFailure?.call('Payment verification failed');
       }
     } catch (e) {
-      debugPrint('❌ Error verifying manual payment: $e');
+      debugPrint('Error verifying manual payment: $e');
       _onFailure?.call('Error verifying payment: $e');
     }
   }

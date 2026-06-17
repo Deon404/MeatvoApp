@@ -37,6 +37,7 @@ class EnvConfig {
     put('BACKEND_ROOT_URL', const String.fromEnvironment('BACKEND_ROOT_URL'));
     put('API_URL', const String.fromEnvironment('API_URL'));
     put('APP_ENV', const String.fromEnvironment('APP_ENV'));
+    put('CASHFREE_ENV', const String.fromEnvironment('CASHFREE_ENV'));
     put('GOOGLE_MAPS_API_KEY', const String.fromEnvironment('GOOGLE_MAPS_API_KEY'));
     put('FIREBASE_API_KEY', const String.fromEnvironment('FIREBASE_API_KEY'));
     put('FIREBASE_PROJECT_ID', const String.fromEnvironment('FIREBASE_PROJECT_ID'));
@@ -166,9 +167,17 @@ class EnvConfig {
         !lower.contains('your_api');
   }
 
-  // PhonePe secrets are backend-only — client uses redirect URL from API.
-
   static String get merchantPhoneNumber => get('MERCHANT_PHONE_NUMBER');
+
+  /// Cashfree SDK environment: `production` | `sandbox` | empty (falls back to APP_ENV).
+  static String get cashfreeEnv => get('CASHFREE_ENV', defaultValue: '');
+
+  static bool get cashfreeUseProduction {
+    final env = cashfreeEnv.trim().toLowerCase();
+    if (env == 'production' || env == 'prod') return true;
+    if (env == 'sandbox' || env == 'test') return false;
+    return isProduction;
+  }
 
   // ── Firebase ──────────────────────────────────────────────────────────────
 

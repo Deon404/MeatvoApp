@@ -6,7 +6,6 @@ import '../../services/order_service.dart';
 import '../../services/socket_service.dart';
 import '../../services/cart_service.dart';
 import '../../services/payment_service.dart';
-import '../../services/auth_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
@@ -23,6 +22,7 @@ import '../../widgets/order/order_tracking_header.dart';
 import '../../widgets/order/order_tracking_hero_card.dart';
 import '../../widgets/order/order_tracking_illustration.dart';
 import '../../widgets/delivery/delivery_partner_contact_card.dart';
+import '../payment/payment_processing_screen.dart';
 import '../cart/cart_screen.dart';
 
 /// Order Detail Screen - Detailed view of a single order
@@ -39,7 +39,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final OrderService _orderService = OrderService();
   final CartService _cartService = CartService();
   final PaymentService _paymentService = PaymentService();
-  final AuthService _authService = AuthService();
   OrderModel? _order;
   bool _isLoading = true;
   bool _isRefreshing = false;
@@ -1015,9 +1014,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 isCopyable: true,
               ),
             ],
-            // Payment Details (Razorpay details)
+            // Gateway transaction details (Cashfree)
+            if (_order!.paymentMethod == 'online') ...[
+              const SizedBox(height: 12),
+              _buildPaymentDetailRow(
+                'Payment Gateway',
+                'Cashfree',
+                icon: Icons.account_balance_wallet_outlined,
+              ),
+            ],
             if (_order!.paymentMethodDetails != null &&
-                _order!.paymentMethodDetails!.isNotEmpty) ...[
+                _order!.paymentMethodDetails!.isNotEmpty &&
+                _hasGatewayTransactionDetails(_order!.paymentMethodDetails!)) ...[
               const SizedBox(height: 12),
               ExpansionTile(
                 tilePadding: EdgeInsets.zero,
@@ -1030,26 +1038,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     color: MeatvoColors.textPrimary,
                   ),
                 ),
-                children: [
-                  if (_order!.paymentMethodDetails!['phonepe_transaction_id'] !=
-                      null)
-                    _buildPaymentDetailRow(
-                      'PhonePe Transaction ID',
-                      _order!.paymentMethodDetails!['phonepe_transaction_id']
-                          as String,
-                      isCopyable: true,
-                    ),
-                  if (_order!.paymentMethodDetails!['phonepe_merchant_transaction_id'] !=
-                      null) ...[
-                    const SizedBox(height: 8),
-                    _buildPaymentDetailRow(
-                      'PhonePe Merchant Transaction ID',
-                      _order!.paymentMethodDetails!['phonepe_merchant_transaction_id']
-                          as String,
-                      isCopyable: true,
-                    ),
-                  ],
-                ],
+                children: _buildGatewayTransactionRows(
+                  _order!.paymentMethodDetails!,
+                ),
               ),
             ],
             // Retry Payment Button (if failed)
@@ -1194,85 +1185,82 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     }
   }
 
+  bool _hasGatewayTransactionDetails(Map<String, dynamic> details) {
+    const keys = [
+      'gateway_payment_id',
+      'cf_payment_id',
+      'gateway_order_id',
+      'cf_order_id',
+      'payment_session_id',
+    ];
+    return keys.any((key) {
+      final value = details[key];
+      return value != null && value.toString().trim().isNotEmpty;
+    });
+  }
+
+  List<Widget> _buildGatewayTransactionRows(Map<String, dynamic> details) {
+    final rows = <Widget>[];
+
+    void addRow(String label, String? key) {
+      final raw = details[key];
+      if (raw == null || raw.toString().trim().isEmpty) return;
+      if (rows.isNotEmpty) rows.add(const SizedBox(height: 8));
+      rows.add(
+        _buildPaymentDetailRow(
+          label,
+          raw.toString(),
+          isCopyable: true,
+        ),
+      );
+    }
+
+    addRow('Cashfree Payment ID', 'gateway_payment_id');
+    addRow('Cashfree Payment ID', 'cf_payment_id');
+    addRow('Cashfree Order ID', 'gateway_order_id');
+    addRow('Cashfree Order ID', 'cf_order_id');
+    addRow('Payment Session', 'payment_session_id');
+
+    return rows;
+  }
+
+  Map<String, dynamic> _deliveryAddressPayload(OrderModel order) {
+    return {
+      if (order.deliveryAddress != null && order.deliveryAddress!.isNotEmpty)
+        'text': order.deliveryAddress,
+      if (order.deliveryLatitude != null) 'latitude': order.deliveryLatitude,
+      if (order.deliveryLongitude != null) 'longitude': order.deliveryLongitude,
+    };
+  }
+
   Future<void> _retryPayment() async {
     if (_order == null) return;
 
-    setState(() {
-      _isRetryingPayment = true;
-    });
+    setState(() => _isRetryingPayment = true);
 
     try {
-      // Get user profile for payment details
-      final userProfile = await _authService.getCurrentUserProfile();
-      if (userProfile == null) {
-        throw Exception('User not logged in');
-      }
+      if (!mounted) return;
+      setState(() => _isRetryingPayment = false);
 
-      // Get user phone number from stored profile
-      final userPhoneNumber = userProfile.phoneNumber;
-      if (userPhoneNumber == null || userPhoneNumber.isEmpty) {
-        throw Exception('Phone number not available');
-      }
-
-      final phoneNumber = userPhoneNumber.replaceAll('+91', '');
-      final customerName = userProfile.name ?? 'Customer';
-      final customerEmail = userProfile.email ?? 'customer@meatvo.com';
-
-      // Initiate payment retry
-      await _paymentService.initiatePayment(
-        orderId: _order!.id,
-        userId: userProfile.id,
-        amount: _order!.finalAmount,
-        customerName: customerName,
-        customerEmail: customerEmail,
-        customerPhone: phoneNumber,
-        onSuccess: (Map<String, dynamic> response) async {
-          if (!context.mounted) return;
-          setState(() {
-            _isRetryingPayment = false;
-          });
-
-          final messenger = ScaffoldMessenger.maybeOf(context);
-          messenger?.showSnackBar(
-            const SnackBar(
-              content: Text('Payment successful!'),
-              backgroundColor: MeatvoColors.success,
-              duration: Duration(seconds: 3),
-            ),
-          );
-
-          await _loadOrderDetails();
-        },
-        onFailure: (String errorMessage) {
-          if (!context.mounted) return;
-          setState(() {
-            _isRetryingPayment = false;
-          });
-
-          final messenger = ScaffoldMessenger.maybeOf(context);
-          messenger?.showSnackBar(
-            SnackBar(
-              content: Text('Payment failed: $errorMessage'),
-              backgroundColor: MeatvoColors.error,
-              duration: const Duration(seconds: 4),
-            ),
-          );
-
-          _loadOrderDetails();
-        },
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PaymentProcessingScreen(
+            order: _order!,
+            deliveryAddress: _deliveryAddressPayload(_order!),
+            paymentService: _paymentService,
+            amount: _order!.finalAmount,
+          ),
+        ),
       );
+
+      if (mounted) await _loadOrderDetails();
     } catch (e) {
       if (!mounted) return;
-      final messenger = ScaffoldMessenger.maybeOf(context);
-      setState(() {
-        _isRetryingPayment = false;
-      });
-
-      messenger?.showSnackBar(
+      setState(() => _isRetryingPayment = false);
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
         SnackBar(
           content: Text('Failed to retry payment: $e'),
           backgroundColor: MeatvoColors.error,
-          duration: const Duration(seconds: 3),
         ),
       );
     }

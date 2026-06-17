@@ -210,6 +210,12 @@
       "type": "string",
       "description": "Cashfree webhook notification URL"
     },
+    "CASHFREE_ENV": {
+      "required": "optional",
+      "default": "",
+      "type": "string",
+      "description": "Flutter Cashfree SDK environment: production | sandbox (defaults from APP_ENV)"
+    },
     "GOOGLE_MAPS_API_KEY": {
       "required": "production",
       "default": null,

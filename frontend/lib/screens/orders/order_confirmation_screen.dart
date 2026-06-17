@@ -7,20 +7,28 @@ import '../../utils/address_display_util.dart';
 import '../../utils/eta_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/responsive_helper.dart';
+import '../../widgets/order/order_freshness_trust_strip.dart';
 import 'order_detail_screen.dart';
 
-/// Success screen after order placement — MeatvoTheme warm palette.
+/// Merged success screen after COD or online (Cashfree) payment — warm Zappfresh-style UX.
 class OrderConfirmationScreen extends StatelessWidget {
   const OrderConfirmationScreen({
     super.key,
     required this.order,
     required this.deliveryAddress,
     this.paymentId,
+    this.isOnlinePaymentSuccess = false,
   });
 
   final OrderModel order;
   final Map<String, dynamic> deliveryAddress;
   final String? paymentId;
+
+  /// True when arriving from a verified Cashfree payment (headline + payment ref).
+  final bool isOnlinePaymentSuccess;
+
+  bool get _isOnline =>
+      isOnlinePaymentSuccess || order.paymentMethod.toLowerCase() == 'online';
 
   String _formatExpectedDelivery() {
     if (order.estimatedDeliveryTime != null) {
@@ -34,6 +42,13 @@ class OrderConfirmationScreen extends StatelessWidget {
   }
 
   String _getOrderNumber() => formatOrderDisplayId(order.id);
+
+  String get _headline =>
+      _isOnline ? 'Payment Successful!' : 'Order Placed Successfully!';
+
+  String get _subtitle => _isOnline
+      ? 'Your order is confirmed and being prepared'
+      : 'Your order has been confirmed';
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +86,7 @@ class OrderConfirmationScreen extends StatelessWidget {
                     ),
                     SizedBox(height: mv.spacing.md),
                     Text(
-                      'Order Placed Successfully!',
+                      _headline,
                       style: textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                         color: mv.textPrimary,
@@ -80,12 +95,55 @@ class OrderConfirmationScreen extends StatelessWidget {
                     ),
                     SizedBox(height: mv.spacing.xs),
                     Text(
-                      'Your order has been confirmed',
+                      _subtitle,
                       style: textTheme.bodyLarge?.copyWith(
                         color: mv.textSecondary,
                       ),
                       textAlign: TextAlign.center,
                     ),
+                    SizedBox(height: mv.spacing.md),
+                    Container(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: mv.spacing.md,
+                        vertical: mv.spacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: mv.brandPrimary.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(mv.radii.pill),
+                        border: Border.all(
+                          color: mv.brandPrimary.withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.schedule_rounded,
+                            size: 18,
+                            color: mv.brandPrimary,
+                          ),
+                          SizedBox(width: mv.spacing.xs),
+                          Text(
+                            _formatExpectedDelivery(),
+                            style: textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: mv.brandPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_isOnline && paymentId != null && paymentId!.isNotEmpty) ...[
+                      SizedBox(height: mv.spacing.sm),
+                      Text(
+                        'Ref: ${paymentId!.length > 16 ? '${paymentId!.substring(0, 16)}…' : paymentId}',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: mv.textMuted,
+                        ),
+                      ),
+                    ],
+                    SizedBox(height: mv.spacing.md),
+                    const OrderFreshnessTrustStrip(),
                     SizedBox(height: mv.spacing.lg),
                     _InfoCard(
                       child: Column(
@@ -161,8 +219,7 @@ class OrderConfirmationScreen extends StatelessWidget {
                           Divider(height: 24, color: mv.border),
                           _PriceRow(
                             label: 'Subtotal',
-                            value:
-                                '₹${order.totalAmount.toStringAsFixed(0)}',
+                            value: '₹${order.totalAmount.toStringAsFixed(0)}',
                           ),
                           if (order.discountAmount != null &&
                               order.discountAmount! > 0)
@@ -188,8 +245,7 @@ class OrderConfirmationScreen extends StatelessWidget {
                           Divider(height: 24, color: mv.border),
                           _PriceRow(
                             label: 'Total Amount',
-                            value:
-                                '₹${order.finalAmount.toStringAsFixed(0)}',
+                            value: '₹${order.finalAmount.toStringAsFixed(0)}',
                             isBold: true,
                             valueColor: mv.brandPrimary,
                           ),
@@ -237,9 +293,9 @@ class OrderConfirmationScreen extends StatelessWidget {
                             label: 'Payment Method',
                             title: order.paymentMethod == 'cod'
                                 ? 'Cash on Delivery'
-                                : 'Online Payment',
+                                : 'Paid Online (Cashfree)',
                             subtitle: paymentId != null && paymentId!.isNotEmpty
-                                ? 'Payment ID: ${paymentId!.substring(0, paymentId!.length > 12 ? 12 : paymentId!.length)}...'
+                                ? 'Payment ID: ${paymentId!.length > 12 ? '${paymentId!.substring(0, 12)}…' : paymentId}'
                                 : null,
                           ),
                         ],
@@ -274,7 +330,7 @@ class OrderConfirmationScreen extends StatelessWidget {
                             ),
                           );
                         },
-                        icon: const Icon(Icons.shopping_bag_outlined),
+                        icon: const Icon(Icons.local_shipping_outlined),
                         label: const Text('Track Order'),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: mv.brandPrimary,

@@ -2,7 +2,7 @@
 
 ## 1. Project Overview
 
-**Meatvo** is a hyperlocal raw-meat delivery platform for India. Customers browse a catalog, add items to cart, pick a delivery slot and address, pay (COD or PhonePe), and track orders in real time. Delivery riders and store admins have dedicated flows.
+**Meatvo** is a hyperlocal raw-meat delivery platform for India. Customers browse a catalog, add items to cart, pick a delivery slot and address, pay (COD or Cashfree online), and track orders in real time. Delivery riders and store admins have dedicated flows.
 
 This is a **monorepo**:
 
@@ -23,7 +23,7 @@ This is a **monorepo**:
 - **Runtime:** Node.js (CommonJS), Express 5
 - **Database:** PostgreSQL (`pg`), Redis (`ioredis`)
 - **Auth:** JWT access/refresh tokens, OTP via MSG91, optional MFA (speakeasy)
-- **Payments:** PhonePe gateway
+- **Payments:** Cashfree gateway (PhonePe legacy code retained in backend only)
 - **Real-time:** Socket.io
 - **Security:** Helmet, CORS, rate limiting, CSRF, CSP, RBAC, account lockout
 - **Observability:** Winston, Sentry, Elasticsearch logger
@@ -46,7 +46,7 @@ backend/src/
 │   ├── catalog/
 │   ├── cart/        # Redis-backed cart
 │   ├── orders/      # order state machine
-│   ├── payments/    # PhonePe initiate/verify/webhook
+│   ├── payments/    # Cashfree initiate/verify/webhook (+ PhonePe legacy)
 │   ├── delivery/    # slots, rider orders, location
 │   ├── admin/       # dashboard, CRUD, uploads
 │   ├── banners/
@@ -76,7 +76,7 @@ Entry point: `backend/index.js` (default port **8080**).
 - **Maps:** google_maps_flutter, geolocator, geocoding
 - **Real-time:** socket_io_client
 - **UI:** shimmer, carousel_slider, google_fonts (Poppins)
-- **Payments:** PhonePe via backend redirect URL (native SDK disabled)
+- **Payments:** Cashfree via `flutter_cashfree_pg_sdk` + backend `/api/payments/cashfree/*`
 - **Env:** flutter_dotenv (`.env` in assets)
 
 ### `frontend/lib/` structure
@@ -216,7 +216,7 @@ Some routes also expose `/api/v1/*` aliases (orders, products, addresses, admin,
 - Product/category/catalog CRUD
 - Redis cart sync
 - Order placement, state machine, cancellation
-- PhonePe payment initiate/verify/webhook
+- Cashfree payment initiate/verify/webhook
 - Delivery slots, rider assignment, location updates
 - Admin APIs (dashboard, users, riders, products, orders, banners, settings)
 - Address management, store serviceability check
@@ -237,7 +237,7 @@ Some routes also expose `/api/v1/*` aliases (orders, products, addresses, admin,
 - Profile + account settings
 - Rider dashboard, orders, profile
 - Admin screens (dashboard, orders, products, users, riders, banners, categories, settings)
-- Payment flow via PhonePe redirect + status poller
+- Payment flow via Cashfree SDK + `PaymentProcessingScreen` auto-poll
 - Shimmer loaders, empty/error state patterns
 - Socket service for live order tracking
 
@@ -246,7 +246,7 @@ Some routes also expose `/api/v1/*` aliases (orders, products, addresses, admin,
 |------|--------|
 | **Wishlist** | Flutter screen shows "coming soon" |
 | **Notifications** | Flutter screen placeholder; FCM disabled |
-| **PhonePe native SDK** | Commented out in `pubspec.yaml`; uses URL redirect only |
+| **PhonePe (legacy)** | Deprecated backend routes; not used by Flutter checkout |
 | **FCM push notifications** | `PushNotificationService` local-only mode |
 | **Sentry init** | `ErrorTrackingService.initialize()` not called in `main.dart` |
 | **Privacy Policy / ToS** | Placeholder toasts in account settings |

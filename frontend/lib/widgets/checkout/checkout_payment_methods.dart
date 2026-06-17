@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
 import '../cart/premium_cart_card.dart';
 import 'checkout_selection_card.dart';
 
@@ -17,7 +17,7 @@ extension CheckoutPaymentOptionX on CheckoutPaymentOption {
       };
 
   String get subtitle => switch (this) {
-        CheckoutPaymentOption.online => 'UPI, cards via PhonePe',
+        CheckoutPaymentOption.online => 'UPI, cards & wallets via Cashfree',
         CheckoutPaymentOption.cod => 'Pay when your order arrives',
       };
 
@@ -103,6 +103,21 @@ class CheckoutPaymentMethods extends StatelessWidget {
             }).toList(),
           ),
         ),
+        if (selected == CheckoutPaymentOption.online) ...[
+          SizedBox(height: mv.spacing.sm),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _UpiChip(label: 'GPay'),
+              SizedBox(width: mv.spacing.xs),
+              _UpiChip(label: 'PhonePe'),
+              SizedBox(width: mv.spacing.xs),
+              _UpiChip(label: 'Paytm'),
+              SizedBox(width: mv.spacing.xs),
+              _UpiChip(label: 'UPI'),
+            ],
+          ),
+        ],
         SizedBox(height: mv.spacing.xs),
         Row(
           children: [
@@ -113,7 +128,7 @@ class CheckoutPaymentMethods extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Text(
-              'Secured payments via PhonePe',
+              'Secured payments',
               style: textTheme.bodySmall?.copyWith(
                 color: mv.textMuted,
                 fontSize: 11,
@@ -122,6 +137,37 @@ class CheckoutPaymentMethods extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _UpiChip extends StatelessWidget {
+  const _UpiChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: mv.spacing.sm,
+        vertical: mv.spacing.xxs,
+      ),
+      decoration: BoxDecoration(
+        color: mv.surfaceCard,
+        borderRadius: BorderRadius.circular(mv.radii.pill),
+        border: Border.all(color: mv.border),
+      ),
+      child: Text(
+        label,
+        style: textTheme.labelSmall?.copyWith(
+          color: mv.textSecondary,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }

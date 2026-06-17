@@ -25,7 +25,7 @@ Client-side checkout architecture for the MeatvoApp Flutter app (`frontend/`). T
 The Flutter app implements checkout as a linear flow:
 
 ```
-CartScreen → CheckoutScreen → (PaymentStatusPoller if ONLINE) → OrderConfirmation
+CartScreen → CheckoutScreen → (PaymentProcessingScreen if ONLINE) → OrderConfirmation
 ```
 
 All cart mutations must sync to the backend Redis cart before order placement. The backend creates orders exclusively from server-side cart state.
@@ -34,7 +34,7 @@ All cart mutations must sync to the backend Redis cart before order placement. T
 flowchart LR
   Cart[CartScreen]
   Checkout[CheckoutScreen]
-  Poller[PaymentStatusPoller]
+  Poller[PaymentProcessingScreen]
   Confirm[OrderConfirmation]
 
   Cart -->|"CartModel + initialSlotLabel"| Checkout
@@ -77,20 +77,28 @@ flowchart LR
 4. Validate delivery address in service radius (`DeliveryService.validateDeliveryAddress`)
 5. Build `deliveryAddressJson` and `deliverySlotMeta` from fresh slot
 6. Call `OrderService.createOrder()` with `deliverySlotId`, `deliverySlotMeta`, `paymentMethod`
-7. If ONLINE: `PaymentService.initiatePayment()` → open PhonePe URL → navigate to `_PaymentStatusPoller`
+7. If ONLINE: navigate to `PaymentProcessingScreen` → Cashfree SDK + auto-poll → `OrderConfirmationScreen`
 8. If COD: navigate to confirmation
 
 **Error handling (`_friendlyError`):**
 - Maps stock, slot, cart-empty, and coordinate errors to user-friendly messages
 
-### PaymentStatusPoller
+### PaymentProcessingScreen
 
-**File:** `lib/screens/checkout/checkout_screen.dart` (private widget `_PaymentStatusPoller`)
+**File:** `lib/screens/payment/payment_processing_screen.dart`
 
 **Behavior:**
-- Polls `PaymentService.getPaymentStatusForOrder(orderId)` on interval
-- On SUCCESS: navigate to order confirmation
-- On FAILED/timeout: show retry or cancel options
+- Shown immediately after order create when `paymentMethod == ONLINE`
+- Auto-polls `GET /api/payments/cashfree/:orderId/status` every 2s (max 15 attempts)
+- Launches Cashfree Web Checkout SDK via `PaymentService.initiatePayment()`
+- On SUCCESS (SDK verify or poll): navigates to merged `OrderConfirmationScreen` with payment ref + ETA
+- On failure: navigates to `PaymentResultScreen` (failure-only) with retry → re-opens processing screen
+
+### Payment failure screen
+
+**File:** `lib/screens/payment/payment_result_screen.dart`
+
+Warm MeatvoTheme failure UI with **Retry Payment** (re-initiates Cashfree for the same `PLACED` order).
 
 ### Checkout UI widgets
 
@@ -296,32 +304,36 @@ CheckoutScreen._placeOrder()
 
 ---
 
-## 7. Payment Flow (ONLINE)
+## 7. Payment Flow (ONLINE — Cashfree)
 
 ```mermaid
 sequenceDiagram
   participant Checkout as CheckoutScreen
   participant Order as OrderService
+  participant Processing as PaymentProcessingScreen
   participant Pay as PaymentService
-  participant Browser as PhonePe Browser
-  participant Poller as PaymentStatusPoller
-  participant API as GET /payments/:orderId/status
+  participant SDK as Cashfree SDK
+  participant API as Backend /cashfree/*
 
   Checkout->>Order: createOrder(paymentMethod=ONLINE)
-  Order-->>Checkout: OrderModel (status PLACED)
-  Checkout->>Pay: initiatePayment(orderId, amount)
-  Pay->>API: POST /payments/initiate
-  Pay->>Browser: launchUrl(paymentUrl)
-  Checkout->>Poller: navigate
-  loop every few seconds
-    Poller->>API: getPaymentStatusForOrder
-  end
-  Poller->>Poller: on SUCCESS → confirmation
+  Order-->>Checkout: OrderModel status PLACED
+  Checkout->>Processing: pushReplacement
+  Processing->>Pay: initiatePayment(orderId)
+  Pay->>API: POST /payments/cashfree/initiate
+  Pay->>SDK: doPayment(payment_session_id)
+  SDK-->>Pay: success callback
+  Pay->>API: POST /payments/cashfree/verify
+  Processing->>API: GET /payments/cashfree/:orderId/status poll fallback
+  Processing->>Processing: OrderConfirmationScreen Track Order
 ```
 
 ### Payment method selection
 
-Checkout supports `COD` and `ONLINE` (case-normalized to uppercase before API call).
+Checkout supports `COD` and `ONLINE` (case-normalized to uppercase before API call). UI copy references **Cashfree** as the gateway; UPI app chips (GPay, PhonePe, Paytm) are display-only.
+
+### Cashfree SDK environment
+
+`PaymentService` reads `CASHFREE_ENV` (or falls back to `APP_ENV`) → `CFEnvironment.PRODUCTION` vs `SANDBOX`.
 
 ### Amount passed to payment
 
@@ -329,11 +341,12 @@ Checkout supports `COD` and `ONLINE` (case-normalized to uppercase before API ca
 amount: order.finalAmount > 0 ? order.finalAmount : _total
 ```
 
-Backend validates amount from order row during initiation — client amount is informational for PhonePe redirect context.
+Backend validates amount from the order row during `POST /payments/cashfree/initiate`.
 
-### Do not use verifyPayment
+### Verification
 
-`PaymentService.verifyPayment()` calls `POST /payments/verify` which does not exist on the backend. Use `getPaymentStatusForOrder()` instead.
+Primary path: SDK success callback → `POST /payments/cashfree/verify`.  
+Fallback: `GET /payments/cashfree/:orderId/status` polling on `PaymentProcessingScreen`.
 
 ---
 
@@ -345,7 +358,8 @@ Backend validates amount from order row during initiation — client amount is i
 | Coupon | Sends `couponCode` | Ignored at create; preview via `/orders/apply-coupon` | Show server-computed total after coupon preview |
 | Variants | `variantId` in items | Not supported | Do not expose variant picker until backend supports it |
 | Slot booking | `bookSlot()` available but unused | Books inside `POST /orders` | Current checkout flow is correct |
-| Payment verify | `POST /payments/verify` | Route missing | Use `GET /payments/:orderId/status` |
+| Payment verify | `POST /payments/cashfree/verify` | Implemented | SDK success + optional poll |
+| Payment status | `GET /payments/cashfree/:orderId/status` | Implemented | Poll fallback on processing screen |
 | Slot labels (cart) | Local Morning/Evening | API slots with capacity | Treat cart labels as hints only |
 | Cart validate | No pre-checkout validate call | No validate endpoint | Handle errors at order time |
 
@@ -357,7 +371,10 @@ Backend validates amount from order row during initiation — client amount is i
 
 | File | Role |
 |------|------|
-| `lib/screens/checkout/checkout_screen.dart` | Main checkout + payment poller |
+| `lib/screens/checkout/checkout_screen.dart` | Main checkout; ONLINE → PaymentProcessingScreen |
+| `lib/screens/payment/payment_processing_screen.dart` | Cashfree SDK + auto-poll |
+| `lib/screens/payment/payment_result_screen.dart` | Payment failure + retry |
+| `lib/screens/orders/order_confirmation_screen.dart` | Merged COD/online success + Track Order |
 | `lib/screens/cart/cart_screen.dart` | Cart display, navigate to checkout |
 
 ### Services
@@ -366,7 +383,7 @@ Backend validates amount from order row during initiation — client amount is i
 |------|------|
 | `lib/services/cart_service.dart` | Cart API client |
 | `lib/services/order_service.dart` | Order CRUD |
-| `lib/services/payment_service.dart` | PhonePe initiation + status |
+| `lib/services/payment_service.dart` | Cashfree initiate + verify + status |
 | `lib/services/delivery_slot_api_service.dart` | Slot listing |
 | `lib/services/delivery_time_slot_service.dart` | Legacy local slot labels |
 | `lib/services/delivery_service.dart` | Radius validation |
@@ -385,7 +402,7 @@ Backend validates amount from order row during initiation — client amount is i
 | File | Role |
 |------|------|
 | `lib/config/api_config.dart` | Path constants (`ApiCartPaths`, `ApiOrderPaths`, etc.) |
-| `lib/config/env_config.dart` | Base URL, PhonePe UPI fallback config |
+| `lib/config/env_config.dart` | Base URL, `CASHFREE_ENV` / `APP_ENV` for SDK environment |
 
 ### Widgets
 

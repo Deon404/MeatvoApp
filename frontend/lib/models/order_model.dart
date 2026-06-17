@@ -43,7 +43,7 @@ class OrderModel {
   final String status; // 'pending', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'
   final String paymentMethod; // 'cod', 'online'
   final String? paymentStatus; // 'pending', 'completed', 'failed'
-  final String? paymentId; // PhonePe transaction ID
+  final String? paymentId; // Cashfree / gateway payment reference
   final Map<String, dynamic>? paymentMethodDetails; // Payment details (JSONB)
   final String? deliveryAddress;
   final double? deliveryLatitude;

@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../design_system/theme/meatvo_theme_extensions.dart';
-import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/address_model.dart';
 import '../../models/cart_model.dart';
-import '../../models/order_model.dart';
 import '../../services/address_service.dart';
 import '../../services/cart_service.dart';
 import '../../services/delivery_service.dart';
@@ -25,8 +22,7 @@ import '../../widgets/checkout/checkout_success_overlay.dart';
 import '../../widgets/location/delivery_location_sheet.dart';
 import '../../widgets/store/store_closed_sheet.dart';
 import '../orders/order_confirmation_screen.dart';
-import '../payment/payment_result_screen.dart';
-import '../../utils/responsive_helper.dart';
+import '../payment/payment_processing_screen.dart';
 
 /// Premium checkout — address, express delivery, payment, place order.
 class CheckoutScreen extends StatefulWidget {
@@ -309,22 +305,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           _isOnlinePayment && serverPayment == 'ONLINE';
 
       if (isOnlineOrder) {
-        try {
-          await _paymentService.initiatePayment(
-            orderId: order.id,
-            amount: order.finalAmount > 0 ? order.finalAmount : _total,
-          );
-        } catch (e) {
-          if (!mounted) return;
-          setState(() => _isPlacingOrder = false);
-          _showMessage(_friendlyError(e));
-          return;
-        }
-
-        if (!mounted) return;
         setState(() => _isPlacingOrder = false);
 
-        // Backend clears cart on order create — sync local badge/state.
         try {
           await _cartService.getCart();
         } catch (_) {}
@@ -332,10 +314,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         if (!mounted) return;
         await Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => _PaymentStatusPoller(
+            builder: (_) => PaymentProcessingScreen(
               order: order,
               deliveryAddress: deliveryAddressJson,
               paymentService: _paymentService,
+              amount: order.finalAmount > 0 ? order.finalAmount : _total,
             ),
           ),
         );
@@ -492,205 +475,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         if (_showSuccessOverlay)
           CheckoutSuccessOverlay(
             message: _isOnlinePayment
-                ? 'Redirecting to secure payment…'
+                ? 'Opening secure payment…'
                 : 'Your fresh order is on its way.',
           ),
       ],
-    );
-  }
-}
-
-/// Polls PhonePe payment status after user returns from external browser.
-class _PaymentStatusPoller extends StatefulWidget {
-  final OrderModel order;
-  final Map<String, dynamic> deliveryAddress;
-  final PaymentService paymentService;
-
-  const _PaymentStatusPoller({
-    required this.order,
-    required this.deliveryAddress,
-    required this.paymentService,
-  });
-
-  @override
-  State<_PaymentStatusPoller> createState() => _PaymentStatusPollerState();
-}
-
-class _PaymentStatusPollerState extends State<_PaymentStatusPoller> {
-  bool _checking = false;
-  int _attempt = 0;
-  static const _maxAttempts = 3;
-  static const _retryDelay = Duration(seconds: 2);
-
-  Future<void> _checkStatus({bool navigateOnPending = true}) async {
-    if (_checking) return;
-    setState(() => _checking = true);
-
-    try {
-      for (var i = 0; i < _maxAttempts; i++) {
-        _attempt = i + 1;
-        if (i > 0) await Future<void>.delayed(_retryDelay);
-
-        final statusData = await widget.paymentService
-            .getPaymentStatusForOrder(widget.order.id);
-        final status = (statusData['status'] ?? statusData['paymentStatus'])
-            ?.toString()
-            .toUpperCase();
-        final isSuccess = status == 'SUCCESS' || status == 'PAID';
-
-        if (isSuccess) {
-          if (!mounted) return;
-          _goToResult(isSuccess: true, statusData: statusData);
-          return;
-        }
-
-        if (status == 'PENDING' && navigateOnPending && i < _maxAttempts - 1) {
-          continue;
-        }
-
-        if (!mounted) return;
-        _goToResult(
-          isSuccess: false,
-          statusData: statusData,
-          status: status,
-        );
-        return;
-      }
-    } catch (e) {
-      if (!mounted) return;
-      _goToResult(isSuccess: false, errorMessage: e.toString());
-    } finally {
-      if (mounted) setState(() => _checking = false);
-    }
-  }
-
-  void _goToResult({
-    required bool isSuccess,
-    Map<String, dynamic>? statusData,
-    String? status,
-    String? errorMessage,
-  }) {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => PaymentResultScreen(
-          isSuccess: isSuccess,
-          order: widget.order,
-          paymentId: statusData?['gateway_transaction_id']?.toString(),
-          deliveryAddress: widget.deliveryAddress,
-          errorMessage: isSuccess
-              ? null
-              : errorMessage ??
-                  'Payment is ${status ?? 'pending'}. Tap retry if you completed payment.',
-          onRetry: isSuccess
-              ? null
-              : () {
-                  Navigator.of(context).pop();
-                },
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final mv = context.meatvo;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Scaffold(
-      resizeToAvoidBottomInset: true,
-      backgroundColor: mv.surfaceWarm,
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            return SingleChildScrollView(
-              padding: EdgeInsets.all(mv.spacing.lg),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: MeatvoColors.primaryLight,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.lock_outline_rounded,
-                  color: mv.brandPrimary,
-                  size: 32,
-                ),
-              ),
-              SizedBox(height: mv.spacing.lg),
-              Text(
-                'Complete payment in PhonePe',
-                style: textTheme.titleLarge?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: mv.textPrimary,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: mv.spacing.sm),
-              Text(
-                'Finish payment in the browser, then return here and tap the button below.',
-                style: textTheme.bodyMedium?.copyWith(
-                  color: mv.textSecondary,
-                  height: 1.45,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              SizedBox(height: mv.spacing.xl),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: FilledButton(
-                  onPressed: _checking ? null : () => _checkStatus(),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: mv.brandPrimary,
-                    foregroundColor: MeatvoColors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(mv.radii.pill),
-                    ),
-                  ),
-                  child: _checking
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: MeatvoColors.white,
-                              ),
-                            ),
-                            SizedBox(width: mv.spacing.sm),
-                            Text(
-                              'Checking… ($_attempt/$_maxAttempts)',
-                              style: textTheme.titleSmall?.copyWith(
-                                color: MeatvoColors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        )
-                      : Text(
-                          "I've completed payment",
-                          style: textTheme.titleSmall?.copyWith(
-                            color: MeatvoColors.white,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                ),
-              ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
     );
   }
 }
