@@ -9,8 +9,13 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../../.env') });
 
 const { query } = require('../postgres');
-const { LEGACY_STATUS_MIGRATION } = require('../../utils/orderStatus');
 const { logger } = require('../../utils/logger');
+
+// DB-only collapse of deprecated delivery statuses (matches migrate_order_statuses.sql)
+const DELIVERY_STATUS_COLLAPSE = {
+  PICKED_UP: 'OUT_FOR_DELIVERY',
+  ON_THE_WAY: 'OUT_FOR_DELIVERY',
+};
 
 async function migrateOrderStatuses() {
   logger.info('order_status_migration_start');
@@ -30,7 +35,7 @@ async function migrateOrderStatuses() {
     logger.info('order_status_migration_legacy', { rows: countRows });
     
     // Migrate PICKED_UP and ON_THE_WAY to OUT_FOR_DELIVERY
-    for (const [legacyStatus, newStatus] of Object.entries(LEGACY_STATUS_MIGRATION)) {
+    for (const [legacyStatus, newStatus] of Object.entries(DELIVERY_STATUS_COLLAPSE)) {
       const { rowCount } = await query(
         `UPDATE orders 
          SET status = $1
