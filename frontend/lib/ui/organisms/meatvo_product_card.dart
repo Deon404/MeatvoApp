@@ -9,6 +9,7 @@ import '../../design_system/tokens/meatvo_durations.dart';
 import '../../design_system/tokens/meatvo_spacing.dart';
 import '../../models/product_model.dart';
 import '../../utils/media_url_resolver.dart';
+import '../../widgets/cart/cart_fly_to_pill_overlay.dart';
 import '../atoms/meatvo_badge.dart';
 import '../atoms/scale_tap.dart';
 import '../molecules/price_row.dart';
@@ -70,7 +71,7 @@ enum MeatvoProductCardLayout { grid, carousel }
 ///      the grid blank.
 ///   4. NO null assertions (`!`) anywhere in the tree.  Every nullable
 ///      field is captured into a local and guarded with `??` / `?.call()`.
-class MeatvoProductCard extends StatelessWidget {
+class MeatvoProductCard extends StatefulWidget {
   const MeatvoProductCard({
     super.key,
     required this.product,
@@ -145,6 +146,40 @@ class MeatvoProductCard extends StatelessWidget {
       cardWidth + _kBodyHeight;
 
   @override
+  State<MeatvoProductCard> createState() => _MeatvoProductCardState();
+}
+
+class _MeatvoProductCardState extends State<MeatvoProductCard> {
+  final GlobalKey _imageKey = GlobalKey();
+
+  Rect? _imageRect() {
+    final box = _imageKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.hasSize || !box.attached) return null;
+    final topLeft = box.localToGlobal(Offset.zero);
+    return topLeft & box.size;
+  }
+
+  void _triggerFlyAnimation() {
+    final rect = _imageRect();
+    if (rect == null || !mounted) return;
+    CartFlyToPillOverlay.show(
+      context,
+      imageUrl: widget.product.primaryImageUrl,
+      startRect: rect,
+    );
+  }
+
+  void _handleAdd() {
+    _triggerFlyAnimation();
+    widget.onAdd?.call();
+  }
+
+  void _handleIncrement() {
+    _triggerFlyAnimation();
+    widget.onIncrement?.call();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
 
@@ -153,7 +188,7 @@ class MeatvoProductCard extends StatelessWidget {
     // bug brief specifically asked for this. Strips out of release
     // builds via `kDebugMode`.
     if (kDebugMode) {
-      debugPrint('Rendering MeatvoProductCard: ${product.id}');
+      debugPrint('Rendering MeatvoProductCard: ${widget.product.id}');
     }
 
     return LayoutBuilder(
@@ -165,14 +200,14 @@ class MeatvoProductCard extends StatelessWidget {
         final rawW = constraints.maxWidth;
         final width = (constraints.hasBoundedWidth && rawW.isFinite && rawW > 0)
             ? rawW
-            : _kFallbackWidth;
+            : MeatvoProductCard._kFallbackWidth;
 
-        final discount = discountPercent;
-        final orig = originalPrice;
+        final discount = widget.discountPercent;
+        final orig = widget.originalPrice;
         final resolvedDiscount = (discount != null && discount >= 1 && discount < 100)
             ? discount
-            : (orig != null && orig > displayPrice + 0.01)
-                ? ((orig - displayPrice) / orig * 100).clamp(1, 99).toDouble()
+            : (orig != null && orig > widget.displayPrice + 0.01)
+                ? ((orig - widget.displayPrice) / orig * 100).clamp(1, 99).toDouble()
                 : null;
         final showDiscountBadge = resolvedDiscount != null;
 
@@ -181,31 +216,36 @@ class MeatvoProductCard extends StatelessWidget {
           // constraints, regardless of how careless the parent is.
           width: width,
           child: ScaleTap(
-            onTap: onTap,
+            onTap: widget.onTap,
             scale: 0.985,
             haptic: false,
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: mv.surfaceCard,
-                borderRadius: BorderRadius.circular(_cardRadius),
+                borderRadius: BorderRadius.circular(MeatvoProductCard._cardRadius),
                 boxShadow: mv.shadowCard,
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(_cardRadius),
+                borderRadius: BorderRadius.circular(MeatvoProductCard._cardRadius),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     AspectRatio(
                       aspectRatio: 1,
-                      child: _ImageBlock(
-                        imageUrl: product.primaryImageUrl,
-                        discountPercent: resolvedDiscount,
-                        showFresh: showFreshBadge && inStock && badgeLabel == null,
-                        badgeLabel: showDiscountBadge ? null : badgeLabel,
-                        badgeVariant: badgeVariant,
-                        inStock: inStock,
-                        orderingPaused: orderingPaused,
+                      child: KeyedSubtree(
+                        key: _imageKey,
+                        child: _ImageBlock(
+                          imageUrl: widget.product.primaryImageUrl,
+                          discountPercent: resolvedDiscount,
+                          showFresh: widget.showFreshBadge &&
+                              widget.inStock &&
+                              widget.badgeLabel == null,
+                          badgeLabel: showDiscountBadge ? null : widget.badgeLabel,
+                          badgeVariant: widget.badgeVariant,
+                          inStock: widget.inStock,
+                          orderingPaused: widget.orderingPaused,
+                        ),
                       ),
                     ),
                     Padding(
@@ -215,7 +255,7 @@ class MeatvoProductCard extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            product.name,
+                            widget.product.name,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             softWrap: true,
@@ -231,7 +271,7 @@ class MeatvoProductCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            displayUnit,
+                            widget.displayUnit,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             softWrap: false,
@@ -245,8 +285,8 @@ class MeatvoProductCard extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           PriceRow(
-                            price: displayPrice,
-                            originalPrice: originalPrice,
+                            price: widget.displayPrice,
+                            originalPrice: widget.originalPrice,
                             discountPercent: resolvedDiscount,
                             compact: true,
                             showDiscountText: !showDiscountBadge,
@@ -255,16 +295,17 @@ class MeatvoProductCard extends StatelessWidget {
                           Align(
                             alignment: Alignment.centerRight,
                             child: SizedBox(
-                              width: _kCtaWidth,
-                              height: ctaHeight,
+                              width: MeatvoProductCard._kCtaWidth,
+                              height: MeatvoProductCard.ctaHeight,
                               child: _CartCta(
-                                inStock: inStock,
-                                orderingPaused: orderingPaused,
-                                quantity: quantity,
-                                isBusy: isBusy,
-                                onAdd: onAdd,
-                                onIncrement: onIncrement,
-                                onDecrement: onDecrement,
+                                inStock: widget.inStock,
+                                orderingPaused: widget.orderingPaused,
+                                quantity: widget.quantity,
+                                isBusy: widget.isBusy,
+                                onAdd: widget.onAdd == null ? null : _handleAdd,
+                                onIncrement:
+                                    widget.onIncrement == null ? null : _handleIncrement,
+                                onDecrement: widget.onDecrement,
                               ),
                             ),
                           ),

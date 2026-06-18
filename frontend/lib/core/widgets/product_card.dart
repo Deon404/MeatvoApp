@@ -46,10 +46,10 @@ class _ProductCardState extends State<ProductCard> {
 
   Future<void> _pulseAdd(VoidCallback? action) async {
     setState(() => _ctaScale = 0.92);
+    action?.call();
     await Future<void>.delayed(_scaleDuration);
     if (!mounted) return;
     setState(() => _ctaScale = 1);
-    action?.call();
   }
 
   @override

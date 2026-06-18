@@ -192,7 +192,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ProductDetailScreen(productId: product.product.id),
+        builder: (_) => ProductDetailScreen(
+          productId: product.product.id,
+          initialProduct: product,
+        ),
       ),
     );
   }

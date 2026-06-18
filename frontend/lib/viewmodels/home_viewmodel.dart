@@ -12,6 +12,7 @@ import '../services/address_service.dart';
 import '../services/auth_service.dart';
 import '../services/banner_service.dart';
 import '../services/cart_service.dart';
+import '../services/cart_sync_subscription.dart';
 import '../services/delivery_service.dart';
 import '../services/notification_service.dart';
 import '../services/product_service.dart';
@@ -27,6 +28,7 @@ class HomeViewModel extends StateNotifier<HomeState> {
   final BannerService _bannerService;
   final NotificationService _notificationService;
   bool _initialized = false;
+  late final CartSyncSubscription _cartSync;
 
   HomeViewModel({
     required ProductService productService,
@@ -41,10 +43,17 @@ class HomeViewModel extends StateNotifier<HomeState> {
         _authService = authService,
         _bannerService = bannerService,
         _notificationService = notificationService,
-        super(HomeState.initial());
+        super(HomeState.initial()) {
+    _cartSync = CartSyncSubscription((cart) {
+      state = state.copyWith(cart: cart);
+    });
+  }
 
   Future<void> initialize() async {
-    if (_initialized && !state.isInitialLoading) return;
+    if (_initialized && !state.isInitialLoading) {
+      await refreshCart();
+      return;
+    }
     _initialized = true;
     await loadHome();
   }
@@ -246,15 +255,23 @@ class HomeViewModel extends StateNotifier<HomeState> {
     int nextQuantity,
   ) async {
     final productId = product.product.id;
-    if (state.busyProductIds.contains(productId)) return;
     if (nextQuantity > 0 && !_canAddProduct(product)) return;
 
-    final busyIds = {...state.busyProductIds, productId};
-    state = state.copyWith(busyProductIds: busyIds);
+    final cartItem = state.cart.findItemByProductId(productId);
+    final variant = _preferredVariant(product);
+    final optimisticCart = _cartService.buildOptimisticCart(
+      current: state.cart,
+      product: product.product,
+      productId: productId,
+      nextQuantity: nextQuantity,
+      variantId: variant?.id,
+      variantPrice: variant?.price,
+      unit: variant?.weight ?? product.product.unit,
+    );
+    _cartService.applyOptimisticCart(optimisticCart);
+    state = state.copyWith(cart: optimisticCart, cartErrorMessage: null);
 
     try {
-      final cartItem = state.cart.findItemByProductId(productId);
-      final variant = _preferredVariant(product);
       if (cartItem == null && nextQuantity > 0) {
         await _cartService.addToCart(
           productId,
@@ -272,12 +289,10 @@ class HomeViewModel extends StateNotifier<HomeState> {
       }
       await refreshCart();
     } catch (error) {
+      await refreshCart();
       state = state.copyWith(
         cartErrorMessage: HomeStrings.cartUpdateFailed(error),
       );
-    } finally {
-      final nextBusyIds = {...state.busyProductIds}..remove(productId);
-      state = state.copyWith(busyProductIds: nextBusyIds);
     }
   }
 
@@ -418,5 +433,11 @@ class HomeViewModel extends StateNotifier<HomeState> {
 
   String _friendlyError(Object error, String fallback) {
     return ErrorMessageMapper.userMessage(error, fallback: fallback);
+  }
+
+  @override
+  void dispose() {
+    _cartSync.dispose();
+    super.dispose();
   }
 }

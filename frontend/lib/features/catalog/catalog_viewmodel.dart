@@ -8,6 +8,7 @@ import '../../models/cart_model.dart';
 import '../../models/category_model.dart';
 import '../../models/product_variant_model.dart';
 import '../../services/cart_service.dart';
+import '../../services/cart_sync_subscription.dart';
 import '../../services/product_service.dart';
 import 'catalog_state.dart';
 
@@ -20,13 +21,18 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
   })  : _productService = productService,
         _cartService = cartService,
         _currentCategoryId = initialCategoryId,
-        super(CatalogState.initial(initialCategory: initialCategory));
+        super(CatalogState.initial(initialCategory: initialCategory)) {
+    _cartSync = CartSyncSubscription((cart) {
+      state = state.copyWith(cart: cart);
+    });
+  }
 
   final ProductService _productService;
   final CartService _cartService;
   int? _currentCategoryId;
   bool _userSelectedCategory = false;
   Timer? _searchDebounce;
+  late final CartSyncSubscription _cartSync;
 
   static const _defaultCategories = ['Chicken', 'Eggs', 'Fish', 'Mutton'];
   static const _comingSoonCategoryKeys = {'fish', 'mutton'};
@@ -35,6 +41,7 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
   @override
   void dispose() {
     _searchDebounce?.cancel();
+    _cartSync.dispose();
     super.dispose();
   }
 
@@ -208,7 +215,6 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
     state = state.copyWith(
       selectedCategory: name,
       searchQuery: '',
-      allProducts: const [],
       isRefreshing: true,
       errorMessage: null,
     );
@@ -294,21 +300,27 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
     int nextQuantity,
   ) async {
     final productId = product.product.id;
-    if (state.busyProductIds.contains(productId)) return;
+    final variant = product.availableVariants.isNotEmpty
+        ? product.availableVariants.first
+        : product.variants.isNotEmpty
+            ? product.variants.first
+            : null;
+    final existing = state.cart.findItemByProductId(productId);
+    final existingItemId = existing?.itemId;
 
-    state = state.copyWith(
-      busyProductIds: {...state.busyProductIds, productId},
+    final optimisticCart = _cartService.buildOptimisticCart(
+      current: state.cart,
+      product: product.product,
+      productId: productId,
+      nextQuantity: nextQuantity,
+      variantId: variant?.id,
+      variantPrice: variant?.price,
+      unit: variant?.weight ?? product.product.unit,
     );
+    _cartService.applyOptimisticCart(optimisticCart);
+    state = state.copyWith(cart: optimisticCart);
 
     try {
-      final variant = product.availableVariants.isNotEmpty
-          ? product.availableVariants.first
-          : product.variants.isNotEmpty
-              ? product.variants.first
-              : null;
-      final existing = state.cart.findItemByProductId(productId);
-      final existingItemId = existing?.itemId;
-
       if (existingItemId != null &&
           existingItemId.isNotEmpty &&
           nextQuantity > 0) {
@@ -328,9 +340,9 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
 
       final cart = await _cartService.getCart().catchError((_) => state.cart);
       state = state.copyWith(cart: cart);
-    } finally {
-      final busy = {...state.busyProductIds}..remove(productId);
-      state = state.copyWith(busyProductIds: busy);
+    } catch (_) {
+      final cart = await _cartService.getCart().catchError((_) => state.cart);
+      state = state.copyWith(cart: cart);
     }
   }
 }

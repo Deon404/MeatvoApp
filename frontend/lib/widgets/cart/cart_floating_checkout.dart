@@ -21,6 +21,7 @@ class CartFloatingCheckout extends StatelessWidget {
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
+    final buttonEnabled = !isLoading && onCheckout != null;
 
     return Container(
       padding: EdgeInsets.all(mv.spacing.md),
@@ -54,12 +55,12 @@ class CartFloatingCheckout extends StatelessWidget {
             height: 54,
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: isLoading || onCheckout == null
-                  ? null
-                  : () {
+              onPressed: buttonEnabled
+                  ? () {
                       HapticFeedback.mediumImpact();
                       onCheckout?.call();
-                    },
+                    }
+                  : null,
               style: ElevatedButton.styleFrom(
                 backgroundColor: mv.brandPrimary,
                 foregroundColor: MeatvoColors.white,

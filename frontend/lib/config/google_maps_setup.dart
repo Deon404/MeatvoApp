@@ -64,7 +64,7 @@ Then: flutter clean && flutter run
       'Add GOOGLE_MAPS_API_KEY to frontend/.env and run:\n'
       '  flutter clean\n'
       '  flutter run\n\n'
-      'Optional: copy the same key to android/gradle.properties.';
+      'Optional: run dart run tool/sync_env.dart to write android/secrets.properties.';
 
   static void logDebugStatus() {
     if (!kDebugMode) return;
@@ -79,7 +79,7 @@ Then: flutter clean && flutter run
       final previewLength = key.length < 8 ? key.length : 8;
       debugPrint('  API key: configured (${key.substring(0, previewLength)}...)');
     } else {
-      debugPrint('  API key: MISSING or placeholder — update .env + gradle.properties');
+      debugPrint('  API key: MISSING or placeholder — update .env + secrets.properties');
       debugPrint(setupChecklist);
     }
   }

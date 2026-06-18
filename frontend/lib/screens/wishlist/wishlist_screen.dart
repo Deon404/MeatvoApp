@@ -4,12 +4,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../models/product_variant_model.dart';
 import '../../providers/wishlist_provider.dart';
+import '../../screens/cart/cart_screen.dart';
 import '../../screens/product/product_detail_screen.dart';
 import '../../ui/organisms/meatvo_product_card.dart';
 import '../../ui/organisms/product_card_adapter.dart';
 import '../../providers/store_settings_provider.dart';
 import '../../ui/organisms/product_card_bindings.dart';
+import '../../ui/shells/meatvo_layout.dart';
 import '../../utils/ordering_gate.dart';
+import '../../widgets/cart/floating_cart_bar.dart';
 import '../../widgets/store/store_closed_banner.dart';
 import '../../utils/app_transitions.dart';
 import '../../utils/responsive_helper.dart';
@@ -38,37 +41,53 @@ class WishlistScreen extends ConsumerWidget {
         foregroundColor: mv.textPrimary,
         elevation: 0,
       ),
-      body: SafeArea(
-        top: false,
-        bottom: true,
-        child: wishlistIds.isEmpty
-            ? EmptyStateWidget(
-                icon: Icons.favorite_border,
-                title: 'No items saved',
-                description:
-                    'Save your favourite cuts here for quick access later.',
-                actionLabel: 'Browse Products',
-                onAction: () {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                },
-                iconColor: mv.brandPrimary,
-              )
-            : productsAsync.when(
-                loading: () => const _WishlistLoadingGrid(),
-                error: (_, __) => ErrorStateWidget(
-                  title: 'Could not load wishlist',
-                  message: 'Check your connection and try again.',
-                  onRetry: () => ref.invalidate(wishlistProductsProvider),
-                  fullScreen: false,
-                  icon: Icons.favorite_border,
-                  iconColor: mv.brandPrimary,
-                ),
-                data: (products) => _WishlistGrid(
-                  mv: mv,
-                  products: products,
-                  onOpenProduct: (productId) => _openProduct(context, productId),
-                ),
-              ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Positioned.fill(
+            child: SafeArea(
+              top: false,
+              bottom: true,
+              child: wishlistIds.isEmpty
+                  ? EmptyStateWidget(
+                      icon: Icons.favorite_border,
+                      title: 'No items saved',
+                      description:
+                          'Save your favourite cuts here for quick access later.',
+                      actionLabel: 'Browse Products',
+                      onAction: () {
+                        Navigator.of(context).popUntil((route) => route.isFirst);
+                      },
+                      iconColor: mv.brandPrimary,
+                    )
+                  : productsAsync.when(
+                      loading: () => const _WishlistLoadingGrid(),
+                      error: (_, __) => ErrorStateWidget(
+                        title: 'Could not load wishlist',
+                        message: 'Check your connection and try again.',
+                        onRetry: () => ref.invalidate(wishlistProductsProvider),
+                        fullScreen: false,
+                        icon: Icons.favorite_border,
+                        iconColor: mv.brandPrimary,
+                      ),
+                      data: (products) => _WishlistGrid(
+                        mv: mv,
+                        products: products,
+                        onOpenProduct: (productId) => _openProduct(context, productId),
+                      ),
+                    ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: MediaQuery.paddingOf(context).bottom +
+                MeatvoLayout.floatingCartBottomGap,
+            child: FloatingCartBar(
+              onViewCartTapped: () => context.pushSlideRight(const CartScreen()),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -88,7 +107,12 @@ class _WishlistLoadingGrid extends StatelessWidget {
         MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
 
     return GridView.builder(
-      padding: EdgeInsets.all(mv.spacing.md),
+      padding: EdgeInsets.fromLTRB(
+        mv.spacing.md,
+        mv.spacing.md,
+        mv.spacing.md,
+        MeatvoLayout.catalogScrollBottomInset(context),
+      ),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
         mainAxisSpacing: mv.spacing.md,
@@ -140,51 +164,57 @@ class _WishlistGrid extends ConsumerWidget {
         StoreClosedBanner(status: storeStatus),
         Expanded(
           child: GridView.builder(
-      padding: EdgeInsets.all(mv.spacing.md),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: mv.spacing.md,
-        crossAxisSpacing: mv.spacing.md,
-        mainAxisExtent: cardHeight,
-      ),
-      itemCount: products.length,
-      itemBuilder: (context, index) {
-        final item = products[index];
-        final productId = item.product.id;
-        final qty = cart.findItemByProductId(productId)?.quantity.round() ?? 0;
-        final busy = busyProductIds.contains(productId);
-        final bindings = ProductCardBindings.forProduct(
-          storeStatus: storeStatus,
-          product: item,
-          cart: cart,
-          onQuantityChange: (p, next) async {
-            await OrderingGate.guardQuantityChange(
-              context,
-              ref,
-              currentQuantity: qty,
-              nextQuantity: next,
-              action: () => changeQty(p, next),
-            );
-          },
-        );
+            padding: EdgeInsets.fromLTRB(
+              mv.spacing.md,
+              mv.spacing.md,
+              mv.spacing.md,
+              MeatvoLayout.catalogScrollBottomInset(context),
+            ),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              mainAxisSpacing: mv.spacing.md,
+              crossAxisSpacing: mv.spacing.md,
+              mainAxisExtent: cardHeight,
+            ),
+            itemCount: products.length,
+            itemBuilder: (context, index) {
+              final item = products[index];
+              final productId = item.product.id;
+              final qty =
+                  cart.findItemByProductId(productId)?.quantity.round() ?? 0;
+              final busy = busyProductIds.contains(productId);
+              final bindings = ProductCardBindings.forProduct(
+                storeStatus: storeStatus,
+                product: item,
+                cart: cart,
+                onQuantityChange: (p, next) async {
+                  await OrderingGate.guardQuantityChange(
+                    context,
+                    ref,
+                    currentQuantity: qty,
+                    nextQuantity: next,
+                    action: () => changeQty(p, next),
+                  );
+                },
+              );
 
-        return MeatvoProductCard(
-          product: item.product,
-          displayPrice: ProductCardAdapter.displayPrice(item),
-          displayUnit: ProductCardAdapter.displayUnit(item),
-          originalPrice: ProductCardAdapter.originalPrice(item),
-          discountPercent: ProductCardAdapter.discountPercent(item),
-          quantity: qty,
-          isBusy: busy,
-          inStock: bindings.inStock,
-          orderingPaused: bindings.orderingPaused,
-          layout: MeatvoProductCardLayout.grid,
-          onTap: () => onOpenProduct(productId),
-          onAdd: bindings.onAdd,
-          onIncrement: bindings.onIncrement,
-          onDecrement: bindings.onDecrement,
-        );
-      },
+              return MeatvoProductCard(
+                product: item.product,
+                displayPrice: ProductCardAdapter.displayPrice(item),
+                displayUnit: ProductCardAdapter.displayUnit(item),
+                originalPrice: ProductCardAdapter.originalPrice(item),
+                discountPercent: ProductCardAdapter.discountPercent(item),
+                quantity: qty,
+                isBusy: busy,
+                inStock: bindings.inStock,
+                orderingPaused: bindings.orderingPaused,
+                layout: MeatvoProductCardLayout.grid,
+                onTap: () => onOpenProduct(productId),
+                onAdd: bindings.onAdd,
+                onIncrement: bindings.onIncrement,
+                onDecrement: bindings.onDecrement,
+              );
+            },
           ),
         ),
       ],

@@ -1,5 +1,18 @@
 import java.io.File
 
+// Materialize google-services.json from local secrets before the Google Services plugin runs.
+run {
+    val localSecrets = file("google-services.local.json")
+    val target = file("google-services.json")
+    when {
+        localSecrets.isFile -> localSecrets.copyTo(target, overwrite = true)
+        !target.isFile -> logger.warn(
+            "Missing android/app/google-services.json — copy google-services.json.example " +
+                "to google-services.local.json and download your file from Firebase console.",
+        )
+    }
+}
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -9,9 +22,29 @@ plugins {
 
 /**
  * Maps SDK reads the key from AndroidManifest (not Dart .env).
- * Prefer `android/gradle.properties`; fall back to `frontend/.env`.
+ * Prefer `android/secrets.properties`; fall back to `frontend/.env`.
  */
+fun loadSecretsProperties(): Map<String, String> {
+    val secretsFile = File(rootProject.projectDir, "secrets.properties")
+    if (!secretsFile.isFile) return emptyMap()
+
+    val props = mutableMapOf<String, String>()
+    for (rawLine in secretsFile.readLines()) {
+        val line = rawLine.trim()
+        if (line.isEmpty() || line.startsWith("#")) continue
+        val eq = line.indexOf('=')
+        if (eq <= 0) continue
+        props[line.substring(0, eq).trim()] = line.substring(eq + 1).trim().trim('"')
+    }
+    return props
+}
+
 fun resolveGoogleMapsApiKey(): String {
+    val fromSecrets = loadSecretsProperties()["GOOGLE_MAPS_API_KEY"]?.trim().orEmpty()
+    if (fromSecrets.isNotEmpty() && !fromSecrets.contains("your_key", ignoreCase = true)) {
+        return fromSecrets
+    }
+
     val fromGradle =
         (project.findProperty("GOOGLE_MAPS_API_KEY") as String?)?.trim().orEmpty()
     if (fromGradle.isNotEmpty() && !fromGradle.contains("your_key", ignoreCase = true)) {
@@ -65,7 +98,7 @@ android {
         if (mapsApiKey.isEmpty()) {
             logger.warn(
                 "GOOGLE_MAPS_API_KEY is empty — map tiles will not load. " +
-                    "Set GOOGLE_MAPS_API_KEY in frontend/.env or android/gradle.properties",
+                    "Set GOOGLE_MAPS_API_KEY in frontend/.env or android/secrets.properties",
             )
         }
         manifestPlaceholders["GOOGLE_MAPS_API_KEY"] = mapsApiKey
@@ -89,13 +122,15 @@ android {
 
     buildTypes {
         release {
-            val releaseSigning = signingConfigs.findByName("release")
-            signingConfig = if (releaseSigning?.storeFile != null) {
-                releaseSigning
-            } else {
-                logger.warn("MEATVO_KEYSTORE_PATH not set — using debug signing (not for Play Store)")
-                signingConfigs.getByName("debug")
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile == null) {
+                error(
+                    "Release signing not configured. Set MEATVO_KEYSTORE_PATH and " +
+                        "MEATVO_KEYSTORE_PASSWORD (and optionally MEATVO_KEY_ALIAS / " +
+                        "MEATVO_KEY_PASSWORD) in gradle.properties or environment.",
+                )
             }
+            signingConfig = releaseSigning
         }
     }
 }

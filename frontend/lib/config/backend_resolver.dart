@@ -4,7 +4,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../utils/debug_session_log.dart';
 import 'env_config.dart';
 
 /// Picks a reachable backend URL before API calls (fixes physical phone + wrong 10.0.2.2).
@@ -34,18 +33,17 @@ class BackendResolver {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_prefKey)?.trim();
 
-    // #region agent log
-    DebugSessionLog.log(
-      location: 'backend_resolver.dart:init',
-      message: 'backend resolver starting',
-      hypothesisId: 'H1',
-      data: {
-        'configuredRoot': EnvConfig.configuredBackendRoot,
-        'savedRoot': saved,
-        'platform': Platform.operatingSystem,
-      },
-    );
-    // #endregion
+    // Production release APK: trust configured HTTPS domain (health probe may be nginx-restricted).
+    if (EnvConfig.isProduction) {
+      final configured = EnvConfig.configuredBackendRoot;
+      if (configured != null) {
+        _resolvedRoot = configured;
+        _hasReachableBackend = true;
+        await prefs.setString(_prefKey, configured);
+        debugPrint('✅ Production backend: $configured');
+        return;
+      }
+    }
 
     final candidates = <String>[];
     void add(String? url) {
@@ -87,26 +85,10 @@ class BackendResolver {
           _hasReachableBackend = true;
           await prefs.setString(_prefKey, base);
           debugPrint('✅ Backend resolved: $base');
-          // #region agent log
-          DebugSessionLog.log(
-            location: 'backend_resolver.dart:probe',
-            message: 'backend probe succeeded',
-            hypothesisId: 'H1',
-            data: {'resolvedRoot': base},
-          );
-          // #endregion
           return;
         }
       } catch (e) {
         debugPrint('⚠️ Backend probe failed ($base): $e');
-        // #region agent log
-        DebugSessionLog.log(
-          location: 'backend_resolver.dart:probe',
-          message: 'backend probe failed',
-          hypothesisId: 'H1',
-          data: {'candidate': base, 'error': e.runtimeType.toString()},
-        );
-        // #endregion
       }
     }
 
@@ -117,14 +99,6 @@ class BackendResolver {
     await prefs.remove(_prefKey);
     debugPrint('⚠️ No reachable backend. Set MEATVO_API_ROOT in .env '
         '(PC LAN IP on physical device).');
-    // #region agent log
-    DebugSessionLog.log(
-      location: 'backend_resolver.dart:fallback',
-      message: 'no backend reachable',
-      hypothesisId: 'H2',
-      data: {'candidatesTried': unique},
-    );
-    // #endregion
   }
 
   static const String connectionErrorPrefix = 'Cannot reach the server';
@@ -137,6 +111,10 @@ class BackendResolver {
 
   /// Detailed setup hints — debug console only.
   static String connectionHelpMessage() {
+    if (EnvConfig.isProduction) {
+      return 'Cannot reach ${EnvConfig.apiBaseUrl}. '
+          'Check your internet connection or try again later.';
+    }
     if (!kIsWeb && Platform.isAndroid) {
       return 'Cannot reach backend.\n\n'
           '• Physical phone (Wi‑Fi): set API_BASE_URL=http://YOUR_PC_IP:8080 '

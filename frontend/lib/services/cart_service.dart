@@ -311,4 +311,49 @@ class CartService {
 
   void unsubscribeFromCartUpdates() {}
 
+  // ── Optimistic updates (instant UI, sync API in background) ─────────────
+
+  /// Pushes a cart snapshot to all listeners without waiting for the server.
+  void applyOptimisticCart(CartModel cart) {
+    _syncCartState(cart);
+  }
+
+  /// Builds a local cart snapshot for [nextQuantity] before the API responds.
+  CartModel buildOptimisticCart({
+    required CartModel current,
+    required ProductModel product,
+    required String productId,
+    required int nextQuantity,
+    String? variantId,
+    double? variantPrice,
+    required String unit,
+  }) {
+    final currentItems = [...current.items];
+    final existingIndex =
+        currentItems.indexWhere((item) => item.productId == productId);
+
+    if (existingIndex == -1 && nextQuantity > 0) {
+      currentItems.add(
+        CartItem(
+          itemId: productId,
+          productId: productId,
+          product: product,
+          variantId: variantId,
+          variantPrice: variantPrice,
+          quantity: nextQuantity.toDouble(),
+          unit: unit,
+        ),
+      );
+    } else if (existingIndex != -1 && nextQuantity > 0) {
+      currentItems[existingIndex] = currentItems[existingIndex].copyWith(
+        quantity: nextQuantity.toDouble(),
+        variantId: variantId ?? currentItems[existingIndex].variantId,
+        variantPrice: variantPrice ?? currentItems[existingIndex].variantPrice,
+      );
+    } else if (existingIndex != -1) {
+      currentItems.removeAt(existingIndex);
+    }
+
+    return CartModel(items: currentItems);
+  }
 }

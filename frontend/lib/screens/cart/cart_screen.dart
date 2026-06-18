@@ -16,7 +16,6 @@ import '../../widgets/cart/cart_item_tile.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
 import '../../widgets/common/shimmer_loader.dart';
-import '../../widgets/store/store_closed_sheet.dart';
 import '../checkout/checkout_screen.dart';
 
 class CartScreen extends StatefulWidget {
@@ -41,6 +40,7 @@ class _CartScreenState extends State<CartScreen> {
   CartModel? _cart;
   bool _isLoading = true;
   bool _isUpdating = false;
+  bool _isCheckingOut = false;
   final Set<String> _updatingItems = {};
   String? _errorMessage;
   String? _appliedCouponCode;
@@ -230,6 +230,8 @@ class _CartScreenState extends State<CartScreen> {
 
 
   Future<void> _handlePlaceOrder() async {
+    if (_isCheckingOut) return;
+
     final messenger = ScaffoldMessenger.of(context);
     final currentCart = _cart;
     if (currentCart == null || currentCart.isEmpty) {
@@ -242,31 +244,12 @@ class _CartScreenState extends State<CartScreen> {
       return;
     }
 
+    setState(() => _isCheckingOut = true);
     try {
-      final storeStatus = await _storeStatusService.fetchStatus();
-      if (!mounted) return;
-      if (!storeStatus.isOpen) {
-        await StoreClosedSheet.show(context, storeStatus);
-        return;
-      }
-
-      final freshCart = await _cartService.getCart();
-      if (!mounted) return;
-      if (freshCart.isEmpty) {
-        setState(() => _cart = freshCart);
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Cart is empty'),
-            backgroundColor: context.meatvo.brandPrimaryDark,
-          ),
-        );
-        return;
-      }
-
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => CheckoutScreen(
-            cart: freshCart,
+            cart: currentCart,
             selectedAddress: null,
             couponCode: _appliedCouponCode,
             couponDiscount: _couponDiscount,
@@ -277,14 +260,8 @@ class _CartScreenState extends State<CartScreen> {
       if (mounted) {
         await _loadCartData();
       }
-    } catch (e) {
-      if (!mounted) return;
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Could not sync cart: $e'),
-          backgroundColor: context.meatvo.error,
-        ),
-      );
+    } finally {
+      if (mounted) setState(() => _isCheckingOut = false);
     }
   }
 
@@ -365,7 +342,7 @@ class _CartScreenState extends State<CartScreen> {
           SizedBox(height: mv.spacing.md),
           CartFloatingCheckout(
             total: _total,
-            isLoading: _isUpdating,
+            isLoading: _isUpdating || _isCheckingOut,
             onCheckout: _handlePlaceOrder,
           ),
         ],

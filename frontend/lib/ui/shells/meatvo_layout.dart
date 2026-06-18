@@ -7,7 +7,7 @@ abstract final class MeatvoLayout {
   static const double navBarMargin = 16;
   /// Vertical gap above safe area; matches nav `Positioned` bottom offset.
   static const double navBarBottomGap = 10;
-  static const double cartBarHeight = 52;
+  static const double cartBarHeight = 56;
 
   static const double _tabScrollBottomGap = 12;
 
@@ -48,9 +48,24 @@ abstract final class MeatvoLayout {
         MediaQuery.paddingOf(context).bottom;
   }
 
-  /// Product detail ListView padding above the bottom bar.
+  /// Fixed add-to-cart bar on product detail (padding + 48px CTA).
+  static const double productDetailBottomBarHeight = 72;
+
+  /// Bottom offset for [FloatingCartBar] above the product detail bottom bar.
+  static double productDetailFloatingCartBottom(
+    BuildContext context, {
+    bool hasBottomBar = true,
+  }) {
+    final safe = MediaQuery.paddingOf(context).bottom;
+    if (hasBottomBar) {
+      return safe + productDetailBottomBarHeight + floatingCartBottomGap;
+    }
+    return safe + floatingCartBottomGap;
+  }
+
+  /// Product detail ListView padding above bottom bar + floating cart pill.
   static double productDetailScrollBottomInset(BuildContext context) {
-    return MediaQuery.paddingOf(context).bottom + 88;
+    return productDetailFloatingCartBottom(context) + cartBarHeight + 8;
   }
 
   /// Nav + cart + spacing — for screens **outside** the tab shell only.

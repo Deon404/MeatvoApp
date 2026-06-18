@@ -179,18 +179,25 @@ class ProductNotifier extends StateNotifier<ProductState> {
   ) async {
     final productId = product.product.id;
     final existingCartItem = state.cart.findItemByProductId(productId);
-    if (state.busyProductIds.contains(productId)) return;
     if (nextQuantity > 0 && !_canAddProduct(product)) return;
 
-    final optimisticCart = _buildOptimisticCart(product, nextQuantity);
+    final variant = _preferredVariant(product);
+    final optimisticCart = _cartService.buildOptimisticCart(
+      current: state.cart,
+      product: product.product,
+      productId: productId,
+      nextQuantity: nextQuantity,
+      variantId: variant?.id,
+      variantPrice: variant?.price,
+      unit: variant?.weight ?? product.product.unit,
+    );
+    _cartService.applyOptimisticCart(optimisticCart);
     state = state.copyWith(
-      busyProductIds: {...state.busyProductIds, productId},
       cart: optimisticCart,
       cartError: null,
     );
 
     try {
-      final variant = _preferredVariant(product);
       if (existingCartItem == null && nextQuantity > 0) {
         await _cartService.addToCart(
           productId,
@@ -214,9 +221,6 @@ class ProductNotifier extends StateNotifier<ProductState> {
       state = state.copyWith(
         cartError: HomeStrings.cartUpdateFailed(error),
       );
-    } finally {
-      final nextBusyIds = {...state.busyProductIds}..remove(productId);
-      state = state.copyWith(busyProductIds: nextBusyIds);
     }
   }
 
@@ -271,35 +275,6 @@ class ProductNotifier extends StateNotifier<ProductState> {
     if (!product.product.isAvailable) return false;
     if (variant != null) return variant.isAvailable && variant.stock > 0;
     return (product.product.stock ?? 1) > 0;
-  }
-
-  CartModel _buildOptimisticCart(ProductWithVariants product, int nextQuantity) {
-    final currentItems = [...state.cart.items];
-    final existingIndex =
-        currentItems.indexWhere((item) => item.productId == product.product.id);
-
-    if (existingIndex == -1 && nextQuantity > 0) {
-      final variant = _preferredVariant(product);
-      currentItems.add(
-        CartItem(
-          itemId: product.product.id,
-          productId: product.product.id,
-          product: product.product,
-          variantId: variant?.id,
-          variantPrice: variant?.price,
-          quantity: nextQuantity.toDouble(),
-          unit: variant?.weight ?? product.product.unit,
-        ),
-      );
-    } else if (existingIndex != -1 && nextQuantity > 0) {
-      currentItems[existingIndex] = currentItems[existingIndex].copyWith(
-        quantity: nextQuantity.toDouble(),
-      );
-    } else if (existingIndex != -1) {
-      currentItems.removeAt(existingIndex);
-    }
-
-    return CartModel(items: currentItems);
   }
 
   String _friendlyError(Object error, String fallback) {

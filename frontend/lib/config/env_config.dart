@@ -45,6 +45,11 @@ class EnvConfig {
       'FIREBASE_MESSAGING_SENDER_ID',
       const String.fromEnvironment('FIREBASE_MESSAGING_SENDER_ID'),
     );
+    put('FIREBASE_APP_ID', const String.fromEnvironment('FIREBASE_APP_ID'));
+    put(
+      'FIREBASE_STORAGE_BUCKET',
+      const String.fromEnvironment('FIREBASE_STORAGE_BUCKET'),
+    );
     put('SENTRY_DSN', const String.fromEnvironment('SENTRY_DSN'));
     put('API_AUTH_SEND_OTP_PATH', const String.fromEnvironment('API_AUTH_SEND_OTP_PATH'));
     put('API_AUTH_VERIFY_OTP_PATH', const String.fromEnvironment('API_AUTH_VERIFY_OTP_PATH'));
@@ -188,6 +193,10 @@ class EnvConfig {
   static String get firebaseMessagingSenderId =>
       get('FIREBASE_MESSAGING_SENDER_ID');
 
+  static String get firebaseAppId => get('FIREBASE_APP_ID');
+
+  static String get firebaseStorageBucket => get('FIREBASE_STORAGE_BUCKET');
+
   // ── Sentry ────────────────────────────────────────────────────────────────
 
   static String get sentryDsn => get('SENTRY_DSN');
@@ -229,7 +238,7 @@ class EnvConfig {
 
     if (isProduction) {
       throw StateError(
-        'Missing API_BASE_URL for production. Set it in old_meatvo/.env',
+        'Missing API_BASE_URL for production. Pass --dart-define-from-file=env.production.json',
       );
     }
 

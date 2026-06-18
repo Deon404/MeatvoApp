@@ -65,6 +65,9 @@ android/app/profile/
 android/app/release/
 android/.gradle/
 android/local.properties
+android/secrets.properties
+android/app/google-services.json
+android/app/google-services.local.json
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework

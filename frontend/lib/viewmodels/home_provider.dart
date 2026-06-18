@@ -24,7 +24,7 @@ final bannerProvider = FutureProvider<List<BannerModel>>((ref) async {
 
 final homeViewModelProvider =
     StateNotifierProvider<HomeViewModel, HomeState>((ref) {
-  return HomeViewModel(
+  final vm = HomeViewModel(
     productService: ref.read(productServiceProvider),
     cartService: ref.read(cartServiceProvider),
     addressService: AddressService(),
@@ -32,4 +32,6 @@ final homeViewModelProvider =
     bannerService: BannerService(),
     notificationService: NotificationService(),
   );
+  ref.onDispose(vm.dispose);
+  return vm;
 });

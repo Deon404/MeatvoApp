@@ -37,6 +37,10 @@ const healthRoutes = require('./src/routes/health');
 const debugRoutes = require('./src/routes/debug.routes');
 const { router: metricsRouter, collectMetrics } = require('./src/routes/metrics');
 const { errorHandler } = require('./src/middlewares/error.middleware');
+const {
+  captureCashfreeWebhookRawBody,
+  parseJsonUnlessCashfreeWebhook,
+} = require('./src/middlewares/cashfreeWebhookBody.middleware');
 const { requestLogger } = require('./src/middlewares/requestLogger.middleware');
 const { apiRateLimiter, authIpRateLimiter, adminRateLimiter } = require('./src/middlewares/rateLimiter');
 const { logger } = require('./src/utils/logger');
@@ -121,7 +125,8 @@ app.use(express.static(path.join(__dirname, '../public')));
 const uploadsRoutes = require('./src/modules/uploads/uploads.routes');
 app.use('/uploads', uploadsRoutes);
 
-app.use(express.json({ limit: '1mb' }));
+app.use(captureCashfreeWebhookRawBody);
+app.use(parseJsonUnlessCashfreeWebhook);
 app.use(requestLogger);
 app.use(collectMetrics);
 initializeSecurity(app);

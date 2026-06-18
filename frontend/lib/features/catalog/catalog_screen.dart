@@ -49,10 +49,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
   final _searchController = TextEditingController();
   TabController? _tabController;
   MeatvoSwipeTabsHelper? _tabHelper;
-  DateTime? _categorySwitchAt;
-  Timer? _shimmerTimer;
 
-  static const _minCategoryShimmer = Duration(seconds: 2);
   static const _comingSoonRedirectDelay = Duration(seconds: 4);
 
   static const _defaultCategories = [
@@ -68,9 +65,8 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
   }
 
   MeatvoTabItem _tabItemForCategory(CategoryModel category) {
-    final available = CatalogViewModel.isCategoryAvailable(category);
     return MeatvoTabItem(
-      label: available ? category.name : '${category.name} (Soon)',
+      label: category.name,
       enabled: true,
     );
   }
@@ -86,30 +82,18 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
     if (index < 0) return;
     _tabController!.animateTo(index);
     _tabHelper?.lastReportedIndex = index;
-    _beginCategorySwitch();
   }
 
   @override
   void dispose() {
-    _shimmerTimer?.cancel();
     _disposeTabController();
     _searchController.dispose();
     super.dispose();
   }
 
-  void _beginCategorySwitch() {
-    _categorySwitchAt = DateTime.now();
-    _shimmerTimer?.cancel();
-    _shimmerTimer = Timer(_minCategoryShimmer, () {
-      if (mounted) setState(() {});
-    });
-  }
-
   bool _shouldShowCategoryShimmer(CatalogState state, bool isSelected) {
     if (!isSelected) return false;
-    if (state.isRefreshing || state.isLoading) return true;
-    if (_categorySwitchAt == null) return false;
-    return DateTime.now().difference(_categorySwitchAt!) < _minCategoryShimmer;
+    return state.isLoading && state.allProducts.isEmpty;
   }
 
   Widget _buildCategoryShimmer({
@@ -182,7 +166,6 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
         snapBackFromDisabled: false,
         onIndexChanged: (index) {
           if (index < 0 || index >= categories.length) return;
-          _beginCategorySwitch();
           notifier.setCategory(categories[index].name);
         },
       );
@@ -617,7 +600,10 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
 
   void _openProduct(ProductWithVariants product) {
     context.pushScale(
-      ProductDetailScreen(productId: product.product.id),
+      ProductDetailScreen(
+        productId: product.product.id,
+        initialProduct: product,
+      ),
     );
   }
 

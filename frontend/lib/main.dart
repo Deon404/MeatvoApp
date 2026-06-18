@@ -36,7 +36,6 @@ import 'utils/app_colors.dart';
 import 'utils/responsive_helper.dart';
 import 'utils/session_expired.dart';
 import 'widgets/location/location_gate.dart';
-import 'utils/debug_session_log.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -60,24 +59,8 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
     PushNotificationService.registerBackgroundHandler();
-    // #region agent log
-    DebugSessionLog.log(
-      location: 'main.dart:firebase',
-      message: 'firebase initialized',
-      hypothesisId: 'H3',
-      data: {'ok': true},
-    );
-    // #endregion
   } catch (e) {
     debugPrint('⚠️ Firebase Init Failed (Missing config?): $e');
-    // #region agent log
-    DebugSessionLog.log(
-      location: 'main.dart:firebase',
-      message: 'firebase init failed',
-      hypothesisId: 'H3',
-      data: {'ok': false, 'error': e.runtimeType.toString()},
-    );
-    // #endregion
   }
 
   await ErrorTrackingService.runApp(() {
@@ -145,13 +128,23 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   int _selectedIndex = 0;
   DateTime? _lastBackPressTime;
+  String? _categoriesInitialCategory;
+  int? _categoriesInitialCategoryId;
 
   List<Widget> get _screens => [
         HomeTab(
           onOpenCartTab: _openCartTab,
           onOpenProfileTab: _openProfileTab,
+          onOpenCategoriesTab: _openCategoriesTab,
         ),
-        const CategoriesListScreen(),
+        CategoriesListScreen(
+          key: ValueKey(
+            'categories-${_categoriesInitialCategory ?? ''}-'
+            '${_categoriesInitialCategoryId ?? ''}',
+          ),
+          initialCategory: _categoriesInitialCategory,
+          initialCategoryId: _categoriesInitialCategoryId,
+        ),
         CartTab(onOpenHomeTab: () => _onItemTapped(0)),
         const OrdersTab(),
         ProfileScreen(
@@ -174,6 +167,10 @@ class _MyHomePageState extends State<MyHomePage> {
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
+      if (index == 1) {
+        _categoriesInitialCategory = null;
+        _categoriesInitialCategoryId = null;
+      }
     });
   }
 
@@ -183,6 +180,14 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void _openProfileTab() {
     _onItemTapped(4);
+  }
+
+  void _openCategoriesTab({String? category, int? categoryId}) {
+    setState(() {
+      _selectedIndex = 1;
+      _categoriesInitialCategory = category?.trim();
+      _categoriesInitialCategoryId = categoryId;
+    });
   }
 
   Future<bool> _onWillPop() async {
@@ -362,11 +367,13 @@ class _CartNavBadge extends StatelessWidget {
 class HomeTab extends StatelessWidget {
   final VoidCallback onOpenCartTab;
   final VoidCallback onOpenProfileTab;
+  final void Function({String? category, int? categoryId}) onOpenCategoriesTab;
 
   const HomeTab({
     super.key,
     required this.onOpenCartTab,
     required this.onOpenProfileTab,
+    required this.onOpenCategoriesTab,
   });
 
   @override
@@ -374,6 +381,7 @@ class HomeTab extends StatelessWidget {
     return HomeScreen(
       onOpenCartTab: onOpenCartTab,
       onOpenProfileTab: onOpenProfileTab,
+      onOpenCategoriesTab: onOpenCategoriesTab,
     );
   }
 }

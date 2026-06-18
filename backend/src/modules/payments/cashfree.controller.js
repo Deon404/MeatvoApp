@@ -8,6 +8,7 @@ const {
 } = require('../../utils/cashfreeWebhook');
 const { applyPaymentSuccess } = require('./payment-success');
 const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
+const sentry = require('../../utils/sentry');
 
 const getReturnUrl = () =>
   process.env.CASHFREE_RETURN_URL || '';
@@ -25,6 +26,28 @@ const parseGatewayResponse = (value) => {
 const extractGatewayPaymentId = (payload) => {
   const payment = payload?.data?.payment || {};
   return payment.cf_payment_id || payment.payment_id || null;
+};
+
+const isAmountMismatch = (storedAmount, receivedAmount) => {
+  const expectedPaise = Math.round(Number(storedAmount) * 100);
+  const receivedPaise = Math.round(Number(receivedAmount) * 100);
+  return Number.isFinite(receivedPaise) && receivedPaise !== expectedPaise;
+};
+
+const reportAmountMismatch = ({ paymentId, orderId, expectedAmount, receivedAmount, source }) => {
+  const details = {
+    paymentId,
+    orderId,
+    expectedAmount: Number(expectedAmount),
+    receivedAmount: Number(receivedAmount),
+    source,
+  };
+  logger.error('cashfree_amount_mismatch', details);
+  sentry.captureMessage(
+    'Cashfree payment amount mismatch — manual review required',
+    'error',
+    { paymentMismatch: details }
+  );
 };
 
 const mapCashfreeOrderStatus = (orderStatus) => {
@@ -239,6 +262,18 @@ const handleWebhook = async (req, res) => {
       }
 
       if (event.eventType === 'PAYMENT_SUCCESS_WEBHOOK') {
+        if (isAmountMismatch(payment.amount, event.amount)) {
+          reportAmountMismatch({
+            paymentId: payment.id,
+            orderId: payment.order_id,
+            expectedAmount: payment.amount,
+            receivedAmount: event.amount,
+            source: 'webhook',
+          });
+          await client.query('ROLLBACK');
+          return ok(res, {}, 'Webhook received');
+        }
+
         const gatewayPaymentId = extractGatewayPaymentId(payload);
         await applyPaymentSuccess(client, {
           paymentId: payment.id,
@@ -357,7 +392,7 @@ const verifyPayment = async (req, res) => {
     await client.query('BEGIN');
 
     const paymentResult = await client.query(
-      `SELECT pt.id, pt.order_id, pt.status, pt.gateway_order_id, pt.gateway_response,
+      `SELECT pt.id, pt.order_id, pt.status, pt.amount, pt.gateway_order_id, pt.gateway_response,
               o.customer_id
        FROM payment_transactions pt
        JOIN orders o ON o.id = pt.order_id
@@ -393,6 +428,23 @@ const verifyPayment = async (req, res) => {
     if (!successfulPayment) {
       await client.query('ROLLBACK');
       return ok(res, { verified: false, status: 'PENDING' }, 'Payment pending');
+    }
+
+    const receivedAmount =
+      successfulPayment.payment_amount != null
+        ? successfulPayment.payment_amount
+        : successfulPayment.order_amount;
+
+    if (isAmountMismatch(payment.amount, receivedAmount)) {
+      reportAmountMismatch({
+        paymentId: payment.id,
+        orderId: payment.order_id,
+        expectedAmount: payment.amount,
+        receivedAmount,
+        source: 'verify',
+      });
+      await client.query('ROLLBACK');
+      return fail(res, 400, 'Amount mismatch');
     }
 
     const gatewayPaymentId =

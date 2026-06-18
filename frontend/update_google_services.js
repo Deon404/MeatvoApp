@@ -18,13 +18,17 @@ if (!clientId.includes('.apps.googleusercontent.com')) {
   process.exit(1);
 }
 
-const googleServicesPath = path.join(__dirname, 'android', 'app', 'google-services.json');
+const appDir = path.join(__dirname, 'android', 'app');
+const localPath = path.join(appDir, 'google-services.local.json');
+const targetPath = fs.existsSync(localPath)
+  ? localPath
+  : path.join(appDir, 'google-services.json');
 
 let googleServices;
 try {
-  googleServices = JSON.parse(fs.readFileSync(googleServicesPath, 'utf8'));
+  googleServices = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
 } catch (error) {
-  console.error('Error reading google-services.json:', error.message);
+  console.error(`Error reading ${path.basename(targetPath)}:`, error.message);
   process.exit(1);
 }
 
@@ -32,8 +36,8 @@ if (googleServices.client && googleServices.client[0]) {
   googleServices.client[0].oauth_client = [{ client_id: clientId, client_type: 3 }];
 
   try {
-    fs.writeFileSync(googleServicesPath, JSON.stringify(googleServices, null, 2), 'utf8');
-    console.log('PASSED — updated google-services.json');
+    fs.writeFileSync(targetPath, JSON.stringify(googleServices, null, 2), 'utf8');
+    console.log(`PASSED — updated ${path.basename(targetPath)}`);
   } catch (error) {
     console.error('FAILED —', error.message);
     process.exit(1);

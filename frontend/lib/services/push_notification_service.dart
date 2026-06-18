@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../app_navigator_key.dart';
+import '../config/env_config.dart';
 import '../firebase_options.dart';
 import '../screens/orders/order_detail_screen.dart';
 import 'api_client.dart';
@@ -15,6 +16,7 @@ import 'notification_service.dart';
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
+  await EnvConfig.load();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   debugPrint('📩 Background message: ${message.messageId}');
   debugPrint('Background data: ${message.data}');
@@ -243,7 +245,9 @@ class PushNotificationService {
       final accessToken = await storage.getAccessToken();
       
       if (accessToken == null || accessToken.isEmpty) {
-        debugPrint('⚠️ No access token, skipping FCM token upload');
+        if (kDebugMode) {
+          debugPrint('⚠️ No access token, skipping FCM token upload');
+        }
         return;
       }
 

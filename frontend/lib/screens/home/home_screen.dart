@@ -6,8 +6,6 @@ import '../../features/home/widgets/home_top_bar_delegate.dart';
 import '../../models/banner_model.dart';
 import '../../models/home_category_item.dart';
 import '../../models/product_variant_model.dart';
-import '../../screens/categories/categories_list_screen.dart';
-import '../../screens/categories/category_products_screen.dart';
 import '../../screens/notifications/notifications_screen.dart';
 import '../../screens/product/product_detail_screen.dart';
 import '../../ui/shells/meatvo_layout.dart';
@@ -25,10 +23,12 @@ class HomeScreen extends ConsumerStatefulWidget {
     super.key,
     required this.onOpenCartTab,
     required this.onOpenProfileTab,
+    required this.onOpenCategoriesTab,
   });
 
   final VoidCallback onOpenCartTab;
   final VoidCallback onOpenProfileTab;
+  final void Function({String? category, int? categoryId}) onOpenCategoriesTab;
 
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
@@ -206,7 +206,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   void _openCategories() {
-    context.pushSlideRight(const CategoriesListScreen());
+    widget.onOpenCategoriesTab();
   }
 
   void _openCategory(HomeCategoryItem category) {
@@ -220,29 +220,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       );
       return;
     }
-    // Use `pushSlideRight` so it matches the rest of the customer flow
-    // (categories tab, product detail) — no platform default slide-up
-    // flash that can look like a white screen mid-transition on Android.
-    context.pushSlideRight(
-      CategoryProductsScreen(
-        categoryName: name,
-        // Admin saves category id as a string ("1", "2", ...); parse to int
-        // for the backend filter, but fall through (null) if it's a slug.
-        categoryId: int.tryParse(category.id),
-      ),
+    widget.onOpenCategoriesTab(
+      category: name,
+      categoryId: int.tryParse(category.id),
     );
   }
 
-  Future<void> _openProduct(ProductWithVariants product) async {
-    await _openProductId(product.product.id);
-  }
-
-  Future<void> _openProductId(String productId) async {
-    await context.pushScale(ProductDetailScreen(productId: productId));
+  Future<void> _openProductId(
+    String productId, {
+    ProductWithVariants? initialProduct,
+  }) async {
+    await context.pushScale(
+      ProductDetailScreen(
+        productId: productId,
+        initialProduct: initialProduct,
+      ),
+    );
     if (mounted) {
-      // Only refresh cart, not entire home - product data is already cached
       await ref.read(homeViewModelProvider.notifier).refreshCart();
     }
+  }
+
+  Future<void> _openProduct(ProductWithVariants product) async {
+    await _openProductId(
+      product.product.id,
+      initialProduct: product,
+    );
   }
 
   String _locationTitle(HomeState state) {

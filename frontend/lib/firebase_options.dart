@@ -1,8 +1,10 @@
-// Generated from android/app/google-services.json (meatvo-4c1e5).
-// Re-run `flutterfire configure` when adding iOS/web targets.
+// Firebase options from `.env` / `--dart-define` via [EnvConfig].
+// Set FIREBASE_* keys in frontend/.env (see .env.example), then: dart run tool/sync_env.dart
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, kIsWeb, TargetPlatform;
+
+import 'config/env_config.dart';
 
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
@@ -17,7 +19,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for iOS — '
-          'add GoogleService-Info.plist and run flutterfire configure.',
+          'add GoogleService-Info.plist and FIREBASE_* env keys.',
         );
       default:
         throw UnsupportedError(
@@ -26,11 +28,21 @@ class DefaultFirebaseOptions {
     }
   }
 
-  static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDLKIHwhFbG3cZ_qkmh8LJJBBvC4pcf-gA',
-    appId: '1:666934912223:android:1d46ae140f815fdc21b56a',
-    messagingSenderId: '666934912223',
-    projectId: 'meatvo-4c1e5',
-    storageBucket: 'meatvo-4c1e5.firebasestorage.app',
-  );
+  static FirebaseOptions get android => FirebaseOptions(
+        apiKey: _require('FIREBASE_API_KEY'),
+        appId: _require('FIREBASE_APP_ID'),
+        messagingSenderId: _require('FIREBASE_MESSAGING_SENDER_ID'),
+        projectId: _require('FIREBASE_PROJECT_ID'),
+        storageBucket: _require('FIREBASE_STORAGE_BUCKET'),
+      );
+
+  static String _require(String key) {
+    final value = EnvConfig.get(key);
+    if (value.isEmpty) {
+      throw StateError(
+        'Missing $key — set in frontend/.env and run: dart run tool/sync_env.dart',
+      );
+    }
+    return value;
+  }
 }

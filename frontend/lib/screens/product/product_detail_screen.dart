@@ -9,10 +9,13 @@ import '../../providers/product_provider.dart';
 import '../../providers/wishlist_provider.dart';
 import '../../services/api_service.dart' show RealtimeChannel;
 import '../../services/cart_service.dart';
+import '../../services/cart_sync_subscription.dart';
 import '../../services/product_service.dart';
+import '../../screens/cart/cart_screen.dart';
 import '../../theme/app_theme.dart';
 import '../../ui/shells/meatvo_layout.dart';
 import '../../utils/app_transitions.dart';
+import '../../widgets/cart/floating_cart_bar.dart';
 import '../../widgets/animations/hero_image_widget.dart';
 import '../../widgets/cached_image_widget.dart';
 import '../../widgets/common/empty_state.dart';
@@ -33,10 +36,12 @@ class ProductDetailScreen extends ConsumerStatefulWidget {
   static const _greyCaption = Color(0xFF6B7280);
   static const _imageHeight = 260.0;
   final String productId;
+  final ProductWithVariants? initialProduct;
 
   const ProductDetailScreen({
     super.key,
     required this.productId,
+    this.initialProduct,
   });
 
   @override
@@ -54,17 +59,30 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   List<ProductWithVariants> _relatedProducts = [];
   ProviderSubscription<AsyncValue<ProductWithVariants?>>? _productSubscription;
 
-  bool _isAddingToCart = false;
   bool _isLoadingRelated = false;
   bool _isDescriptionExpanded = false;
   int _quantity = 1;
   double _averageRating = 0.0;
   int _reviewCount = 0;
+  late final CartSyncSubscription _cartSync;
 
   @override
   void initState() {
     super.initState();
+    _cartSync = CartSyncSubscription((cart) {
+      if (!mounted) return;
+      setState(() {
+        _cart = cart;
+        if (_product != null) {
+          _quantity = (_currentCartItem?.quantity.round() ?? 1).clamp(1, 99);
+        }
+      });
+    });
     _subscribeToProductUpdates();
+
+    if (widget.initialProduct != null) {
+      _applyProviderProduct(widget.initialProduct!);
+    }
 
     _productSubscription = ref.listenManual(
       productDetailProvider(widget.productId),
@@ -111,6 +129,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   @override
   void dispose() {
+    _cartSync.dispose();
     _productSubscription?.close();
     _productUpdatesChannel?.unsubscribe();
     _productUpdatesChannel = null;
@@ -263,10 +282,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   Future<void> _saveCart() async {
-    // Local non-null capture — the bang `_product!.product` below would
-    // crash mid-await if a realtime product-update nulled `_product`.
     final localProduct = _product;
-    if (localProduct == null || !_isInStock || _isAddingToCart) return;
+    if (localProduct == null || !_isInStock) return;
 
     final storeStatus = ref.read(storeSettingsSyncProvider);
     final cartItem = _currentCartItem;
@@ -279,19 +296,26 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       return;
     }
 
-    setState(() {
-      _isAddingToCart = true;
-    });
+    final product = localProduct.product;
+    final selectedVariantId = _selectedVariant?.id;
+    final selectedUnit = _selectedVariant?.weight ?? product.unit;
+    final variant = _selectedVariant;
+
+    final optimisticCart = _cartService.buildOptimisticCart(
+      current: _cart,
+      product: product,
+      productId: product.id,
+      nextQuantity: _quantity,
+      variantId: selectedVariantId,
+      variantPrice: variant?.price,
+      unit: selectedUnit,
+    );
+    _cartService.applyOptimisticCart(optimisticCart);
+    if (mounted) {
+      setState(() => _cart = optimisticCart);
+    }
 
     try {
-      final product = localProduct.product;
-      final cartItem = _currentCartItem;
-      final selectedVariantId = _selectedVariant?.id;
-      final selectedUnit = _selectedVariant?.weight ?? product.unit;
-
-      // Capture cartItem.itemId into a local so the `cartItem.itemId!`
-      // bangs disappear — instance fields cannot be smart-cast across
-      // the awaits in this block.
       final cartItemId = cartItem?.itemId;
       if (cartItem != null && cartItemId != null && cartItemId.isNotEmpty) {
         final hasVariantChanged = cartItem.variantId != selectedVariantId;
@@ -320,43 +344,32 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       setState(() {
         _cart = refreshedCart;
       });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            cartItem == null ? 'Added to cart successfully!' : 'Cart updated successfully!',
-          ),
-          backgroundColor: AppThemeColors.success,
-          duration: const Duration(seconds: 1),
-        ),
-      );
     } catch (e) {
+      final refreshedCart = await _cartService.getCart().catchError((_) => _cart);
       if (!mounted) return;
+      setState(() => _cart = refreshedCart);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Failed to update cart: $e'),
           backgroundColor: AppThemeColors.error,
         ),
       );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isAddingToCart = false;
-        });
-      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final productAsync = ref.watch(productDetailProvider(widget.productId));
-    final loadedProduct = productAsync.asData?.value;
-    final showFallbackAppBar = loadedProduct == null;
+    final ProductWithVariants? displayProduct = productAsync.hasValue
+        ? productAsync.value
+        : (widget.initialProduct ?? _product);
+    final showFullShimmer = displayProduct == null && productAsync.isLoading;
+    final hasBottomBar = displayProduct != null;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: AppThemeColors.background,
-      appBar: showFallbackAppBar
+      appBar: showFullShimmer
           ? AppBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
@@ -366,29 +379,66 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               ),
             )
           : null,
-      body: productAsync.when(
-        loading: () => const ShimmerLoader.productDetail(),
-        error: (err, _) => ErrorStateWidget(
-          title: 'Failed to load product',
-          message: err.toString().replaceFirst('Exception: ', ''),
-          buttonLabel: 'Retry',
-          icon: Icons.error_outline,
-          onRetry: () => ref.refresh(productDetailProvider(widget.productId)),
-        ),
-        data: (product) {
-          if (product == null) {
-            return const EmptyStateWidget(
-              title: 'Product not found',
-              message: 'Try exploring other fresh picks from the catalogue.',
-            );
-          }
-          return _buildProductDetails(product);
-        },
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: showFullShimmer
+                ? const ShimmerLoader.productDetail()
+                : productAsync.when(
+                    loading: () {
+                      final fallback = widget.initialProduct ?? _product;
+                      if (fallback != null) {
+                        return _buildProductDetails(fallback);
+                      }
+                      return const ShimmerLoader.productDetail();
+                    },
+                    error: (err, _) {
+                      final fallback = widget.initialProduct ?? _product;
+                      if (fallback != null) {
+                        return _buildProductDetails(fallback);
+                      }
+                      return ErrorStateWidget(
+                        title: 'Failed to load product',
+                        message: err.toString().replaceFirst('Exception: ', ''),
+                        buttonLabel: 'Retry',
+                        icon: Icons.error_outline,
+                        onRetry: () =>
+                            ref.refresh(productDetailProvider(widget.productId)),
+                      );
+                    },
+                    data: (product) {
+                      if (product == null) {
+                        return const EmptyStateWidget(
+                          title: 'Product not found',
+                          message:
+                              'Try exploring other fresh picks from the catalogue.',
+                        );
+                      }
+                      return _buildProductDetails(product);
+                    },
+                  ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: MeatvoLayout.productDetailFloatingCartBottom(
+              context,
+              hasBottomBar: hasBottomBar,
+            ),
+            child: FloatingCartBar(
+              onViewCartTapped: _openCart,
+            ),
+          ),
+        ],
       ),
-      bottomNavigationBar: loadedProduct != null
-          ? _buildBottomBar(loadedProduct)
+      bottomNavigationBar: hasBottomBar
+          ? _buildBottomBar(displayProduct)
           : null,
     );
+  }
+
+  void _openCart() {
+    context.pushSlideRight(const CartScreen());
   }
 
   Widget _buildProductDetails(ProductWithVariants activeProduct) {
@@ -952,7 +1002,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   onTap: () {
                     Navigator.of(context).pushReplacement(
                       AppTransitions.scale(
-                        ProductDetailScreen(productId: related.product.id),
+                        ProductDetailScreen(
+                          productId: related.product.id,
+                          initialProduct: related,
+                        ),
                       ),
                     );
                   },
@@ -1036,14 +1089,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               SizedBox(
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: !_isInStock || _isAddingToCart
+                  onPressed: !_isInStock
                       ? null
                       : () async {
                           if (storeClosedButInStock) {
                             await StoreClosedSheet.show(context, storeStatus);
                             return;
                           }
-                          await _saveCart();
+                          _saveCart();
                         },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: ProductDetailScreen._brandRed,
@@ -1056,24 +1109,15 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  child: _isAddingToCart
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                          ),
-                        )
-                      : Text(
-                          storeClosedButInStock ? 'Store closed' : 'Add to Cart',
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.white,
-                          ),
-                        ),
+                  child: Text(
+                    storeClosedButInStock ? 'Store closed' : 'Add to Cart',
+                    style: const TextStyle(
+                      fontFamily: 'Poppins',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                  ),
                 ),
               ),
           ],
@@ -1090,7 +1134,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         children: [
           _stepperButton(
             icon: Icons.remove,
-            onTap: _quantity > 1 && !_isAddingToCart
+            onTap: _quantity > 1
                 ? () {
                     setState(() {
                       _quantity--;
@@ -1113,8 +1157,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           ),
           _stepperButton(
             icon: Icons.add,
-            onTap: !_isAddingToCart
-                ? () async {
+            onTap: () async {
                     final storeStatus = ref.read(storeSettingsSyncProvider);
                     if (!storeStatus.isOpen) {
                       await StoreClosedSheet.show(context, storeStatus);
@@ -1124,8 +1167,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       _quantity++;
                     });
                     _saveCart();
-                  }
-                : null,
+                  },
           ),
         ],
       ),

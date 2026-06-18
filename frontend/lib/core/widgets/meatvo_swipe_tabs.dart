@@ -197,12 +197,12 @@ class _MeatvoTabBar extends StatelessWidget {
       ),
       labelColor: MeatvoColors.white,
       unselectedLabelColor: mv.textSecondary,
-      labelStyle: const TextStyle(
-        fontSize: 14,
+      labelStyle: TextStyle(
+        fontSize: isScrollable ? 14 : 13,
         fontWeight: FontWeight.w600,
       ),
-      unselectedLabelStyle: const TextStyle(
-        fontSize: 14,
+      unselectedLabelStyle: TextStyle(
+        fontSize: isScrollable ? 14 : 13,
         fontWeight: FontWeight.w500,
       ),
       splashFactory: NoSplash.splashFactory,
@@ -216,7 +216,15 @@ class _MeatvoTabBar extends StatelessWidget {
           Tab(
             child: Opacity(
               opacity: tab.enabled ? 1 : 0.45,
-              child: Text(tab.label),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  tab.label,
+                  maxLines: 1,
+                  softWrap: false,
+                  textAlign: TextAlign.center,
+                ),
+              ),
             ),
           ),
       ],

@@ -8,21 +8,20 @@ class CategoriesListScreen extends ConsumerWidget {
   const CategoriesListScreen({
     super.key,
     this.initialCategory,
+    this.initialCategoryId,
   });
 
   /// When set, opens catalog filtered to this category (e.g. deep link).
   final String? initialCategory;
+  final int? initialCategoryId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final preset = initialCategory?.trim();
-    if (preset != null && preset.isNotEmpty) {
-      return CatalogScreen(
-        initialCategory: preset,
-        showBackButton: true,
-      );
-    }
-
-    return const CatalogScreen(showBackButton: false);
+    return CatalogScreen(
+      initialCategory: preset != null && preset.isNotEmpty ? preset : null,
+      initialCategoryId: initialCategoryId,
+      showBackButton: false,
+    );
   }
 }

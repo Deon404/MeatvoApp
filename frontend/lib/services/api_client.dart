@@ -130,12 +130,16 @@ class ApiClient {
     try {
       await _refreshAccessToken();
       _refreshCompleter?.complete();
-      debugPrint('[ApiClient] Token refresh successful, retrying request');
+      if (kDebugMode) {
+        debugPrint('[ApiClient] Token refresh successful, retrying request');
+      }
       final retry = await _retryRequest(err.requestOptions);
       handler.resolve(retry);
     } catch (error, stackTrace) {
-      debugPrint('[ApiClient] Token refresh failed: $error');
-      debugPrint('[ApiClient] Clearing all storage and notifying session expired');
+      if (kDebugMode) {
+        debugPrint('[ApiClient] Token refresh failed: $error');
+        debugPrint('[ApiClient] Clearing all storage and notifying session expired');
+      }
       if (!(_refreshCompleter?.isCompleted ?? true)) {
         _refreshCompleter?.completeError(error, stackTrace);
       }
@@ -263,9 +267,13 @@ class ApiClient {
 
   Future<void> _refreshAccessToken() async {
     final refreshToken = await _storage.getRefreshToken();
-    debugPrint('[ApiClient] Attempting token refresh - Refresh token available: ${refreshToken != null && refreshToken.isNotEmpty}');
+    if (kDebugMode) {
+      debugPrint('[ApiClient] Attempting token refresh - Refresh token available: ${refreshToken != null && refreshToken.isNotEmpty}');
+    }
     if (refreshToken == null || refreshToken.isEmpty) {
-      debugPrint('[ApiClient] ERROR: Refresh token is missing from secure storage!');
+      if (kDebugMode) {
+        debugPrint('[ApiClient] ERROR: Refresh token is missing from secure storage!');
+      }
       throw StateError('Refresh token unavailable');
     }
 
@@ -279,13 +287,17 @@ class ApiClient {
       ),
     );
 
-    debugPrint('[ApiClient] Sending refresh token request to ${ApiAuthPaths.refresh}');
+    if (kDebugMode) {
+      debugPrint('[ApiClient] Sending refresh token request to ${ApiAuthPaths.refresh}');
+    }
     final response = await refreshDio.post<Map<String, dynamic>>(
       ApiAuthPaths.refresh,
       data: {'refreshToken': refreshToken},
     );
 
-    debugPrint('[ApiClient] Refresh response received: ${response.statusCode}');
+    if (kDebugMode) {
+      debugPrint('[ApiClient] Refresh response received: ${response.statusCode}');
+    }
     final raw = response.data ?? const <String, dynamic>{};
     final payload = raw['data'] is Map<String, dynamic>
         ? raw['data'] as Map<String, dynamic>
@@ -297,13 +309,19 @@ class ApiClient {
         (payload['refreshToken'] ?? refreshToken).toString().trim();
 
     if (accessToken.isEmpty) {
-      debugPrint('[ApiClient] ERROR: Refresh response missing access token!');
+      if (kDebugMode) {
+        debugPrint('[ApiClient] ERROR: Refresh response missing access token!');
+      }
       throw StateError('Refresh response missing access token');
     }
 
-    debugPrint('[ApiClient] Saving refreshed tokens');
+    if (kDebugMode) {
+      debugPrint('[ApiClient] Saving refreshed tokens');
+    }
     await _storage.saveTokens(accessToken, nextRefreshToken);
-    debugPrint('[ApiClient] Refresh complete');
+    if (kDebugMode) {
+      debugPrint('[ApiClient] Refresh complete');
+    }
   }
 
   Future<Response<dynamic>> _retryRequest(RequestOptions requestOptions) async {

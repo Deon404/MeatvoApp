@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,7 +51,9 @@ class _SplashScreenState extends State<SplashScreen>
         final token = await StorageService().getAccessToken();
         isLoggedIn = token != null;
       } catch (e) {
-        debugPrint('Error checking login status: $e');
+        if (kDebugMode) {
+          debugPrint('Error checking login status: $e');
+        }
       }
 
       if (!mounted) return;
@@ -67,7 +70,9 @@ class _SplashScreenState extends State<SplashScreen>
           // Upload FCM token in background — do not block splash navigation.
           unawaited(PushNotificationService().syncTokenWithBackend());
         } catch (e) {
-          debugPrint('Failed to fetch user profile for role-based routing: $e');
+          if (kDebugMode) {
+            debugPrint('Failed to fetch user profile for role-based routing: $e');
+          }
           final cached = await AuthService().getCurrentUserProfile();
           if (cached != null) {
             destination = destinationAfterAuth(role: cached.role);
@@ -88,7 +93,9 @@ class _SplashScreenState extends State<SplashScreen>
         Navigator.of(context).pushReplacement(AppTransitions.fade(destination));
       }
     } catch (e) {
-      debugPrint('Error in splash initialization: $e');
+      if (kDebugMode) {
+        debugPrint('Error in splash initialization: $e');
+      }
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         AppTransitions.fade(const PhoneScreen()),

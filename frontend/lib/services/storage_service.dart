@@ -20,23 +20,31 @@ class StorageService {
 
   Future<void> saveTokens(String accessToken, String refreshToken) async {
     final storage = EnvConfig.secureStorage;
-    debugPrint('[StorageService] Saving tokens - Access: ${accessToken.length} chars, Refresh: ${refreshToken.length} chars');
+    if (kDebugMode) {
+      debugPrint('[StorageService] Saving tokens - Access: ${accessToken.length} chars, Refresh: ${refreshToken.length} chars');
+    }
     await Future.wait([
       storage.write(key: keyAccessToken, value: accessToken),
       storage.write(key: keyRefreshToken, value: refreshToken),
     ]);
-    debugPrint('[StorageService] Tokens saved successfully');
+    if (kDebugMode) {
+      debugPrint('[StorageService] Tokens saved successfully');
+    }
   }
 
   Future<String?> getAccessToken() async {
     final token = await EnvConfig.secureStorage.read(key: keyAccessToken);
-    debugPrint('[StorageService] Retrieved access token: ${token != null ? "present (${token.length} chars)" : "NULL"}');
+    if (kDebugMode) {
+      debugPrint('[StorageService] Retrieved access token: ${token != null ? "present (${token.length} chars)" : "NULL"}');
+    }
     return token;
   }
 
   Future<String?> getRefreshToken() async {
     final token = await EnvConfig.secureStorage.read(key: keyRefreshToken);
-    debugPrint('[StorageService] Retrieved refresh token: ${token != null ? "present (${token.length} chars)" : "NULL"}');
+    if (kDebugMode) {
+      debugPrint('[StorageService] Retrieved refresh token: ${token != null ? "present (${token.length} chars)" : "NULL"}');
+    }
     return token;
   }
 
@@ -62,13 +70,17 @@ class StorageService {
   // ── Clear ──────────────────────────────────────────────────────────────
 
   Future<void> clear() async {
-    debugPrint('[StorageService] Clearing all tokens and user data');
+    if (kDebugMode) {
+      debugPrint('[StorageService] Clearing all tokens and user data');
+    }
     final storage = EnvConfig.secureStorage;
     await Future.wait([
       storage.delete(key: keyAccessToken),
       storage.delete(key: keyRefreshToken),
       storage.delete(key: keyUser),
     ]);
-    debugPrint('[StorageService] Storage cleared successfully');
+    if (kDebugMode) {
+      debugPrint('[StorageService] Storage cleared successfully');
+    }
   }
 }
