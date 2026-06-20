@@ -18,6 +18,18 @@ const DEFAULT_STORE_SETTINGS = {
   next_open_display: null,
 };
 
+const STORE_SETTINGS_CACHE_TTL_MS = Number(
+  process.env.STORE_SETTINGS_CACHE_TTL_MS || 60_000
+);
+
+let cachedMergedSettings = null;
+let cachedMergedAt = 0;
+
+const invalidateStoreSettingsCache = () => {
+  cachedMergedSettings = null;
+  cachedMergedAt = 0;
+};
+
 const readOperationalSettings = async () => {
   try {
     const { rows } = await query(
@@ -87,7 +99,16 @@ const resolveManualOpen = (operational, storeRow) => {
  * Merges admin operational settings (app_settings) with geo/store row (store_settings).
  * Applies manual toggle + configured store hours (IST) for effective is_open.
  */
-const getMergedStoreSettings = async () => {
+const getMergedStoreSettings = async ({ forceRefresh = false } = {}) => {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    cachedMergedSettings &&
+    now - cachedMergedAt < STORE_SETTINGS_CACHE_TTL_MS
+  ) {
+    return cachedMergedSettings;
+  }
+
   const [operational, storeRow] = await Promise.all([
     readOperationalSettings(),
     readStoreSettingsRow(),
@@ -100,7 +121,7 @@ const getMergedStoreSettings = async () => {
     storeCloseTime: operational.store_close_time ?? null,
   });
 
-  return {
+  const merged = {
     delivery_radius_km: Number(
       operational.delivery_radius_km ??
         storeRow?.delivery_radius_km ??
@@ -127,6 +148,10 @@ const getMergedStoreSettings = async () => {
     closed_message: availability.closed_message,
     next_open_display: availability.next_open_display,
   };
+
+  cachedMergedSettings = merged;
+  cachedMergedAt = now;
+  return merged;
 };
 
 /**
@@ -163,6 +188,7 @@ const syncOperationalToStoreSettings = async (operational = {}) => {
         isOpen ?? DEFAULT_STORE_SETTINGS.manual_open,
       ]
     );
+    invalidateStoreSettingsCache();
     return;
   }
 
@@ -182,6 +208,7 @@ const syncOperationalToStoreSettings = async (operational = {}) => {
       existing.id,
     ]
   );
+  invalidateStoreSettingsCache();
 };
 
 const toggleManualStoreOpen = async () => {
@@ -210,7 +237,7 @@ const toggleManualStoreOpen = async () => {
   }
 
   await syncOperationalToStoreSettings({ store_open: nextManual });
-  return getMergedStoreSettings();
+  return getMergedStoreSettings({ forceRefresh: true });
 };
 
 module.exports = {
@@ -219,6 +246,7 @@ module.exports = {
   readOperationalSettings,
   readStoreSettingsRow,
   getMergedStoreSettings,
+  invalidateStoreSettingsCache,
   syncOperationalToStoreSettings,
   toggleManualStoreOpen,
   resolveManualOpen,

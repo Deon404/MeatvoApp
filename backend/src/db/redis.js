@@ -160,6 +160,20 @@ const OTP_REDIS_KEY_PREFIXES = ['otp:', 'otp:send-lock:', 'lockout:'];
 const isOtpRedisKey = (key) =>
   typeof key === 'string' && OTP_REDIS_KEY_PREFIXES.some((p) => key.startsWith(p));
 
+const REDIS_CMD_TIMEOUT_MS = Number(process.env.REDIS_CMD_TIMEOUT_MS || 4000);
+
+const withCommandTimeout = (promise, label = 'redis') =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        const err = new Error(`${label} command timed out after ${REDIS_CMD_TIMEOUT_MS}ms`);
+        err.code = 'REDIS_TIMEOUT';
+        reject(err);
+      }, REDIS_CMD_TIMEOUT_MS);
+    }),
+  ]);
+
 const waitForRedis = (maxMs = 5000) =>
   new Promise((resolve) => {
     if (redisReady) return resolve(true);
@@ -181,14 +195,22 @@ const withFallback = (fnName) =>
 
     if (otpCritical) {
       if (!redisReady) await waitForRedis(5000);
-      if (redisReady) return client[fnName](...args);
+      if (redisReady) {
+        return withCommandTimeout(client[fnName](...args), 'redis');
+      }
       const err = new Error('Redis is required for OTP but is not connected. Start Redis and retry.');
       err.code = 'REDIS_UNAVAILABLE';
       throw err;
     }
 
-    if (redisReady) return client[fnName](...args);
-    if (!allowFallback) return client[fnName](...args); // will throw; surface error
+    if (redisReady) {
+      return withCommandTimeout(client[fnName](...args), 'redis');
+    }
+    if (!allowFallback) {
+      const err = new Error('Redis is not connected');
+      err.code = 'REDIS_UNAVAILABLE';
+      throw err;
+    }
     return memory[fnName](...args);
   };
 

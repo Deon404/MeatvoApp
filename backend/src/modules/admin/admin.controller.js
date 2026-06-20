@@ -1808,7 +1808,7 @@ const updateSettings = asyncHandler(async (req, res) => {
   };
   const saved = await writeOperationalSettings(nextOperational);
   await syncOperationalToStoreSettings(saved);
-  const effective = await getMergedStoreSettings();
+  const effective = await getMergedStoreSettings({ forceRefresh: true });
 
   emitToAll('store:status_changed', {
     isOpen: effective.is_open,

@@ -33,9 +33,20 @@ function schedulePostOrderSideEffects({
   customerId,
   customerPhone,
   io,
+  items,
+  storeSettings,
 }) {
   setImmediate(() => {
     void (async () => {
+      try {
+        await computeOrderEtaAsync({ result, items, storeSettings });
+      } catch (error) {
+        logger.warn('order_eta_async_failed', {
+          orderId: result.order.id,
+          error: error.message,
+        });
+      }
+
       try {
         await sendOrderStateNotifications({
           orderId: result.order.id,
@@ -63,6 +74,56 @@ function schedulePostOrderSideEffects({
         }
       }
     })();
+  });
+}
+
+/** Express ETA — runs after HTTP response so checkout is not blocked on queue/distance queries. */
+async function computeOrderEtaAsync({ result, items, storeSettings }) {
+  const orderAddress = result.order.address;
+  const deliveryLat = Number(orderAddress?.lat);
+  const deliveryLng = Number(orderAddress?.lng);
+
+  if (!Number.isFinite(deliveryLat) || !Number.isFinite(deliveryLng)) return;
+
+  const centerLat = Number(storeSettings.center_lat || 23.6583);
+  const centerLng = Number(storeSettings.center_lng || 86.1764);
+  const distanceKm = haversineKm(centerLat, centerLng, deliveryLat, deliveryLng);
+
+  let queueDepth = 0;
+  try {
+    const { rows: queueRows } = await query(
+      `SELECT COUNT(*)::int AS count
+       FROM orders
+       WHERE status IN ('CONFIRMED', 'PACKING_STARTED', 'PACKED')`
+    );
+    queueDepth = Number(queueRows[0]?.count || 0);
+  } catch (queueErr) {
+    logger.warn('order_eta_queue_failed', { message: queueErr?.message });
+  }
+
+  const etaResult = calculateExpressETA({
+    placedAt: new Date(),
+    items,
+    queueDepth,
+    distanceKm,
+  });
+
+  const etaMinutes = etaResult.breakdown.totalMinutes;
+  const etaTime = etaResult.etaTime;
+
+  await query(
+    `UPDATE orders
+     SET estimated_delivery_time = $1, eta_minutes = $2
+     WHERE id = $3`,
+    [etaTime, etaMinutes, result.order.id]
+  );
+
+  logger.info('eta_calculated', {
+    orderId: result.order.id,
+    distanceKm: etaResult.breakdown.distanceKm,
+    etaMinutes,
+    etaDisplay: etaResult.etaDisplay,
+    breakdown: etaResult.breakdown,
   });
 }
 
@@ -294,73 +355,6 @@ const createOrder = asyncHandler(async (req, res) => {
   await clearCart(customerId);
   logger.info('order_created', { orderId: result.order.id, customerId });
 
-  // Express ETA: prep queue + realistic travel speed (not raw map driving time).
-  try {
-    const orderAddress = result.order.address;
-    const deliveryLat = Number(orderAddress?.lat);
-    const deliveryLng = Number(orderAddress?.lng);
-
-    if (Number.isFinite(deliveryLat) && Number.isFinite(deliveryLng)) {
-      const centerLat = Number(storeSettings.center_lat || 23.6583);
-      const centerLng = Number(storeSettings.center_lng || 86.1764);
-      const distanceKm = haversineKm(centerLat, centerLng, deliveryLat, deliveryLng);
-
-      let queueDepth = 0;
-      try {
-        const { rows: queueRows } = await query(
-          `SELECT COUNT(*)::int AS count
-           FROM orders
-           WHERE status IN ('CONFIRMED', 'PACKING_STARTED', 'PACKED')`
-        );
-        queueDepth = Number(queueRows[0]?.count || 0);
-      } catch (queueErr) {
-        logger.warn('order_eta_queue_failed', { message: queueErr?.message });
-      }
-
-      const etaResult = calculateExpressETA({
-        placedAt: new Date(),
-        items,
-        queueDepth,
-        distanceKm,
-      });
-
-      const etaMinutes = etaResult.breakdown.totalMinutes;
-      const etaTime = etaResult.etaTime;
-      const etaDisplay = etaResult.etaDisplay;
-
-      await query(
-        `UPDATE orders
-         SET estimated_delivery_time = $1, eta_minutes = $2
-         WHERE id = $3`,
-        [etaTime, etaMinutes, result.order.id]
-      );
-
-      result.order.estimated_delivery_time = etaTime;
-      result.order.eta_minutes = etaMinutes;
-      result.eta = {
-        estimatedTime: etaTime,
-        etaDisplay,
-        displayTime: etaDisplay,
-        minutes: etaMinutes,
-        distanceKm: etaResult.breakdown.distanceKm,
-        breakdown: etaResult.breakdown,
-      };
-
-      logger.info('eta_calculated', {
-        orderId: result.order.id,
-        distanceKm: etaResult.breakdown.distanceKm,
-        etaMinutes,
-        etaDisplay,
-        breakdown: etaResult.breakdown,
-      });
-    }
-  } catch (error) {
-    logger.warn('eta_calculation_failed', {
-      orderId: result.order.id,
-      error: error.message,
-    });
-  }
-
   const io = req.app.get('io');
 
   // Real-time socket events are instant — keep on the hot path.
@@ -383,6 +377,8 @@ const createOrder = asyncHandler(async (req, res) => {
     customerId,
     customerPhone,
     io,
+    items,
+    storeSettings,
   });
 
   return ok(res, result, 'Order created successfully');
