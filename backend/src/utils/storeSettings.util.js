@@ -4,8 +4,8 @@ const { resolveStoreAvailability } = require('./storeHours.util');
 
 const DEFAULT_STORE_SETTINGS = {
   delivery_radius_km: 8.0,
-  center_lat: 0,
-  center_lng: 0,
+  center_lat: 23.6583,
+  center_lng: 86.1764,
   min_order_amount: 150.0,
   delivery_fee: 30.0,
   is_open: true,
@@ -22,17 +22,78 @@ const STORE_SETTINGS_CACHE_TTL_MS = Number(
   process.env.STORE_SETTINGS_CACHE_TTL_MS || 60_000
 );
 
+const DB_READ_TIMEOUT_MS = 5000;
+
 let cachedMergedSettings = null;
 let cachedMergedAt = 0;
+let schemaRepairScheduled = false;
 
 const invalidateStoreSettingsCache = () => {
   cachedMergedSettings = null;
   cachedMergedAt = 0;
 };
 
+const queryWithTimeout = (text, params = [], timeoutMs = DB_READ_TIMEOUT_MS) =>
+  Promise.race([
+    query(text, params),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(Object.assign(new Error('DB query timeout'), { code: 'ETIMEOUT' })),
+        timeoutMs
+      )
+    ),
+  ]);
+
+const scheduleSchemaRepair = () => {
+  if (schemaRepairScheduled) return;
+  schemaRepairScheduled = true;
+  repairAppSettingsSchema()
+    .catch(() => {})
+    .finally(() => {
+      schemaRepairScheduled = false;
+    });
+};
+
+const buildMergedSettings = (operational = {}, storeRow = null) => {
+  const manualOpen = resolveManualOpen(operational, storeRow);
+  const availability = resolveStoreAvailability({
+    manualOpen,
+    storeOpenTime: operational.store_open_time ?? null,
+    storeCloseTime: operational.store_close_time ?? null,
+  });
+
+  return {
+    delivery_radius_km: Number(
+      operational.delivery_radius_km ??
+        storeRow?.delivery_radius_km ??
+        DEFAULT_STORE_SETTINGS.delivery_radius_km
+    ),
+    center_lat: Number(storeRow?.center_lat ?? DEFAULT_STORE_SETTINGS.center_lat),
+    center_lng: Number(storeRow?.center_lng ?? DEFAULT_STORE_SETTINGS.center_lng),
+    min_order_amount: Number(
+      operational.min_order_amount ??
+        storeRow?.min_order_amount ??
+        DEFAULT_STORE_SETTINGS.min_order_amount
+    ),
+    delivery_fee: Number(
+      operational.delivery_charge ??
+        storeRow?.delivery_fee ??
+        DEFAULT_STORE_SETTINGS.delivery_fee
+    ),
+    manual_open: availability.manual_open,
+    within_hours: availability.within_hours,
+    store_open_time: availability.store_open_time,
+    store_close_time: availability.store_close_time,
+    is_open: availability.is_open,
+    closed_reason: availability.closed_reason,
+    closed_message: availability.closed_message,
+    next_open_display: availability.next_open_display,
+  };
+};
+
 const readOperationalSettings = async () => {
   try {
-    const { rows } = await query(
+    const { rows } = await queryWithTimeout(
       `SELECT delivery_charge, min_order_amount, store_open,
               store_open_time, store_close_time, delivery_radius_km
        FROM app_settings
@@ -43,9 +104,10 @@ const readOperationalSettings = async () => {
   } catch (err) {
     if (err?.code === '42P01') return {};
     if (err?.code === '42703') {
-      await repairAppSettingsSchema();
-      return readOperationalSettings();
+      scheduleSchemaRepair();
+      return {};
     }
+    if (err?.code === 'ETIMEOUT') return {};
     throw err;
   }
 };
@@ -63,13 +125,25 @@ const STORE_SETTINGS_DDL = `
   )
 `;
 
+let storeSettingsTableEnsureScheduled = false;
+
+const scheduleStoreSettingsTableEnsure = () => {
+  if (storeSettingsTableEnsureScheduled) return;
+  storeSettingsTableEnsureScheduled = true;
+  query(STORE_SETTINGS_DDL)
+    .catch(() => {})
+    .finally(() => {
+      storeSettingsTableEnsureScheduled = false;
+    });
+};
+
 const ensureStoreSettingsTable = async () => {
   await query(STORE_SETTINGS_DDL);
 };
 
 const readStoreSettingsRow = async () => {
   try {
-    const { rows } = await query(
+    const { rows } = await queryWithTimeout(
       `SELECT id, delivery_radius_km, center_lat, center_lng,
               min_order_amount, delivery_fee, is_open
        FROM store_settings
@@ -78,9 +152,10 @@ const readStoreSettingsRow = async () => {
     return rows[0] || null;
   } catch (err) {
     if (err?.code === '42P01') {
-      await ensureStoreSettingsTable();
+      scheduleStoreSettingsTableEnsure();
       return null;
     }
+    if (err?.code === 'ETIMEOUT') return null;
     throw err;
   }
 };
@@ -109,49 +184,25 @@ const getMergedStoreSettings = async ({ forceRefresh = false } = {}) => {
     return cachedMergedSettings;
   }
 
-  const [operational, storeRow] = await Promise.all([
-    readOperationalSettings(),
-    readStoreSettingsRow(),
-  ]);
-
-  const manualOpen = resolveManualOpen(operational, storeRow);
-  const availability = resolveStoreAvailability({
-    manualOpen,
-    storeOpenTime: operational.store_open_time ?? null,
-    storeCloseTime: operational.store_close_time ?? null,
-  });
-
-  const merged = {
-    delivery_radius_km: Number(
-      operational.delivery_radius_km ??
-        storeRow?.delivery_radius_km ??
-        DEFAULT_STORE_SETTINGS.delivery_radius_km
-    ),
-    center_lat: Number(storeRow?.center_lat ?? DEFAULT_STORE_SETTINGS.center_lat),
-    center_lng: Number(storeRow?.center_lng ?? DEFAULT_STORE_SETTINGS.center_lng),
-    min_order_amount: Number(
-      operational.min_order_amount ??
-        storeRow?.min_order_amount ??
-        DEFAULT_STORE_SETTINGS.min_order_amount
-    ),
-    delivery_fee: Number(
-      operational.delivery_charge ??
-        storeRow?.delivery_fee ??
-        DEFAULT_STORE_SETTINGS.delivery_fee
-    ),
-    manual_open: availability.manual_open,
-    within_hours: availability.within_hours,
-    store_open_time: availability.store_open_time,
-    store_close_time: availability.store_close_time,
-    is_open: availability.is_open,
-    closed_reason: availability.closed_reason,
-    closed_message: availability.closed_message,
-    next_open_display: availability.next_open_display,
-  };
-
-  cachedMergedSettings = merged;
-  cachedMergedAt = now;
-  return merged;
+  try {
+    const reads = Promise.all([readOperationalSettings(), readStoreSettingsRow()]);
+    const timeout = new Promise((_, reject) =>
+      setTimeout(
+        () => reject(Object.assign(new Error('Store settings read timeout'), { code: 'ETIMEOUT' })),
+        DB_READ_TIMEOUT_MS
+      )
+    );
+    const [operational, storeRow] = await Promise.race([reads, timeout]);
+    const merged = buildMergedSettings(operational, storeRow);
+    cachedMergedSettings = merged;
+    cachedMergedAt = now;
+    return merged;
+  } catch {
+    if (cachedMergedSettings) {
+      return cachedMergedSettings;
+    }
+    return buildMergedSettings({}, null);
+  }
 };
 
 /**

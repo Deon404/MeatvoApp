@@ -34,6 +34,14 @@ const ensureSchema = async () => {
       `,
     },
     {
+      name: 'store_settings.seed_defaults',
+      sql: `
+        INSERT INTO store_settings (delivery_radius_km, center_lat, center_lng, min_order_amount, delivery_fee, is_open)
+        SELECT 8.0, 23.6583, 86.1764, 150.0, 30.0, true
+        WHERE NOT EXISTS (SELECT 1 FROM store_settings)
+      `,
+    },
+    {
       name: 'categories.sort_order',
       sql: `ALTER TABLE categories ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0`,
     },

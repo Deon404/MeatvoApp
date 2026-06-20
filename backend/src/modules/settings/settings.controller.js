@@ -6,7 +6,10 @@ const { logger } = require('../../utils/logger');
 const { emitToAll } = require('../../socket/socket');
 const { isWithinDeliveryZone } = require('../../utils/distance.util');
 const { calculateExpressETA } = require('../../utils/eta-calculator');
-const { getMergedStoreSettings } = require('../../utils/storeSettings.util');
+const {
+  DEFAULT_STORE_SETTINGS,
+  getMergedStoreSettings,
+} = require('../../utils/storeSettings.util');
 
 const DEFAULT_THEME = {
   colors: {
@@ -41,16 +44,6 @@ const resolveAppInfo = (raw) => {
   return {
     appVersion: version || DEFAULT_APP_INFO.appVersion,
   };
-};
-
-/** Default store settings used when DB row doesn't exist yet */
-const DEFAULT_STORE_SETTINGS = {
-  delivery_radius_km: 8.0,
-  center_lat: 23.6583,
-  center_lng: 86.1764,
-  min_order_amount: 150.0,
-  delivery_fee: 30.0,
-  is_open: true,
 };
 
 // ─── Generic key-value settings helpers ──────────────────────────────────────
