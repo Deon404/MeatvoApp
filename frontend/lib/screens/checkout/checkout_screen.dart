@@ -206,6 +206,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         raw.toLowerCase().contains('failed to initiate payment')) {
       return 'Order saved. Online payment is temporarily unavailable — open My Orders to retry or choose Cash on Delivery next time.';
     }
+    if (raw.contains('receiveTimeout') ||
+        raw.contains('receive data') ||
+        raw.toLowerCase().contains('took longer than') ||
+        raw.toLowerCase().contains('connection timed out')) {
+      return 'Order placement timed out. Check My Orders — your order may already be placed. If not, try again on a stronger connection.';
+    }
     return raw;
   }
 

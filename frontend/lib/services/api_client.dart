@@ -229,6 +229,11 @@ class ApiClient {
       return false;
     }
 
+    // Never auto-retry mutating requests — the server may have already applied them.
+    if (!_isIdempotentRequest(err.requestOptions)) {
+      return false;
+    }
+
     final attempts = (err.requestOptions.extra[_retryAttemptKey] as int?) ?? 0;
     if (attempts >= ApiConfig.retryAttempts) {
       return false;
@@ -252,6 +257,11 @@ class ApiClient {
     return err.type == DioExceptionType.connectionTimeout ||
         err.type == DioExceptionType.sendTimeout ||
         err.type == DioExceptionType.receiveTimeout;
+  }
+
+  bool _isIdempotentRequest(RequestOptions options) {
+    final method = options.method.toUpperCase();
+    return method == 'GET' || method == 'HEAD';
   }
 
   bool _isAuthExempt(String path) {

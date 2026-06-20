@@ -117,6 +117,9 @@ class ApiConfig {
   static const Duration connectTimeout = Duration(seconds: 12);
   static const Duration sendTimeout = Duration(seconds: 15);
   static const Duration receiveTimeout = Duration(seconds: 20);
+  /// Checkout POST /orders — allow extra time on slow mobile networks.
+  static const Duration orderReceiveTimeout = Duration(seconds: 45);
+  static const Duration orderSendTimeout = Duration(seconds: 20);
   static const Duration authTimeout = Duration(seconds: 15);
   static const int retryAttempts = 2;
   static const Duration cacheTtl = Duration(minutes: 2);

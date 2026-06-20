@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
-import '../config/api_config.dart' show ApiOrderPaths, ApiUserPaths;
+import '../config/api_config.dart'
+    show ApiConfig, ApiOrderPaths, ApiUserPaths;
 import '../models/order_model.dart';
 import '../models/cart_model.dart';
 import '../utils/address_display_util.dart';
@@ -310,7 +311,14 @@ class OrderService {
           'specialInstructions': specialInstructions,
       };
 
-      final res = await _api.post(ApiOrderPaths.orders, data: body);
+      final res = await _api.post(
+        ApiOrderPaths.orders,
+        data: body,
+        options: Options(
+          receiveTimeout: ApiConfig.orderReceiveTimeout,
+          sendTimeout: ApiConfig.orderSendTimeout,
+        ),
+      );
       if (!_isRequestSuccessful(res.data)) {
         throw Exception(res.data['message'] ?? 'Failed to place order');
       }

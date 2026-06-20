@@ -27,6 +27,45 @@ const { resolveUnitSalePrice } = require('../../utils/productPricing.util');
 const { resolveDeliveryCharge } = require('../../utils/orderPricing.util');
 const { calculateExpressETA, calculateRiderTrackingETA } = require('../../utils/eta-calculator');
 
+/** Push/SMS/OTP after checkout — must not block the HTTP response (FCM can take 8s+ per user). */
+function schedulePostOrderSideEffects({
+  result,
+  customerId,
+  customerPhone,
+  io,
+}) {
+  setImmediate(() => {
+    void (async () => {
+      try {
+        await sendOrderStateNotifications({
+          orderId: result.order.id,
+          newState: result.order.status,
+          customerId,
+          context: {
+            customerPhone,
+            orderAmount: result.pricing.totalAmount,
+          },
+          io,
+        });
+      } catch (error) {
+        logger.error('post_order_notifications_failed', {
+          orderId: result.order.id,
+          error: error.message,
+        });
+      }
+
+      if (result.order.payment_mode === 'COD') {
+        try {
+          await createDeliveryOTP(result.order.id);
+          logger.info('delivery_otp_created_for_cod', { orderId: result.order.id });
+        } catch (error) {
+          logger.warn('delivery_otp_creation_failed', { error: error.message });
+        }
+      }
+    })();
+  });
+}
+
 const applyCoupon = asyncHandler(async (req, res) => {
   const code = req.validated.body.code;
   const orderTotal = Number(req.validated.body.orderTotal || 0);
@@ -323,20 +362,8 @@ const createOrder = asyncHandler(async (req, res) => {
   }
 
   const io = req.app.get('io');
-  
-  // Send enhanced notifications for order placement
-  await sendOrderStateNotifications({
-    orderId: result.order.id,
-    newState: result.order.status, // PLACED or CONFIRMED
-    customerId,
-    context: {
-      customerPhone,
-      orderAmount: result.pricing.totalAmount,
-    },
-    io,
-  });
 
-  // Emit new order to admin room (backward compatibility)
+  // Real-time socket events are instant — keep on the hot path.
   if (io) {
     const newOrderPayload = {
       orderId: result.order.id,
@@ -350,15 +377,13 @@ const createOrder = asyncHandler(async (req, res) => {
     }
   }
 
-  // For COD orders, create delivery OTP immediately
-  if (result.order.payment_mode === 'COD') {
-    try {
-      await createDeliveryOTP(result.order.id);
-      logger.info('delivery_otp_created_for_cod', { orderId: result.order.id });
-    } catch (error) {
-      logger.warn('delivery_otp_creation_failed', { error: error.message });
-    }
-  }
+  // FCM + DB notifications and delivery OTP run after the client gets a response.
+  schedulePostOrderSideEffects({
+    result,
+    customerId,
+    customerPhone,
+    io,
+  });
 
   return ok(res, result, 'Order created successfully');
 });
