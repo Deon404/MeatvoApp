@@ -88,9 +88,10 @@ const getDaysRemaining = (freshnessDate) => {
  * Use this in product queries to filter out expired products
  * @returns {string} - SQL condition string
  */
-const getFreshnessWhereClause = () => {
-    return `(freshness_date IS NULL OR freshness_date >= CURRENT_DATE - INTERVAL '${FRESHNESS_THRESHOLD_DAYS} days')`;
-};
+const FRESHNESS_WHERE_CLAUSE =
+    '(freshness_date IS NULL OR freshness_date >= CURRENT_DATE - INTERVAL \'2 days\')';
+
+const getFreshnessWhereClause = () => FRESHNESS_WHERE_CLAUSE;
 
 module.exports = {
     isProductFresh,

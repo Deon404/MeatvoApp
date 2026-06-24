@@ -438,6 +438,48 @@ const clearAssignmentTimeout = (orderId) => {
   }
 };
 
+/**
+ * Cancel an active rider assignment for an order (DB update only).
+ * Call notifyRiderAssignmentCancelled after the surrounding transaction commits.
+ * @returns {{ cancelled: boolean, partnerUserId: number|null }}
+ */
+const cancelRiderAssignmentForOrder = async ({ orderId, dbClient = null }) => {
+  const runQuery = dbClient ? dbClient.query.bind(dbClient) : query;
+  const { rows } = await runQuery(
+    `SELECT dp.user_id AS partner_user_id
+     FROM order_assignments oa
+     JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+     WHERE oa.order_id = $1
+       AND oa.status = ANY($2::assignment_status[])`,
+    [orderId, ['ASSIGNED', 'ACCEPTED', 'PICKED']]
+  );
+
+  const partnerUserId = rows[0]?.partner_user_id ?? null;
+  if (!partnerUserId) {
+    return { cancelled: false, partnerUserId: null };
+  }
+
+  await runQuery(
+    `UPDATE order_assignments
+     SET status = 'CANCELLED', updated_at = NOW()
+     WHERE order_id = $1`,
+    [orderId]
+  );
+
+  return { cancelled: true, partnerUserId: Number(partnerUserId) };
+};
+
+const notifyRiderAssignmentCancelled = ({
+  orderId,
+  partnerUserId,
+  io,
+  reason = 'order_cancelled',
+}) => {
+  if (!partnerUserId) return;
+  clearAssignmentTimeout(orderId);
+  emitAssignmentCancelled(io, orderId, partnerUserId, reason);
+};
+
 const scheduleAssignmentTimeout = ({ orderId, partnerId, partnerUserId, io }) => {
   clearAssignmentTimeout(orderId);
 
@@ -555,6 +597,18 @@ const emitCustomerPartnerAssigned = (io, order, partner) => {
 const emitAssignmentSuccess = (io, order, partner) => {
   if (!io || !order || !partner) return;
   emitCustomerPartnerAssigned(io, order, partner);
+
+  if (order.customer_id) {
+    const statusPayload = {
+      orderId: Number(order.id),
+      status: order.status || 'PACKED',
+      message: 'Rider assigned, preparing your delivery',
+      updatedAt: new Date().toISOString(),
+    };
+    io.to(`customer_${Number(order.customer_id)}`).emit('order:status_updated', statusPayload);
+    io.to(`customer_${Number(order.customer_id)}`).emit('order:status_update', statusPayload);
+  }
+
   emitPartnerAssigned(io, order, partner);
 };
 
@@ -913,6 +967,8 @@ module.exports = {
   emitRouteZoneAssigned,
   clearAssignmentTimeout,
   scheduleAssignmentTimeout,
+  cancelRiderAssignmentForOrder,
+  notifyRiderAssignmentCancelled,
   MAX_ASSIGNMENT_ATTEMPTS,
   ASSIGNMENT_TIMEOUT_MS,
 };

@@ -1,4 +1,8 @@
 /// Normalizes backend order status strings for UI filtering.
+///
+/// Live rider flow: assignment sets `order_assignments` while `orders.status`
+/// stays PACKED until accept (`/api/delivery/orders/:id/accept` → OUT_FOR_DELIVERY).
+/// `rider_assigned` / `rider_accepted` are kept as fallbacks for admin/API edge cases.
 String normalizeOrderStatus(String? status) {
   if (status == null || status.trim().isEmpty) return 'pending';
   final raw = status.trim().toLowerCase().replaceAll('-', '_');

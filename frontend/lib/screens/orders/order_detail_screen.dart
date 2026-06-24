@@ -75,7 +75,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   void _listenToPartnerAcceptance() {
-    SocketService().onPartnerAccepted((data) {
+    SocketService().onOrderConfirmed((data) {
       if (!mounted) return;
       if (data['orderId']?.toString() == widget.orderId.toString()) {
         setState(() {
@@ -503,6 +503,55 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     return shouldShowPartnerSection(_order!.status);
   }
 
+  bool _hasPartnerData(OrderModel order) {
+    return (order.riderId?.trim().isNotEmpty == true) ||
+        (order.riderName?.trim().isNotEmpty == true) ||
+        (order.riderPhone?.trim().isNotEmpty == true);
+  }
+
+  bool _shouldShowRiderAssignedBanner() {
+    if (_order == null) return false;
+    final order = _order!;
+    if (!_hasPartnerData(order)) return false;
+
+    final raw = order.status.trim().toUpperCase().replaceAll('-', '_');
+    if (raw != 'PACKED' && raw != 'ASSIGNED' && raw != 'RIDER_ASSIGNED') {
+      return false;
+    }
+
+    final normalized = normalizeOrderStatus(order.status);
+    return normalized != 'out_for_delivery' &&
+        normalized != 'on_way' &&
+        normalized != 'rider_nearby' &&
+        normalized != 'picked_up';
+  }
+
+  Widget _buildRiderAssignedBanner() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.12),
+          border: const Border(
+            left: BorderSide(color: AppColors.primary, width: 3),
+          ),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Text(
+            'Rider assigned — on the way to pick up your order',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   bool get _showLiveMap {
     if (_order == null) return false;
     final hasRiderGps =
@@ -644,11 +693,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               deliverySlotLabel: order.deliverySlotLabel,
               progressFraction: trackingProgressFraction(order.status),
             ),
-            graceBanner: OrderCancelGraceBanner(
-              createdAt: order.createdAt,
-              status: order.status,
-              isCancelling: _isCancelling,
-              onCancel: _cancelOrder,
+            graceBanner: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                OrderCancelGraceBanner(
+                  createdAt: order.createdAt,
+                  status: order.status,
+                  isCancelling: _isCancelling,
+                  onCancel: _cancelOrder,
+                ),
+                if (_shouldShowRiderAssignedBanner()) _buildRiderAssignedBanner(),
+              ],
             ),
             otpCard: isDeliveryOtpVisible(order.status)
                 ? OrderDeliveryOtpCard(

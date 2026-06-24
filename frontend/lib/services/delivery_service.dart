@@ -12,23 +12,26 @@ class DeliveryService {
   Future<DeliveryValidationResult> validateDeliveryAddress({
     required double latitude,
     required double longitude,
+    bool skipGeocoding = false,
   }) async {
     // Calculate distance from store
     final distance = StoreConfig.getDistanceFromStore(latitude, longitude);
     final isWithinRadius = StoreConfig.isWithinDeliveryRadius(latitude, longitude);
     
-    // Get formatted address for better error messages
+    // Geocoding is optional — skip during checkout to avoid blocking on Maps API.
     String? addressString;
-    try {
-      final address = await _mapsService.getAddressFromCoordinates(
-        latitude: latitude,
-        longitude: longitude,
-      );
-      if (address != null) {
-        addressString = _buildAddressString(address);
+    if (!skipGeocoding) {
+      try {
+        final address = await _mapsService.getAddressFromCoordinates(
+          latitude: latitude,
+          longitude: longitude,
+        );
+        if (address != null) {
+          addressString = _buildAddressString(address);
+        }
+      } catch (e) {
+        // Address fetch failed, but we can still validate distance
       }
-    } catch (e) {
-      // Address fetch failed, but we can still validate distance
     }
 
     return DeliveryValidationResult(

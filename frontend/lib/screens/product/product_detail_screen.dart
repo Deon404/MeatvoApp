@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/constants/app_constants.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../models/cart_model.dart';
 import '../../models/product_variant_model.dart';
 import '../../providers/product_provider.dart';
@@ -12,7 +14,6 @@ import '../../services/cart_service.dart';
 import '../../services/cart_sync_subscription.dart';
 import '../../services/product_service.dart';
 import '../../screens/cart/cart_screen.dart';
-import '../../theme/app_theme.dart';
 import '../../ui/shells/meatvo_layout.dart';
 import '../../utils/app_transitions.dart';
 import '../../widgets/cart/floating_cart_bar.dart';
@@ -28,12 +29,10 @@ import '../../ui/organisms/product_card_bindings.dart';
 import '../../utils/ordering_gate.dart';
 import '../../widgets/store/store_closed_banner.dart';
 import '../../widgets/store/store_closed_sheet.dart';
+import '../../theme/app_theme.dart' show AppThemeColors;
 
 /// Product Detail Screen - Full product information with variants and add to cart
 class ProductDetailScreen extends ConsumerStatefulWidget {
-  static const _brandRed = Color(0xFFC8102E);
-  static const _textDark = Color(0xFF1A1A1A);
-  static const _greyCaption = Color(0xFF6B7280);
   static const _imageHeight = 260.0;
   final String productId;
   final ProductWithVariants? initialProduct;
@@ -267,7 +266,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     if (variant != null) {
       return variant.isAvailable && variant.stock > 0;
     }
-    return product.product.isAvailable && (product.product.stock ?? 1) > 0;
+    return product.product.isAvailable && (product.product.stock ?? 0) > 0;
   }
 
   String get _displayUnit => _displayUnitFor(_product?.product.unit);
@@ -359,6 +358,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final productAsync = ref.watch(productDetailProvider(widget.productId));
     final ProductWithVariants? displayProduct = productAsync.hasValue
         ? productAsync.value
@@ -374,7 +374,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               backgroundColor: Colors.transparent,
               elevation: 0,
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.black),
+                icon: Icon(Icons.arrow_back, color: mv.textPrimary),
                 onPressed: () => Navigator.pop(context),
               ),
             )
@@ -442,6 +442,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   Widget _buildProductDetails(ProductWithVariants activeProduct) {
+    final mv = context.meatvo;
     final product = activeProduct.product;
     final isInWishlist = ref.watch(wishlistProvider).contains(widget.productId);
     final description = (product.description ?? '').trim();
@@ -470,13 +471,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           maxChildSize: 0.92,
           builder: (context, scrollController) {
             return Container(
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              decoration: BoxDecoration(
+                color: mv.surfaceCard,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
               ),
               child: RefreshIndicator(
                 onRefresh: () => _loadProduct(forceRefresh: true),
-                color: ProductDetailScreen._brandRed,
+                color: mv.brandAccent,
                 child: ListView(
                   controller: scrollController,
                   physics: const BouncingScrollPhysics(
@@ -490,12 +491,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     ),
                     Text(
                       product.name,
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
-                        color: ProductDetailScreen._textDark,
-                      ),
+                      style: AppTextStyles.h2.copyWith(color: mv.textPrimary),
                     ),
                     if (categoryName.isNotEmpty) ...[
                       const SizedBox(height: 8),
@@ -505,16 +501,15 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: ProductDetailScreen._brandRed.withValues(alpha: 0.1),
+                          color: mv.brandAccent.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(
                           categoryName,
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
+                          style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w500,
-                            color: ProductDetailScreen._brandRed,
+                            color: mv.brandAccent,
                           ),
                         ),
                       ),
@@ -527,21 +522,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       children: [
                         Text(
                           '₹${currentPrice.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                            fontFamily: 'Poppins',
-                            fontSize: 24,
-                            fontWeight: FontWeight.w700,
-                            color: ProductDetailScreen._brandRed,
-                          ),
+                          style: AppTextStyles.h1.copyWith(color: mv.brandAccent),
                         ),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
                             '/$_displayUnit',
-                            style: const TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 12,
-                              color: ProductDetailScreen._greyCaption,
+                            style: AppTextStyles.caption.copyWith(
+                              color: mv.textSecondary,
                             ),
                           ),
                         ),
@@ -550,10 +538,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                             padding: const EdgeInsets.only(bottom: 4),
                             child: Text(
                               'MRP ₹${originalPrice.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                fontFamily: 'Poppins',
+                              style: TextStyle(
                                 fontSize: 13,
-                                color: ProductDetailScreen._greyCaption,
+                                color: mv.textSecondary,
                                 decoration: TextDecoration.lineThrough,
                               ),
                             ),
@@ -561,7 +548,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       ],
                     ),
                     const SizedBox(height: 14),
-                    _buildFreshnessStrip(),
+                    Text(
+                      'Fresh • Hygienically Packed • No Additives',
+                      style: AppTextStyles.caption.copyWith(
+                        color: mv.textSecondary,
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     const Divider(height: 1, color: AppThemeColors.divider),
                     const SizedBox(height: 16),
@@ -570,42 +562,38 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     if (activeProduct.variants.isNotEmpty) const SizedBox(height: 16),
                     _buildRatingRow(),
                     const SizedBox(height: 16),
-                    Text(
-                      description.isEmpty
-                          ? 'Freshly packed premium cuts perfect for your next meal.'
-                          : description,
-                      maxLines: _isDescriptionExpanded || description.isEmpty ? null : 3,
-                      overflow: _isDescriptionExpanded || description.isEmpty
-                          ? TextOverflow.visible
-                          : TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: 'Poppins',
-                        fontSize: 14,
-                        height: 1.5,
-                        color: ProductDetailScreen._greyCaption,
+                    if (description.isNotEmpty) ...[
+                      Text(
+                        description,
+                        maxLines: _isDescriptionExpanded ? null : 3,
+                        overflow: _isDescriptionExpanded
+                            ? TextOverflow.visible
+                            : TextOverflow.ellipsis,
+                        style: AppTextStyles.body.copyWith(
+                          color: mv.textSecondary,
+                        ),
                       ),
-                    ),
-                    if (description.length > 120)
-                      GestureDetector(
-                        onTap: () {
-                          HapticFeedback.lightImpact();
-                          setState(() {
-                            _isDescriptionExpanded = !_isDescriptionExpanded;
-                          });
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            _isDescriptionExpanded ? 'Read less' : 'Read more',
-                            style: const TextStyle(
-                              fontFamily: 'Poppins',
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: ProductDetailScreen._brandRed,
+                      if (description.length > 120)
+                        GestureDetector(
+                          onTap: () {
+                            HapticFeedback.lightImpact();
+                            setState(() {
+                              _isDescriptionExpanded = !_isDescriptionExpanded;
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              _isDescriptionExpanded ? 'Read less' : 'Read more',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: mv.brandAccent,
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                    ],
                     const SizedBox(height: 24),
                     _buildRelatedSection(),
                   ],
@@ -618,52 +606,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     );
   }
 
-  Widget _buildFreshnessStrip() {
-    return Row(
-      children: [
-        Expanded(
-          child: _freshnessItem(Icons.access_time, 'Slaughtered Today'),
-        ),
-        Expanded(
-          child: _freshnessItem(Icons.ac_unit, 'Air Chilled'),
-        ),
-        Expanded(
-          child: _freshnessItem(Icons.shield_outlined, 'No Additives'),
-        ),
-      ],
-    );
-  }
-
-  Widget _freshnessItem(IconData icon, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          icon,
-          size: 14,
-          color: ProductDetailScreen._brandRed,
-        ),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            label,
-            style: const TextStyle(
-              fontFamily: 'Poppins',
-              fontSize: 11,
-              color: ProductDetailScreen._greyCaption,
-            ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildProductImage(
     ProductWithVariants activeProduct, {
     required bool isInWishlist,
   }) {
+    final mv = context.meatvo;
     final product = activeProduct.product;
     final imageUrl = product.primaryImageUrl;
     final heroTag = getProductHeroTag(product.id);
@@ -691,13 +638,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               placeholder: (_, __) => Container(
                 color: AppThemeColors.surface2,
                 alignment: Alignment.center,
-                child: const SizedBox(
+                child: SizedBox(
                   width: 72,
                   height: 72,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     valueColor: AlwaysStoppedAnimation<Color>(
-                      ProductDetailScreen._brandRed,
+                      mv.brandAccent,
                     ),
                   ),
                 ),
@@ -725,7 +672,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           left: 16,
           child: _overlayCircleButton(
             icon: Icons.arrow_back,
-            iconColor: ProductDetailScreen._textDark,
+            iconColor: mv.textPrimary,
             onTap: () => Navigator.of(context).maybePop(),
           ),
         ),
@@ -734,9 +681,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           right: 16,
           child: _overlayCircleButton(
             icon: isInWishlist ? Icons.favorite : Icons.favorite_border,
-            iconColor: isInWishlist
-                ? ProductDetailScreen._brandRed
-                : ProductDetailScreen._textDark,
+            iconColor: isInWishlist ? mv.brandAccent : mv.textPrimary,
             onTap: _toggleWishlist,
           ),
         ),
@@ -775,14 +720,14 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               ),
         ),
         Container(
-          padding: const EdgeInsets.symmetric(
+          padding: EdgeInsets.symmetric(
             horizontal: AppSpacing.sm,
             vertical: AppSpacing.xs,
           ),
           decoration: BoxDecoration(
             color: (_isInStock ? AppThemeColors.success : AppThemeColors.warning)
                 .withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(AppRadius.radiusPill),
+            borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
             _isInStock ? 'In Stock' : 'Out of Stock',
@@ -798,6 +743,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   Widget _buildVariantSelector(ProductWithVariants activeProduct) {
+    final mv = context.meatvo;
     final variants = activeProduct.availableVariants.isNotEmpty
         ? activeProduct.availableVariants
         : activeProduct.variants;
@@ -805,13 +751,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Select weight',
-          style: TextStyle(
-            fontFamily: 'Poppins',
+          style: AppTextStyles.button.copyWith(
             fontSize: 15,
-            fontWeight: FontWeight.w600,
-            color: ProductDetailScreen._textDark,
+            color: mv.textPrimary,
           ),
         ),
         const SizedBox(height: 10),
@@ -825,10 +769,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               label: Text(
                 variant.weight,
                 style: TextStyle(
-                  fontFamily: 'Poppins',
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
-                  color: isSelected ? Colors.white : ProductDetailScreen._brandRed,
+                  color: isSelected ? mv.surfaceCard : mv.brandAccent,
                 ),
               ),
               selected: isSelected,
@@ -841,9 +784,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       });
                     }
                   : null,
-              selectedColor: ProductDetailScreen._brandRed,
-              backgroundColor: Colors.white,
-              side: const BorderSide(color: ProductDetailScreen._brandRed),
+              selectedColor: mv.brandAccent,
+              backgroundColor: mv.surfaceCard,
+              side: BorderSide(color: mv.brandAccent),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -858,6 +801,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     required IconData icon,
     required VoidCallback? onTap,
   }) {
+    final mv = context.meatvo;
     return SizedBox(
       width: 40,
       height: 40,
@@ -875,13 +819,13 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             decoration: BoxDecoration(
               color: onTap == null
                   ? AppThemeColors.textMuted.withValues(alpha: 0.3)
-                  : ProductDetailScreen._brandRed,
+                  : mv.brandAccent,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(
               icon,
               size: 18,
-              color: Colors.white,
+              color: mv.surfaceCard,
             ),
           ),
         ),
@@ -907,7 +851,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 color: AppThemeColors.textPrimary,
               ),
         ),
-        const SizedBox(height: AppSpacing.sm),
+        SizedBox(height: AppSpacing.sm),
         // Related products now use `MeatvoProductCard` (production-safe)
         // instead of the legacy `ProductCard`. The legacy card was a
         // documented source of:
@@ -925,7 +869,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: _relatedProducts.length,
-            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
+            separatorBuilder: (_, __) => SizedBox(width: AppSpacing.sm),
             itemBuilder: (context, index) {
               final related = _relatedProducts[index];
               // Local non-null capture pattern — drops every `relatedCartItem.itemId!`
@@ -1000,7 +944,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   orderingPaused: bindings.orderingPaused,
                   layout: MeatvoProductCardLayout.carousel,
                   onTap: () {
-                    Navigator.of(context).pushReplacement(
+                    Navigator.of(context).push(
                       AppTransitions.scale(
                         ProductDetailScreen(
                           productId: related.product.id,
@@ -1046,6 +990,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   Widget _buildBottomBar(ProductWithVariants activeProduct) {
+    final mv = context.meatvo;
     final hasExistingCartItem = _currentCartItem != null;
     final totalPrice = _priceFor(activeProduct) * _quantity;
     final storeStatus = ref.watch(storeSettingsSyncProvider);
@@ -1056,10 +1001,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: mv.surfaceCard,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.08),
+              color: mv.border,
               blurRadius: 12,
               offset: const Offset(0, -4),
             ),
@@ -1073,11 +1018,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                 alignment: Alignment.centerLeft,
                 child: Text(
                   '₹${totalPrice.toStringAsFixed(0)}',
-                  style: const TextStyle(
-                    fontFamily: 'Poppins',
-                    fontSize: 20,
+                  style: AppTextStyles.h2.copyWith(
                     fontWeight: FontWeight.w700,
-                    color: ProductDetailScreen._brandRed,
+                    color: mv.brandAccent,
                   ),
                 ),
               ),
@@ -1099,10 +1042,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                           _saveCart();
                         },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: ProductDetailScreen._brandRed,
+                    backgroundColor: mv.brandAccent,
                     disabledBackgroundColor:
-                        ProductDetailScreen._brandRed.withValues(alpha: 0.4),
-                    foregroundColor: Colors.white,
+                        mv.brandAccent.withValues(alpha: 0.4),
+                    foregroundColor: mv.surfaceCard,
                     elevation: 0,
                     minimumSize: const Size(160, 48),
                     shape: RoundedRectangleBorder(
@@ -1111,11 +1054,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   ),
                   child: Text(
                     storeClosedButInStock ? 'Store closed' : 'Add to Cart',
-                    style: const TextStyle(
-                      fontFamily: 'Poppins',
+                    style: AppTextStyles.button.copyWith(
                       fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
+                      color: mv.surfaceCard,
                     ),
                   ),
                 ),
@@ -1127,6 +1068,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }
 
   Widget _buildCartQuantityStepper() {
+    final mv = context.meatvo;
     return SizedBox(
       height: 48,
       child: Row(
@@ -1147,12 +1089,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               '$_quantity',
-              style: const TextStyle(
-                fontFamily: 'Poppins',
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: ProductDetailScreen._textDark,
-              ),
+              style: AppTextStyles.h3.copyWith(color: mv.textPrimary),
             ),
           ),
           _stepperButton(
@@ -1176,11 +1113,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   Widget _overlayCircleButton({
     required IconData icon,
+    required Color iconColor,
     required VoidCallback onTap,
-    Color iconColor = ProductDetailScreen._textDark,
   }) {
+    final mv = context.meatvo;
     return Material(
-      color: Colors.white,
+      color: mv.surfaceCard,
       shape: const CircleBorder(),
       elevation: 0,
       child: InkWell(
@@ -1193,11 +1131,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: mv.surfaceCard,
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
+                color: mv.border,
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -1215,11 +1153,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   void _showImageZoom(String? imageUrl) {
     if (imageUrl == null || imageUrl.isEmpty) return;
+    final mv = context.meatvo;
 
     showDialog(
       context: context,
-      barrierColor: Colors.black87,
-      builder: (context) => Dialog(
+      barrierColor: mv.textPrimary.withValues(alpha: 0.87),
+      builder: (dialogContext) => Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: EdgeInsets.zero,
         child: Stack(
@@ -1240,17 +1179,17 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               child: IconButton(
                 icon: Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: const BoxDecoration(
-                    color: Colors.black54,
+                  decoration: BoxDecoration(
+                    color: mv.textSecondary.withValues(alpha: 0.6),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.close,
-                    color: Colors.white,
+                    color: mv.surfaceCard,
                     size: 24,
                   ),
                 ),
-                onPressed: () => Navigator.of(context).pop(),
+                onPressed: () => Navigator.of(dialogContext).pop(),
               ),
             ),
           ],
@@ -1261,10 +1200,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   void _showImageGallery(List<String> images, int initialIndex) {
     if (images.isEmpty) return;
+    final mv = context.meatvo;
 
     showDialog(
       context: context,
-      barrierColor: Colors.black87,
+      barrierColor: mv.textPrimary.withValues(alpha: 0.87),
       builder: (context) => _ImageGalleryDialog(
         images: images,
         initialIndex: initialIndex,
@@ -1306,6 +1246,7 @@ class _ImageGalleryDialogState extends State<_ImageGalleryDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: EdgeInsets.zero,
@@ -1344,15 +1285,14 @@ class _ImageGalleryDialogState extends State<_ImageGalleryDialog> {
                     vertical: 6,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.black54,
+                    color: mv.textSecondary.withValues(alpha: 0.6),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     '${_currentIndex + 1} / ${widget.images.length}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
+                    style: AppTextStyles.body.copyWith(
                       fontWeight: FontWeight.w600,
+                      color: mv.surfaceCard,
                     ),
                   ),
                 ),
@@ -1364,13 +1304,13 @@ class _ImageGalleryDialogState extends State<_ImageGalleryDialog> {
             child: IconButton(
               icon: Container(
                 padding: const EdgeInsets.all(8),
-                decoration: const BoxDecoration(
-                  color: Colors.black54,
+                decoration: BoxDecoration(
+                  color: mv.textSecondary.withValues(alpha: 0.6),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.close,
-                  color: Colors.white,
+                  color: mv.surfaceCard,
                   size: 24,
                 ),
               ),
@@ -1401,8 +1341,8 @@ class _ImageGalleryDialogState extends State<_ImageGalleryDialog> {
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(4),
                         color: _currentIndex == index
-                            ? AppThemeColors.white
-                            : AppThemeColors.white.withValues(alpha: 0.5),
+                            ? mv.surfaceCard
+                            : mv.surfaceCard.withValues(alpha: 0.5),
                       ),
                     ),
                   ),
@@ -1414,4 +1354,3 @@ class _ImageGalleryDialogState extends State<_ImageGalleryDialog> {
     );
   }
 }
-

@@ -143,42 +143,11 @@ const verifyPayment = asyncHandler(async (req, res) => {
 });
 
 /**
- * POST /api/delivery/orders/:id/accept
- * Rider accepts order
+ * @deprecated Retired — live rider accept is POST /api/delivery/orders/:id/accept
+ * (delivery.controller.js). Assignment does not set orders.status to RIDER_ASSIGNED,
+ * so the enhanced two-step accept flow was unreachable.
  */
-const acceptOrder = asyncHandler(async (req, res) => {
-  const orderId = Number(req.params.id);
-  const io = req.app.get('io');
-
-  const result = await transitionOrderState({
-    orderId,
-    newState: ORDER_STATES.RIDER_ACCEPTED,
-    actor: req.user.id,
-    actorRole: 'rider',
-    io,
-  });
-
-  return ok(res, result, 'Order accepted');
-});
-
-/**
- * POST /api/delivery/orders/:id/start-delivery
- * Rider starts delivery
- */
-const startDelivery = asyncHandler(async (req, res) => {
-  const orderId = Number(req.params.id);
-  const io = req.app.get('io');
-
-  const result = await transitionOrderState({
-    orderId,
-    newState: ORDER_STATES.OUT_FOR_DELIVERY,
-    actor: req.user.id,
-    actorRole: 'rider',
-    io,
-  });
-
-  return ok(res, result, 'Delivery started');
-});
+// acceptOrder / startDelivery handlers removed — see delivery.controller.js
 
 /**
  * POST /api/delivery/location
@@ -364,8 +333,6 @@ module.exports = {
   startPacking,
   markPacked,
   verifyPayment,
-  acceptOrder,
-  startDelivery,
   updateLocation,
   getDeliveryOTP,
   completeDelivery,

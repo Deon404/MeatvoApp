@@ -30,8 +30,9 @@ const reserveStockForPaidOrder = async (client, orderId) => {
   }
 
   for (const item of items) {
-    await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [
-      Number(item.quantity || 0),
+    const newStock = Number(item.stock) - Number(item.quantity || 0);
+    await client.query('UPDATE products SET stock = $1 WHERE id = $2', [
+      newStock,
       Number(item.product_id),
     ]);
   }
@@ -39,7 +40,7 @@ const reserveStockForPaidOrder = async (client, orderId) => {
 
 const restoreStockForOrder = async (client, orderId) => {
   const { rows: items } = await client.query(
-    `SELECT oi.product_id, oi.quantity
+    `SELECT oi.product_id, oi.quantity, p.stock
      FROM order_items oi
      JOIN products p ON p.id = oi.product_id
      WHERE oi.order_id = $1
@@ -48,8 +49,9 @@ const restoreStockForOrder = async (client, orderId) => {
   );
 
   for (const item of items) {
-    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [
-      Number(item.quantity || 0),
+    const newStock = Number(item.stock) + Number(item.quantity || 0);
+    await client.query('UPDATE products SET stock = $1 WHERE id = $2', [
+      newStock,
       Number(item.product_id),
     ]);
   }

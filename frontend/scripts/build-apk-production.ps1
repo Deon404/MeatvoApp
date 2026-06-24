@@ -9,6 +9,10 @@ if (-not (Test-Path "env.production.json")) {
     Write-Error "Missing env.production.json - copy env.production.example.json and set your domain."
 }
 
+Write-Host "Validating env.production.json ..."
+dart run tool/validate_env.dart --production
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
 $mapsKey = ""
 $secretsProps = Join-Path "android" "secrets.properties"
 if (Test-Path $secretsProps) {

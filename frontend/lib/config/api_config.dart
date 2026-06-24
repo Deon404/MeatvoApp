@@ -61,6 +61,7 @@ abstract final class ApiDeliveryPaths {
   static const toggleOnline = '/delivery/online';
   static const location = '/delivery/location';
   static const uploadProof = '/delivery/upload/proof';
+  /// Live rider accept — legacy delivery route (PACKED → OUT_FOR_DELIVERY).
   static String orderAccept(String id) => '/delivery/orders/$id/accept';
   static String orderReject(String id) => '/delivery/orders/$id/reject';
   static String orderStatus(String id) => '/delivery/orders/$id/status';

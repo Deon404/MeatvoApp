@@ -14,6 +14,73 @@ const { addressToText, addressToObject, cleanAddressText } = require('../../util
 
 const ADMIN_PENDING_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
 const ADMIN_UNASSIGNED_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
+
+const ADMIN_ROUTE_ORDERS_SELECT = `
+  SELECT
+    o.id AS order_id,
+    (o.address->>'lat')::numeric AS lat,
+    (o.address->>'lng')::numeric AS lng,
+    COALESCE(o.address->>'text', o.address->>'raw') AS address,
+    u.name AS customer_name,
+    u.phone AS customer_phone,
+    o.status
+  FROM orders o
+  JOIN users u ON u.id = o.customer_id
+  LEFT JOIN order_assignments oa ON oa.order_id = o.id`;
+
+const ADMIN_UNASSIGNED_ORDERS_SELECT = `
+  SELECT
+    o.id AS order_id,
+    (o.address->>'lat')::numeric AS lat,
+    (o.address->>'lng')::numeric AS lng,
+    COALESCE(o.address->>'text', o.address->>'raw') AS address,
+    u.name AS customer_name,
+    u.phone AS customer_phone,
+    o.status,
+    o.total_amount
+  FROM orders o
+  JOIN users u ON u.id = o.customer_id
+  LEFT JOIN order_assignments oa ON oa.order_id = o.id`;
+
+async function queryAdminRouteOrders(dateParam, statusList) {
+  if (dateParam === 'today') {
+    return query(
+      `${ADMIN_ROUTE_ORDERS_SELECT}
+       WHERE o.created_at::date = CURRENT_DATE
+         AND o.status::text = ANY($1::text[])
+       ORDER BY o.created_at ASC`,
+      [statusList]
+    );
+  }
+  return query(
+    `${ADMIN_ROUTE_ORDERS_SELECT}
+     WHERE o.created_at::date = $1::date
+       AND o.status::text = ANY($2::text[])
+     ORDER BY o.created_at ASC`,
+    [dateParam, statusList]
+  );
+}
+
+async function queryUnassignedRouteOrders(dateParam, statusList) {
+  if (dateParam === 'today') {
+    return query(
+      `${ADMIN_UNASSIGNED_ORDERS_SELECT}
+       WHERE o.created_at::date = CURRENT_DATE
+         AND o.status::text = ANY($1::text[])
+         AND oa.id IS NULL
+       ORDER BY o.created_at ASC`,
+      [statusList]
+    );
+  }
+  return query(
+    `${ADMIN_UNASSIGNED_ORDERS_SELECT}
+     WHERE o.created_at::date = $1::date
+       AND o.status::text = ANY($2::text[])
+       AND oa.id IS NULL
+     ORDER BY o.created_at ASC`,
+    [dateParam, statusList]
+  );
+}
 const {
   calculateDeliveryEarnings,
   recordEarningsHistory,
@@ -893,33 +960,12 @@ const getOptimizedRouteForRider = asyncHandler(async (req, res) => {
 
 const getAdminOptimizedRoute = asyncHandler(async (req, res) => {
   const dateParam = req.query.date || 'today';
-  
-  let dateCondition = 'o.created_at::date = CURRENT_DATE';
-  if (dateParam !== 'today') {
-    dateCondition = `o.created_at::date = $1::date`;
-  }
 
   const storeSettings = await getStoreSettings();
   const storeLat = Number(storeSettings.center_lat || 23.6583);
   const storeLng = Number(storeSettings.center_lng || 86.1764);
 
-  const { rows } = await query(
-    `SELECT 
-       o.id AS order_id,
-       (o.address->>'lat')::numeric AS lat,
-       (o.address->>'lng')::numeric AS lng,
-       COALESCE(o.address->>'text', o.address->>'raw') AS address,
-       u.name AS customer_name,
-       u.phone AS customer_phone,
-       o.status
-     FROM orders o
-     JOIN users u ON u.id = o.customer_id
-     LEFT JOIN order_assignments oa ON oa.order_id = o.id
-     WHERE ${dateCondition}
-       AND o.status::text = ANY($${dateParam !== 'today' ? 2 : 1}::text[])
-     ORDER BY o.created_at ASC`,
-    dateParam !== 'today' ? [dateParam, ADMIN_PENDING_STATUSES] : [ADMIN_PENDING_STATUSES]
-  );
+  const { rows } = await queryAdminRouteOrders(dateParam, ADMIN_PENDING_STATUSES);
 
   const deliveryPoints = rows.map(row => ({
     orderId: Number(row.order_id),
@@ -948,34 +994,11 @@ const assignMultiRiderRoutes = asyncHandler(async (req, res) => {
     return fail(res, 400, 'numRiders must be between 1 and 50');
   }
 
-  let dateCondition = 'o.created_at::date = CURRENT_DATE';
-  if (dateParam !== 'today') {
-    dateCondition = `o.created_at::date = $1::date`;
-  }
-
   const storeSettings = await getStoreSettings();
   const storeLat = Number(storeSettings.center_lat || 23.6583);
   const storeLng = Number(storeSettings.center_lng || 86.1764);
 
-  const { rows } = await query(
-    `SELECT 
-       o.id AS order_id,
-       (o.address->>'lat')::numeric AS lat,
-       (o.address->>'lng')::numeric AS lng,
-       COALESCE(o.address->>'text', o.address->>'raw') AS address,
-       u.name AS customer_name,
-       u.phone AS customer_phone,
-       o.status,
-       o.total_amount
-     FROM orders o
-     JOIN users u ON u.id = o.customer_id
-     LEFT JOIN order_assignments oa ON oa.order_id = o.id
-     WHERE ${dateCondition}
-       AND o.status::text = ANY($${dateParam !== 'today' ? 2 : 1}::text[])
-       AND oa.id IS NULL
-     ORDER BY o.created_at ASC`,
-    dateParam !== 'today' ? [dateParam, ADMIN_UNASSIGNED_STATUSES] : [ADMIN_UNASSIGNED_STATUSES]
-  );
+  const { rows } = await queryUnassignedRouteOrders(dateParam, ADMIN_UNASSIGNED_STATUSES);
 
   if (rows.length === 0) {
     return ok(res, {

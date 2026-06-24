@@ -18,3 +18,10 @@ build/
 .obsidian/
 meatvo-deploy.tar.gz
 docs/security/backups/
+
+# Release signing (never commit)
+*.keystore
+*.jks
+*.jks.old
+meatvo-release.keystore
+frontend/android/keystore.properties

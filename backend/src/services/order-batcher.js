@@ -6,6 +6,8 @@ const { logger } = require('../utils/logger');
 const BATCH_RADIUS_KM = 2.0;
 const MAX_BATCH_SIZE = 4;
 const BATCH_WAIT_MS = 3 * 60 * 1000;
+/** Store→customer distance above this skips the batch wait (edge-of-zone orders). */
+const EDGE_ZONE_BATCH_SKIP_KM = 4;
 
 const assignableOrderStatuses = ['PACKED'];
 const activeAssignmentStatuses = ['ASSIGNED', 'ACCEPTED', 'PICKED'];
@@ -34,11 +36,64 @@ async function getOrderCoords(orderId) {
   return { lat, lng };
 }
 
+async function getStoreCenter() {
+  const { rows } = await query(
+    `SELECT center_lat, center_lng
+     FROM store_settings
+     ORDER BY updated_at DESC
+     LIMIT 1`
+  );
+  const lat = Number(rows[0]?.center_lat);
+  const lng = Number(rows[0]?.center_lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+  return { lat, lng };
+}
+
+/** Haversine distance from store center to the order delivery address (km). */
+async function getStoreToCustomerDistanceKm(orderId) {
+  const [coords, store] = await Promise.all([
+    getOrderCoords(orderId),
+    getStoreCenter(),
+  ]);
+  if (!coords || !store) return null;
+  return haversineKm(store.lat, store.lng, coords.lat, coords.lng);
+}
+
+async function resolveEffectiveBatchWaitMs(orderId) {
+  const baseWaitMs = resolveBatchWaitMs();
+  const distanceKm = await getStoreToCustomerDistanceKm(orderId);
+
+  if (distanceKm == null) {
+    return { waitMs: baseWaitMs, distanceKm: null };
+  }
+
+  if (distanceKm > EDGE_ZONE_BATCH_SKIP_KM) {
+    logger.info('batch_wait_skipped', {
+      orderId: Number(orderId),
+      distanceKm: Number(distanceKm.toFixed(2)),
+      thresholdKm: EDGE_ZONE_BATCH_SKIP_KM,
+    });
+    return { waitMs: 0, distanceKm };
+  }
+
+  return { waitMs: baseWaitMs, distanceKm };
+}
+
 /**
  * If another batch window is open nearby, attach this order and skip a separate assign.
  * @returns {Promise<{ anchorOrderId: number, status: string } | null>}
  */
 async function tryJoinBatchWindow(orderId) {
+  const storeDistanceKm = await getStoreToCustomerDistanceKm(orderId);
+  if (
+    storeDistanceKm != null &&
+    storeDistanceKm > EDGE_ZONE_BATCH_SKIP_KM
+  ) {
+    return null;
+  }
+
   const coords = await getOrderCoords(orderId);
   if (!coords) return null;
 
@@ -270,7 +325,7 @@ async function scheduleBatchAssignment({
   io,
   onAssigned,
 }) {
-  const waitMs = resolveBatchWaitMs();
+  const { waitMs } = await resolveEffectiveBatchWaitMs(triggerOrderId);
   const coords = await getOrderCoords(triggerOrderId);
   const numericTriggerId = Number(triggerOrderId);
 
@@ -328,7 +383,9 @@ module.exports = {
   assignBatchToRider,
   tryJoinBatchWindow,
   scheduleBatchAssignment,
+  getStoreToCustomerDistanceKm,
   BATCH_RADIUS_KM,
   MAX_BATCH_SIZE,
   BATCH_WAIT_MS,
+  EDGE_ZONE_BATCH_SKIP_KM,
 };

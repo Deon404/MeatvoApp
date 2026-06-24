@@ -293,6 +293,8 @@ const toggleManualStoreOpen = async () => {
 
 module.exports = {
   DEFAULT_STORE_SETTINGS,
+  queryWithTimeout,
+  scheduleSchemaRepair,
   ensureStoreSettingsTable,
   readOperationalSettings,
   readStoreSettingsRow,

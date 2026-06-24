@@ -82,19 +82,14 @@ class AddressModel {
   }
 
   /// Clean 2-line address for checkout/cart display.
-  String get displayAddress {
-    final streetParts = _dedupeParts([
-      addressLine1,
-      if (addressLine2 != null && addressLine2!.isNotEmpty) addressLine2!,
-      if (landmark != null && landmark!.isNotEmpty) landmark!,
-    ]);
-    final locality = _dedupeParts(['$city, $state', pincode]).join(', ');
-    final lines = <String>[
-      if (streetParts.isNotEmpty) streetParts.join(', '),
-      if (locality.isNotEmpty) locality,
-    ];
-    return lines.join('\n');
-  }
+  String get displayAddress => formatCheckoutAddress(
+        addressLine1: addressLine1,
+        addressLine2: addressLine2,
+        landmark: landmark,
+        city: city,
+        state: state,
+        pincode: pincode,
+      );
 
   /// Get short address (first line + city)
   String get shortAddress {

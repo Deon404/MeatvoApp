@@ -61,7 +61,7 @@ class _CartCouponSectionState extends State<CartCouponSection> {
     final cardDecoration = BoxDecoration(
       color: mv.surfaceCard,
       borderRadius: BorderRadius.circular(mv.radii.lg),
-      boxShadow: mv.shadowCard,
+      border: Border.all(color: mv.border),
     );
 
     if (!hasCoupon) {

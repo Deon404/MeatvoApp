@@ -6,6 +6,7 @@ const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 const { isProductFresh, getFreshnessBadge, getFreshnessWhereClause } = require('../../utils/freshness.util');
 const { signStoredImageUrl, normalizeStoredImageUrl } = require('../../utils/uploadSigning');
+const { createParamBinder, joinWhere, buildUpdateSet } = require('../../utils/sqlParams');
 
 const CACHE_TTL_PRODUCTS = 300; // 5min
 const CACHE_TTL_PRODUCT = 600; // 10min
@@ -21,14 +22,7 @@ const ALLOWED_PRODUCT_COLUMNS = [
 const getListCacheKey = (page, limit, filters) => `products:all:${page}:${limit}:${Buffer.from(JSON.stringify(filters)).toString('base64')}`;
 
 function buildProductUpdateClause(updates) {
-  const sets = [];
-  const params = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (!ALLOWED_PRODUCT_COLUMNS.includes(key)) continue;
-    params.push(value);
-    sets.push(`${key} = $${params.length}`);
-  }
-  return { sets, params };
+  return buildUpdateSet(ALLOWED_PRODUCT_COLUMNS, updates);
 }
 
 // Admin check — throws so asyncHandler forwards to errorHandler
@@ -123,54 +117,48 @@ const getAllProducts = asyncHandler(async (req, res) => {
     return ok(res, data);
   }
 
-  // Build conditions
+  const binder = createParamBinder();
   const conditions = ['p.active = true'];
-  const params = [];
 
-  // Freshness filter - hide products older than 2 days (unless admin or available=false)
   if (filters.available) {
     conditions.push(getFreshnessWhereClause());
   }
 
   if (filters.categoryId) {
-    params.push(filters.categoryId);
-    conditions.push(`p.category_id = $${params.length}`);
+    conditions.push(`p.category_id = ${binder.ph(filters.categoryId)}`);
   }
   if (filters.min_price !== null) {
-    params.push(filters.min_price);
-    conditions.push(`p.base_price_per_kg >= $${params.length}`);
+    conditions.push(`p.base_price_per_kg >= ${binder.ph(filters.min_price)}`);
   }
   if (filters.max_price !== null) {
-    params.push(filters.max_price);
-    conditions.push(`p.base_price_per_kg <= $${params.length}`);
+    conditions.push(`p.base_price_per_kg <= ${binder.ph(filters.max_price)}`);
   }
   if (filters.search) {
-    params.push(`%${filters.search.toLowerCase()}%`);
+    const searchPh = binder.ph(`%${filters.search.toLowerCase()}%`);
     conditions.push(
-      `(LOWER(p.name) ILIKE $${params.length} OR 
-        LOWER(p.description) ILIKE $${params.length})`
+      `(LOWER(p.name) ILIKE ${searchPh} OR LOWER(p.description) ILIKE ${searchPh})`
     );
   }
 
-  const whereClause = `WHERE ${conditions.join(' AND ')}`;
+  const whereClause = joinWhere(conditions);
 
-  // Count query
   const { rows: [{ total }] } = await query(
     `SELECT COUNT(*)::int AS total FROM products p ${whereClause}`,
-    params
+    binder.params
   );
 
-  // List query
-  const listParams = [...params, limit, offset];
+  const listBinder = createParamBinder(binder.params);
+  const limitPh = listBinder.ph(limit);
+  const offsetPh = listBinder.ph(offset);
   const { rows: products } = await query(
     `SELECT p.*, c.name as category_name 
       FROM products p
       LEFT JOIN categories c ON c.id = p.category_id
       ${whereClause}
       ORDER BY p.id DESC
-      LIMIT $${listParams.length - 1} 
-      OFFSET $${listParams.length}`,
-    listParams
+      LIMIT ${limitPh} 
+      OFFSET ${offsetPh}`,
+    listBinder.params
   );
 
   // Format products with full schema

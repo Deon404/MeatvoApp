@@ -290,6 +290,9 @@ String orderTrackingHeadlineForStatus(String status, {String? riderName}) {
     case 'picked_up':
       return 'Order picked up';
     case 'preparing':
+      if (riderName != null && riderName.trim().isNotEmpty) {
+        return '$riderName is assigned';
+      }
       return 'Preparing your order';
     case 'confirmed':
       return 'Order confirmed';

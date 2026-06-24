@@ -1,4 +1,20 @@
 import java.io.File
+import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+val keystoreProperties = Properties().apply {
+    val keystorePropertiesFile = rootProject.file("keystore.properties")
+    if (keystorePropertiesFile.isFile) {
+        keystorePropertiesFile.inputStream().use { load(it) }
+    }
+}
+
+fun keystoreProp(name: String): String =
+    (keystoreProperties.getProperty(name)
+        ?: project.findProperty(name) as String?
+        ?: System.getenv(name))
+        .orEmpty()
+        .trim()
 
 // Materialize google-services.json from local secrets before the Google Services plugin runs.
 run {
@@ -10,6 +26,7 @@ run {
             "Missing android/app/google-services.json — copy google-services.json.example " +
                 "to google-services.local.json and download your file from Firebase console.",
         )
+        else -> Unit
     }
 }
 
@@ -79,10 +96,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     defaultConfig {
         // Must match Google Cloud Console → API key → Android app restriction.
         applicationId = "com.meatvo.app"
@@ -106,10 +119,10 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystorePath = (project.findProperty("MEATVO_KEYSTORE_PATH") as String?)?.trim().orEmpty()
-            val keystorePassword = (project.findProperty("MEATVO_KEYSTORE_PASSWORD") as String?)?.trim().orEmpty()
-            val keyAlias = (project.findProperty("MEATVO_KEY_ALIAS") as String?)?.trim().orEmpty().ifEmpty { "meatvo" }
-            val keyPassword = (project.findProperty("MEATVO_KEY_PASSWORD") as String?)?.trim().orEmpty()
+            val keystorePath = keystoreProp("MEATVO_KEYSTORE_PATH")
+            val keystorePassword = keystoreProp("MEATVO_KEYSTORE_PASSWORD")
+            val keyAlias = keystoreProp("MEATVO_KEY_ALIAS").ifEmpty { "meatvo" }
+            val keyPassword = keystoreProp("MEATVO_KEY_PASSWORD")
 
             if (keystorePath.isNotEmpty() && keystorePassword.isNotEmpty()) {
                 storeFile = file(keystorePath)
@@ -123,15 +136,22 @@ android {
     buildTypes {
         release {
             val releaseSigning = signingConfigs.getByName("release")
-            if (releaseSigning.storeFile == null) {
-                error(
-                    "Release signing not configured. Set MEATVO_KEYSTORE_PATH and " +
-                        "MEATVO_KEYSTORE_PASSWORD (and optionally MEATVO_KEY_ALIAS / " +
-                        "MEATVO_KEY_PASSWORD) in gradle.properties or environment.",
+            signingConfig = if (releaseSigning.storeFile != null) {
+                releaseSigning
+            } else {
+                logger.warn(
+                    "Release keystore not configured — signing APK with debug key (local testing only). " +
+                        "Create android/keystore.properties from keystore.properties.example for production.",
                 )
+                signingConfigs.getByName("debug")
             }
-            signingConfig = releaseSigning
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 

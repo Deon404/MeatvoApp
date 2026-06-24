@@ -100,6 +100,16 @@ app.use(
         manifestSrc: ["'self'"],
       },
     },
+    permissionsPolicy: {
+      features: {
+        geolocation: ["'self'"],
+        microphone: ["none"],
+        camera: ["none"],
+        payment: ["none"],
+        usb: ["none"],
+      },
+    },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   })
 );
 

@@ -1,4 +1,4 @@
-const { query, getClient } = require('../../db/postgres');
+const { getClient } = require('../../db/postgres');
 const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const cashfreeService = require('./cashfree.service');
@@ -57,6 +57,8 @@ const mapCashfreeOrderStatus = (orderStatus) => {
   if (normalized === 'EXPIRED') return 'FAILED';
   return normalized || 'PENDING';
 };
+
+const UNCONFIRMED_ORDER_STATUSES = new Set(['PLACED', 'PAYMENT_PENDING']);
 
 const applyPaymentFailure = async (client, { paymentId, orderId, customerId, io }) => {
   await client.query(
@@ -199,7 +201,12 @@ const initiatePayment = async (req, res) => {
     } catch (_) {
       /* ignore rollback errors */
     }
-    logger.error('cashfree_initiate_failed', { orderId, error: error.message });
+    logger.error('cashfree_initiate_failed', {
+      orderId,
+      error: error.message,
+      stack: error.stack,
+      cashfreeEnv: process.env.CASHFREE_ENV,
+    });
     return fail(res, 500, 'Payment initiation failed');
   } finally {
     client.release();
@@ -316,6 +323,35 @@ const handleWebhook = async (req, res) => {
   }
 };
 
+const resolveSuccessfulCashfreePayment = async (orderId, storedAmount) => {
+  const payments = await cashfreeService.getPayments(String(orderId));
+  const successfulPayment = payments.find(
+    (entry) => String(entry.payment_status || '').toUpperCase() === 'SUCCESS'
+  );
+
+  if (!successfulPayment) {
+    return null;
+  }
+
+  const receivedAmount =
+    successfulPayment.payment_amount != null
+      ? successfulPayment.payment_amount
+      : successfulPayment.order_amount;
+
+  if (isAmountMismatch(storedAmount, receivedAmount)) {
+    reportAmountMismatch({
+      paymentId: null,
+      orderId,
+      expectedAmount: storedAmount,
+      receivedAmount,
+      source: 'status_poll',
+    });
+    return null;
+  }
+
+  return successfulPayment.cf_payment_id || successfulPayment.payment_id || null;
+};
+
 /**
  * @route GET /api/payments/cashfree/:orderId/status
  */
@@ -326,53 +362,102 @@ const getPaymentStatus = async (req, res) => {
     return fail(res, 400, 'Order ID is required');
   }
 
+  const client = await getClient();
+
   try {
-    const paymentResult = await query(
-      `SELECT pt.id, pt.status, pt.gateway_order_id, pt.gateway_response, o.customer_id
+    await client.query('BEGIN');
+
+    const paymentResult = await client.query(
+      `SELECT pt.id, pt.status, pt.amount, pt.gateway_order_id, pt.gateway_response,
+              pt.gateway_payment_id, o.customer_id, o.status AS order_status
        FROM payment_transactions pt
        JOIN orders o ON o.id = pt.order_id
        WHERE pt.order_id = $1 AND pt.gateway = 'CASHFREE' AND o.customer_id = $2
        ORDER BY pt.created_at DESC
-       LIMIT 1`,
+       LIMIT 1
+       FOR UPDATE OF pt`,
       [orderId, req.user.id]
     );
 
     if (paymentResult.rows.length === 0) {
+      await client.query('ROLLBACK');
       return fail(res, 404, 'Payment not found');
     }
 
     const payment = paymentResult.rows[0];
     const gatewayResponse = parseGatewayResponse(payment.gateway_response);
     let status = payment.status;
+    let orderStatus = payment.order_status;
+    let gatewayPaymentId = payment.gateway_payment_id || null;
     let paymentSessionId = gatewayResponse.payment_session_id || null;
+    const io = req.app.get('io');
 
-    if (status === 'PENDING') {
+    const confirmIfPaidAtGateway = async () => {
+      const gatewayPaymentIdFromApi = await resolveSuccessfulCashfreePayment(
+        orderId,
+        payment.amount
+      );
+      if (!gatewayPaymentIdFromApi) {
+        return false;
+      }
+
+      await applyPaymentSuccess(client, {
+        paymentId: payment.id,
+        orderId,
+        customerId: payment.customer_id,
+        io,
+        gatewayPaymentId: gatewayPaymentIdFromApi,
+      });
+
+      status = 'SUCCESS';
+      gatewayPaymentId = gatewayPaymentIdFromApi;
+      orderStatus = 'CONFIRMED';
+      return true;
+    };
+
+    if (status === 'PENDING' || status === 'INITIATED') {
       const liveStatus = await cashfreeService.getOrderStatus(String(orderId));
-      status = mapCashfreeOrderStatus(liveStatus.order_status);
+      const liveMapped = mapCashfreeOrderStatus(liveStatus.order_status);
       paymentSessionId = liveStatus.payment_session_id || paymentSessionId;
 
-      if (status !== payment.status) {
-        await query(
-          `UPDATE payment_transactions
-           SET status = $1, updated_at = NOW()
-           WHERE id = $2`,
-          [status, payment.id]
-        );
+      if (liveMapped === 'SUCCESS') {
+        await confirmIfPaidAtGateway();
+      } else {
+        status = liveMapped;
       }
+    } else if (status === 'SUCCESS' && UNCONFIRMED_ORDER_STATUSES.has(orderStatus)) {
+      await applyPaymentSuccess(client, {
+        paymentId: payment.id,
+        orderId,
+        customerId: payment.customer_id,
+        io,
+      });
+      orderStatus = 'CONFIRMED';
     }
+
+    await client.query('COMMIT');
 
     return ok(
       res,
       {
         status,
+        orderStatus,
         gateway_order_id: payment.gateway_order_id,
+        gateway_payment_id: gatewayPaymentId,
         payment_session_id: paymentSessionId,
       },
       'Payment status retrieved'
     );
   } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {
+      /* ignore rollback errors */
+    }
     logger.error('cashfree_status_check_failed', { orderId, error: error.message });
     return fail(res, 500, 'Status check failed');
+  } finally {
+    client.release();
   }
 };
 
@@ -411,6 +496,13 @@ const verifyPayment = async (req, res) => {
     const payment = paymentResult.rows[0];
 
     if (payment.status === 'SUCCESS') {
+      const io = req.app.get('io');
+      await applyPaymentSuccess(client, {
+        paymentId: payment.id,
+        orderId: payment.order_id,
+        customerId: payment.customer_id,
+        io,
+      });
       await client.query('COMMIT');
       return ok(res, { verified: true, status: 'SUCCESS' }, 'Payment verified');
     }

@@ -14,13 +14,11 @@ import '../../screens/profile/profile_edit_screen.dart';
 import '../../screens/settings/privacy_policy_screen.dart';
 import '../../screens/settings/terms_of_service_screen.dart';
 import '../../screens/wishlist/wishlist_screen.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../services/storage_service.dart';
 import '../../features/home/widgets/home_brand_footer.dart';
 
-const _brandRed = Color(0xFFC8102E);
-const _textDark = Color(0xFF1A1A1A);
-const _textGrey = Color(0xFF6B6B6B);
 const _iconBg = AppColors.greyLight;
 
 class ProfileScreen extends StatefulWidget {
@@ -37,20 +35,51 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late Future<UserModel?> _userFuture;
+  Map<String, int>? _stats;
 
   @override
   void initState() {
     super.initState();
     _reloadUser();
+    _loadStats();
   }
 
   void _reloadUser() {
     _userFuture = StorageService().getUser();
   }
 
+  Future<void> _loadStats() async {
+    try {
+      final res = await ApiService().get('/users/me');
+      final root = res.data;
+      if (root is! Map<String, dynamic> || root['success'] != true) return;
+
+      final payload = root['data'];
+      if (payload is! Map<String, dynamic>) return;
+
+      final stats = payload['stats'];
+      if (stats is! Map<String, dynamic>) return;
+
+      if (!mounted) return;
+      setState(() {
+        _stats = {
+          'ordersCount': (stats['ordersCount'] as num?)?.toInt() ?? 0,
+          'wishlistCount': (stats['wishlistCount'] as num?)?.toInt() ?? 0,
+          'addressesCount': (stats['addressesCount'] as num?)?.toInt() ?? 0,
+        };
+      });
+    } catch (_) {
+      // Keep _stats null — UI shows '-' until/unless load succeeds.
+    }
+  }
+
   Future<void> _onRefresh() async {
     HapticFeedback.lightImpact();
-    setState(_reloadUser);
+    setState(() {
+      _stats = null;
+      _reloadUser();
+    });
+    _loadStats();
     await _userFuture;
   }
 
@@ -137,9 +166,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showSupportSheet() {
+    final mv = context.meatvo;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: mv.surfaceCard,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -158,8 +188,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
@@ -167,13 +197,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w600,
-                      color: _textDark,
+                      color: mv.textPrimary,
                     ),
                   ),
                 ),
               ),
               ListTile(
-                leading: const Icon(Icons.call_outlined, color: _brandRed),
+                leading: Icon(Icons.call_outlined, color: mv.brandAccent),
                 title: const Text('Call us'),
                 subtitle: Text(SupportConfig.phone),
                 onTap: () {
@@ -182,7 +212,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.mail_outline, color: _brandRed),
+                leading: Icon(Icons.mail_outline, color: mv.brandAccent),
                 title: const Text('Email'),
                 subtitle: Text(SupportConfig.email),
                 onTap: () {
@@ -191,7 +221,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.help_outline, color: _brandRed),
+                leading: Icon(Icons.help_outline, color: mv.brandAccent),
                 title: const Text('FAQ'),
                 subtitle: const Text('Common questions about orders & delivery'),
                 onTap: () {
@@ -211,9 +241,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _showTermsPrivacySheet() {
+    final mv = context.meatvo;
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: mv.surfaceCard,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
@@ -233,9 +264,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
               const SizedBox(height: 16),
               ListTile(
-                leading: const Icon(Icons.description_outlined, color: _brandRed),
+                leading: Icon(Icons.description_outlined, color: mv.brandAccent),
                 title: const Text('Terms of Service'),
-                trailing: const Icon(Icons.chevron_right, size: 16, color: _textGrey),
+                trailing: Icon(Icons.chevron_right, size: 16, color: mv.textSecondary),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   Navigator.push(
@@ -247,9 +278,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.privacy_tip_outlined, color: _brandRed),
+                leading: Icon(Icons.privacy_tip_outlined, color: mv.brandAccent),
                 title: const Text('Privacy Policy'),
-                trailing: const Icon(Icons.chevron_right, size: 16, color: _textGrey),
+                trailing: Icon(Icons.chevron_right, size: 16, color: mv.textSecondary),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   Navigator.push(
@@ -269,23 +300,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _statItem(String value, String label) {
+    final mv = context.meatvo;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
-            color: _brandRed,
+            color: mv.brandAccent,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12,
-            color: _textGrey,
+            color: mv.textSecondary,
           ),
         ),
       ],
@@ -306,6 +338,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     required VoidCallback onTap,
     bool showDivider = true,
   }) {
+    final mv = context.meatvo;
     return Column(
       children: [
         SizedBox(
@@ -319,20 +352,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 color: _iconBg,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: Icon(icon, size: 18, color: _textGrey),
+              child: Icon(icon, size: 18, color: mv.textSecondary),
             ),
             title: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: _textDark,
+                color: mv.textPrimary,
               ),
             ),
-            trailing: const Icon(
+            trailing: Icon(
               Icons.chevron_right,
               size: 16,
-              color: _textGrey,
+              color: mv.textSecondary,
             ),
             onTap: () {
               HapticFeedback.lightImpact();
@@ -347,13 +380,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildAvatar(UserModel? user) {
+    final mv = context.meatvo;
     final name = user?.name?.trim() ?? '';
     final initial = name.isNotEmpty ? name.characters.first.toUpperCase() : 'M';
     final imageUrl = user?.profileImageUrl?.trim();
 
     return CircleAvatar(
       radius: 30,
-      backgroundColor: _brandRed,
+      backgroundColor: mv.brandAccent,
       child: ClipOval(
         child: (imageUrl != null && imageUrl.isNotEmpty)
             ? CachedNetworkImage(
@@ -370,15 +404,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _avatarFallback(String initial) {
+    final mv = context.meatvo;
     return Container(
       width: 60,
       height: 60,
-      color: _brandRed,
+      color: mv.brandAccent,
       alignment: Alignment.center,
       child: Text(
         initial,
-        style: const TextStyle(
-          color: Colors.white,
+        style: TextStyle(
+          color: mv.surfaceCard,
           fontSize: 22,
           fontWeight: FontWeight.w600,
         ),
@@ -388,14 +423,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: AppColors.warmBg,
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: _onRefresh,
-          color: _brandRed,
-          backgroundColor: Colors.white,
+          color: mv.brandAccent,
+          backgroundColor: mv.surfaceCard,
           child: FutureBuilder<UserModel?>(
             future: _userFuture,
             builder: (context, snapshot) {
@@ -414,7 +450,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Container(
-                      color: Colors.white,
+                      color: mv.surfaceCard,
                       padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
                       child: Row(
                         children: [
@@ -426,18 +462,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               children: [
                                 Text(
                                   userName,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold,
-                                    color: _textDark,
+                                    color: mv.textPrimary,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   phone,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 13,
-                                    color: _textGrey,
+                                    color: mv.textSecondary,
                                   ),
                                 ),
                               ],
@@ -452,11 +488,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             style: OutlinedButton.styleFrom(
                               minimumSize: const Size(0, 34),
                               padding: const EdgeInsets.symmetric(horizontal: 16),
-                              side: const BorderSide(color: _brandRed),
+                              side: BorderSide(color: mv.brandAccent),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(20),
                               ),
-                              foregroundColor: _brandRed,
+                              foregroundColor: mv.brandAccent,
                               textStyle: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w500,
@@ -472,17 +508,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       margin: const EdgeInsets.symmetric(horizontal: 16),
                       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 8),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: mv.surfaceCard,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
-                          _statItem('45', 'Orders'),
+                          _statItem(
+                            _stats?['ordersCount']?.toString() ?? '-',
+                            'Orders',
+                          ),
                           _statDivider(),
-                          _statItem('12', 'Saved'),
+                          _statItem(
+                            _stats?['wishlistCount']?.toString() ?? '-',
+                            'Saved',
+                          ),
                           _statDivider(),
-                          _statItem('3', 'Addresses'),
+                          _statItem(
+                            _stats?['addressesCount']?.toString() ?? '-',
+                            'Addresses',
+                          ),
                         ],
                       ),
                     ),
@@ -490,7 +535,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     Container(
                       margin: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: mv.surfaceCard,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       clipBehavior: Clip.antiAlias,
@@ -568,11 +613,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             vertical: 12,
                           ),
                         ),
-                        icon: const Icon(Icons.logout, size: 18, color: _brandRed),
-                        label: const Text(
+                        icon: Icon(Icons.logout, size: 18, color: mv.brandAccent),
+                        label: Text(
                           'Log out',
                           style: TextStyle(
-                            color: _brandRed,
+                            color: mv.brandAccent,
                             fontWeight: FontWeight.w600,
                           ),
                         ),

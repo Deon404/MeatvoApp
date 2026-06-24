@@ -448,6 +448,10 @@ class RiderService {
   }
 
   /// Accept one or more order assignments (batch delivery).
+  ///
+  /// Uses legacy [ApiDeliveryPaths.orderAccept] — PACKED → OUT_FOR_DELIVERY in one
+  /// step. Enhanced `/orders/enhanced/:id/accept` (RIDER_ASSIGNED → RIDER_ACCEPTED)
+  /// is not used.
   Future<void> acceptOrders(List<String> orderIds) async {
     if (orderIds.isEmpty) {
       throw Exception('No orders to accept');

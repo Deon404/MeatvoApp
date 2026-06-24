@@ -203,50 +203,47 @@ async function recordEarningsHistory(orderId, riderId, earnings) {
  * Update rider's total earnings
  */
 async function updateRiderEarnings(riderId, earningsAmount) {
+  const { rows } = await query(
+    'SELECT COALESCE(earnings, 0) AS earnings FROM delivery_partners WHERE user_id = $1',
+    [riderId]
+  );
+  if (!rows[0]) return;
+
+  const newEarnings = Number(rows[0].earnings) + Number(earningsAmount);
   await query(
-    `UPDATE delivery_partners 
-     SET earnings = COALESCE(earnings, 0) + $1,
-         updated_at = CURRENT_TIMESTAMP
+    `UPDATE delivery_partners
+     SET earnings = $1, updated_at = CURRENT_TIMESTAMP
      WHERE user_id = $2`,
-    [earningsAmount, riderId]
+    [newEarnings, riderId]
   );
 }
 
 /**
  * Get earnings breakdown for a time period
  */
-async function getEarningsBreakdown(riderId, period = 'today') {
-  let dateFilter = '';
-  
-  switch (period) {
-    case 'today':
-      dateFilter = "AND DATE(created_at) = CURRENT_DATE";
-      break;
-    case 'week':
-      dateFilter = "AND created_at >= DATE_TRUNC('week', CURRENT_DATE)";
-      break;
-    case 'month':
-      dateFilter = "AND created_at >= DATE_TRUNC('month', CURRENT_DATE)";
-      break;
-    default:
-      dateFilter = '';
-  }
+const EARNINGS_BREAKDOWN_BASE = `
+  SELECT
+    COUNT(*) as delivery_count,
+    COALESCE(SUM(base_amount), 0) as total_base,
+    COALESCE(SUM(distance_bonus), 0) as total_distance_bonus,
+    COALESCE(SUM(time_bonus), 0) as total_time_bonus,
+    COALESCE(SUM(peak_bonus), 0) as total_peak_bonus,
+    COALESCE(SUM(performance_bonus), 0) as total_performance_bonus,
+    COALESCE(SUM(total_amount), 0) as total_earnings,
+    COALESCE(AVG(distance_km), 0) as avg_distance,
+    COALESCE(AVG(delivery_time_minutes), 0) as avg_delivery_time
+  FROM rider_earnings_history
+  WHERE rider_id = $1`;
 
-  const { rows } = await query(
-    `SELECT 
-      COUNT(*) as delivery_count,
-      COALESCE(SUM(base_amount), 0) as total_base,
-      COALESCE(SUM(distance_bonus), 0) as total_distance_bonus,
-      COALESCE(SUM(time_bonus), 0) as total_time_bonus,
-      COALESCE(SUM(peak_bonus), 0) as total_peak_bonus,
-      COALESCE(SUM(performance_bonus), 0) as total_performance_bonus,
-      COALESCE(SUM(total_amount), 0) as total_earnings,
-      COALESCE(AVG(distance_km), 0) as avg_distance,
-      COALESCE(AVG(delivery_time_minutes), 0) as avg_delivery_time
-     FROM rider_earnings_history
-     WHERE rider_id = $1 ${dateFilter}`,
-    [riderId]
-  );
+const EARNINGS_PERIOD_FILTERS = {
+  today: "AND DATE(created_at) = CURRENT_DATE",
+  week: "AND created_at >= DATE_TRUNC('week', CURRENT_DATE)",
+  month: "AND created_at >= DATE_TRUNC('month', CURRENT_DATE)",
+};
+
+async function getEarningsBreakdown(riderId, period = 'today') {
+  const dateFilter = EARNINGS_PERIOD_FILTERS[period] || '';
+  const { rows } = await query(`${EARNINGS_BREAKDOWN_BASE} ${dateFilter}`, [riderId]);
 
   return rows[0] || {
     delivery_count: 0,

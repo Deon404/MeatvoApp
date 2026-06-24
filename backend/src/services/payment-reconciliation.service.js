@@ -1,14 +1,20 @@
 /**
- * PhonePe payment reconciliation — polls stale PENDING payments and cancels on failure.
+ * Payment reconciliation — polls stale PENDING payments (PhonePe + Cashfree)
+ * and applies success or cancels on failure.
  */
 
 const { query, getClient } = require('../db/postgres');
 const { logger } = require('../utils/logger');
 const phonepeService = require('../modules/payments/phonepe.service');
+const cashfreeService = require('../modules/payments/cashfree.service');
 const { applyPaymentSuccess } = require('../modules/payments/payment-success');
 
 const DEFAULT_TIMEOUT_MINUTES = Number(process.env.PAYMENT_RECONCILE_TIMEOUT_MINUTES || 15);
 const RECONCILE_INTERVAL_MS = Number(process.env.PAYMENT_RECONCILE_INTERVAL_MS || 5 * 60 * 1000);
+
+const CASHFREE_SUCCESS_STATUSES = new Set(['SUCCESS', 'PAID']);
+const CASHFREE_FAILURE_STATUSES = new Set(['FAILED', 'CANCELLED', 'EXPIRED']);
+const CASHFREE_PENDING_STATUSES = new Set(['ACTIVE', 'PENDING']);
 
 let reconcileTimer = null;
 
@@ -41,6 +47,9 @@ async function cancelOrderForPaymentFailure(orderId, customerId, io, reason = 'p
 }
 
 async function reconcileStalePayments(io = null) {
+  let checked = 0;
+  let updated = 0;
+
   const { rows } = await query(
     `SELECT pt.id, pt.order_id, pt.gateway_transaction_id, pt.status,
             o.customer_id, o.payment_mode, o.status AS order_status
@@ -55,9 +64,7 @@ async function reconcileStalePayments(io = null) {
     [String(DEFAULT_TIMEOUT_MINUTES)]
   );
 
-  if (!rows.length) return { checked: 0, updated: 0 };
-
-  let updated = 0;
+  checked += rows.length;
 
   for (const payment of rows) {
     if (!payment.gateway_transaction_id) continue;
@@ -119,7 +126,114 @@ async function reconcileStalePayments(io = null) {
     }
   }
 
-  return { checked: rows.length, updated };
+  const { rows: cashfreeRows } = await query(
+    `SELECT pt.id, pt.order_id, pt.gateway_order_id, pt.status,
+            o.customer_id, o.payment_mode, o.status AS order_status
+     FROM payment_transactions pt
+     JOIN orders o ON o.id = pt.order_id
+     WHERE pt.gateway = 'CASHFREE'
+       AND pt.status IN ('INITIATED', 'PENDING')
+       AND o.payment_mode = 'ONLINE'
+       AND o.status IN ('PLACED', 'PAYMENT_PENDING')
+       AND pt.created_at < NOW() - ($1::text || ' minutes')::interval
+     ORDER BY pt.created_at ASC
+     LIMIT 50`,
+    [String(DEFAULT_TIMEOUT_MINUTES)]
+  );
+
+  checked += cashfreeRows.length;
+
+  for (const payment of cashfreeRows) {
+    if (!payment.gateway_order_id) {
+      logger.info('payment_reconcile_cashfree_skipped', {
+        orderId: payment.order_id,
+        gateway_order_id: payment.gateway_order_id,
+        reason: 'missing_gateway_order_id',
+      });
+      continue;
+    }
+
+    try {
+      // Cashfree GET /orders/{id} expects the merchant order_id (Meatvo order ID),
+      // consistent with cashfree.controller getPaymentStatus.
+      const liveStatus = await cashfreeService.getOrderStatus(String(payment.order_id));
+      const orderStatus = String(liveStatus.order_status || '').toUpperCase();
+
+      if (CASHFREE_SUCCESS_STATUSES.has(orderStatus)) {
+        const client = await getClient();
+        try {
+          await client.query('BEGIN');
+          const result = await applyPaymentSuccess(client, {
+            paymentId: payment.id,
+            orderId: payment.order_id,
+            customerId: payment.customer_id,
+            io,
+            gatewayResponse: liveStatus,
+          });
+          if (result.applied) {
+            await client.query('COMMIT');
+            updated += 1;
+            logger.info('payment_reconcile_cashfree_success', {
+              orderId: payment.order_id,
+              gateway_order_id: payment.gateway_order_id,
+            });
+          } else {
+            await client.query('ROLLBACK');
+            logger.info('payment_reconcile_cashfree_success_skipped', {
+              orderId: payment.order_id,
+              gateway_order_id: payment.gateway_order_id,
+              reason: result.reason,
+            });
+          }
+        } catch (err) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (_) {
+            /* ignore rollback errors */
+          }
+          throw err;
+        } finally {
+          client.release();
+        }
+      } else if (CASHFREE_FAILURE_STATUSES.has(orderStatus)) {
+        await query(
+          `UPDATE payment_transactions
+           SET status = 'FAILED', gateway_response = $1, updated_at = NOW()
+           WHERE id = $2`,
+          [JSON.stringify(liveStatus), payment.id]
+        );
+        await cancelOrderForPaymentFailure(payment.order_id, payment.customer_id, io);
+        updated += 1;
+        logger.info('payment_reconcile_cashfree_cancelled', {
+          orderId: payment.order_id,
+          gateway_order_id: payment.gateway_order_id,
+          orderStatus,
+        });
+      } else if (CASHFREE_PENDING_STATUSES.has(orderStatus)) {
+        logger.info('payment_reconcile_cashfree_skipped', {
+          orderId: payment.order_id,
+          gateway_order_id: payment.gateway_order_id,
+          orderStatus,
+          reason: 'still_pending',
+        });
+      } else {
+        logger.info('payment_reconcile_cashfree_skipped', {
+          orderId: payment.order_id,
+          gateway_order_id: payment.gateway_order_id,
+          orderStatus,
+          reason: 'unhandled_status',
+        });
+      }
+    } catch (err) {
+      logger.error('payment_reconcile_cashfree_item_failed', {
+        orderId: payment.order_id,
+        gateway_order_id: payment.gateway_order_id,
+        error: err.message,
+      });
+    }
+  }
+
+  return { checked, updated };
 }
 
 function startPaymentReconciliation(io) {

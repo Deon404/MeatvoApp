@@ -1,6 +1,5 @@
 const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
-const { repairAppSettingsSchema } = require('../../db/appSettings');
 const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { emitToAll } = require('../../socket/socket');
@@ -9,6 +8,8 @@ const { calculateExpressETA } = require('../../utils/eta-calculator');
 const {
   DEFAULT_STORE_SETTINGS,
   getMergedStoreSettings,
+  queryWithTimeout,
+  scheduleSchemaRepair,
 } = require('../../utils/storeSettings.util');
 
 const DEFAULT_THEME = {
@@ -48,9 +49,35 @@ const resolveAppInfo = (raw) => {
 
 // ─── Generic key-value settings helpers ──────────────────────────────────────
 
+const APP_SETTINGS_DDL = `
+  CREATE TABLE IF NOT EXISTS app_settings (
+    id SERIAL PRIMARY KEY,
+    delivery_charge NUMERIC(10,2) DEFAULT 30,
+    min_order_amount NUMERIC(10,2) DEFAULT 150,
+    store_open BOOLEAN DEFAULT true,
+    store_open_time TIME,
+    store_close_time TIME,
+    delivery_radius_km NUMERIC(5,2) DEFAULT 8.0,
+    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`;
+
+let appSettingsTableCreateScheduled = false;
+
+const scheduleAppSettingsTableCreate = () => {
+  if (appSettingsTableCreateScheduled) return;
+  appSettingsTableCreateScheduled = true;
+  query(APP_SETTINGS_DDL)
+    .catch(() => {})
+    .finally(() => {
+      appSettingsTableCreateScheduled = false;
+    });
+};
+
 const getSetting = async (key) => {
   try {
-    const { rows } = await query(
+    const { rows } = await queryWithTimeout(
       `SELECT value->$1 AS value
        FROM app_settings
        ORDER BY id
@@ -61,27 +88,21 @@ const getSetting = async (key) => {
   } catch (err) {
     if (err?.code === '42P01') return null;
     if (err?.code === '42703') {
-      await repairAppSettingsSchema();
-      const { rows } = await query(
-        `SELECT value->$1 AS value
-         FROM app_settings
-         ORDER BY id
-         LIMIT 1`,
-        [key]
-      );
-      return rows[0]?.value || null;
+      scheduleSchemaRepair();
+      return null;
     }
+    if (err?.code === 'ETIMEOUT') return null;
     throw err;
   }
 };
 
 const putSetting = async (key, value) => {
   try {
-    const { rows: existing } = await query(
+    const { rows: existing } = await queryWithTimeout(
       'SELECT id FROM app_settings ORDER BY id LIMIT 1'
     );
     if (existing[0]) {
-      const { rows } = await query(
+      const { rows } = await queryWithTimeout(
         `UPDATE app_settings
          SET value = jsonb_set(COALESCE(value, '{}'::jsonb), ARRAY[$1], $2::jsonb, true),
              updated_at = NOW()
@@ -92,7 +113,7 @@ const putSetting = async (key, value) => {
       return rows[0]?.value || value;
     }
 
-    const { rows } = await query(
+    const { rows } = await queryWithTimeout(
       `INSERT INTO app_settings (value, updated_at)
        VALUES (jsonb_build_object($1, $2::jsonb), NOW())
        RETURNING value->$1 AS value`,
@@ -101,31 +122,16 @@ const putSetting = async (key, value) => {
     return rows[0]?.value || value;
   } catch (err) {
     if (err?.code === '42703') {
-      await repairAppSettingsSchema();
-      return putSetting(key, value);
-    }
-    if (err?.code !== '42P01') throw err;
-
-    try {
-      await query(
-        `CREATE TABLE IF NOT EXISTS app_settings (
-          id SERIAL PRIMARY KEY,
-          delivery_charge NUMERIC(10,2) DEFAULT 30,
-          min_order_amount NUMERIC(10,2) DEFAULT 150,
-          store_open BOOLEAN DEFAULT true,
-          store_open_time TIME,
-          store_close_time TIME,
-          delivery_radius_km INTEGER DEFAULT 5,
-          value JSONB NOT NULL DEFAULT '{}'::jsonb,
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )`
-      );
-      await repairAppSettingsSchema();
-      return putSetting(key, value);
-    } catch (e2) {
-      logger.warn('settings_table_create_failed', { message: e2?.message, code: e2?.code });
+      scheduleSchemaRepair();
       return value;
     }
+    if (err?.code === '42P01') {
+      scheduleAppSettingsTableCreate();
+      scheduleSchemaRepair();
+      return value;
+    }
+    if (err?.code === 'ETIMEOUT') return value;
+    throw err;
   }
 };
 

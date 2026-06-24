@@ -126,8 +126,8 @@ main() {
   log "Starting Meatvo Phase 2 deploy at ${APP_DIR}"
   step_dirs
   step_schema
-  step_migrations
   step_npm
+  step_migrations
   step_pm2
   step_verify
   log "Phase 2 deploy complete."

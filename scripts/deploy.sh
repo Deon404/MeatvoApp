@@ -55,9 +55,8 @@ step_backup() {
   fi
 }
 
-step_migrations() {
+step_schema_only() {
   if [[ "${SKIP_MIGRATE:-0}" == "1" ]]; then
-    log "Skipping migrations (SKIP_MIGRATE=1)"
     return
   fi
 
@@ -65,6 +64,13 @@ step_migrations() {
   if [[ -f "${schema_file}" ]]; then
     log "Applying schema bootstrap (idempotent)"
     sudo -u postgres psql -v ON_ERROR_STOP=0 -d "${DB_NAME}" -f "${schema_file}" || true
+  fi
+}
+
+step_node_migrations() {
+  if [[ "${SKIP_MIGRATE:-0}" == "1" ]]; then
+    log "Skipping node migrations (SKIP_MIGRATE=1)"
+    return
   fi
 
   if [[ -f "${BACKEND_DIR}/run-migrations.js" ]]; then
@@ -126,8 +132,9 @@ main() {
   log "Starting Meatvo deploy at ${APP_DIR}"
   step_pull
   step_backup
-  step_migrations
+  step_schema_only
   step_install
+  step_node_migrations
   step_pm2
   step_health
   log "Deploy complete."

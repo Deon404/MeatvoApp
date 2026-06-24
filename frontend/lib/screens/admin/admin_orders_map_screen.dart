@@ -6,7 +6,6 @@ import '../../config/store_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/widgets/map_markers.dart';
 import '../../services/admin_service.dart';
-import '../../services/maps_service.dart';
 import '../../utils/address_display_util.dart' show formatAddressForDisplay, resolveAddressCoords;
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/empty_state.dart';
@@ -24,9 +23,7 @@ class AdminOrdersMapScreen extends StatefulWidget {
 class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     with TickerProviderStateMixin {
   final _adminService = AdminService();
-  final _mapsService = MapsService();
   final _dateFormat = DateFormat('MMM d, yyyy');
-  final Map<String, List<LatLng>> _routePolylineCache = {};
 
   GoogleMapController? _mapController;
   late TabController _tabController;
@@ -34,32 +31,15 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _orders = [];
   List<Map<String, dynamic>> _routeStops = [];
-  Map<String, dynamic>? _routeMeta;
   Map<String, dynamic>? _selectedStop;
 
   Set<Marker> _markers = {};
-  Set<Polyline> _polylines = {};
 
   bool _isLoading = true;
   String? _loadError;
   String? _assigningOrderId;
-  bool _isAssigningRoute = false;
-  bool _isCalculatingZones = false;
-  bool _isBulkAssigning = false;
 
   Map<String, BitmapDescriptor> _markerCache = {};
-
-  List<Map<String, dynamic>> _zones = [];
-  Map<String, dynamic>? _zonePlanMeta;
-  Map<int, String?> _zoneRiderSelections = {};
-  List<Map<String, dynamic>> _onlineRiders = [];
-
-  static const _zoneColors = [
-    Color(0xFFEF4444),
-    Color(0xFF3B82F6),
-    Color(0xFF10B981),
-    Color(0xFFF97316),
-  ];
 
   static const _inactiveStatuses = {
     'delivered',
@@ -83,26 +63,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     super.dispose();
   }
 
-  void _reinitTabController(int length) {
-    _tabController.dispose();
-    _tabController = TabController(length: length, vsync: this);
-  }
-
-  int get _bottomSheetTabCount =>
-      _zones.isNotEmpty ? _zones.length + 1 : 2;
-
-  bool get _isZoneMode => _zones.isNotEmpty;
-
-  String get _dateQueryParam {
-    final now = DateTime.now();
-    if (_selectedDate.year == now.year &&
-        _selectedDate.month == now.month &&
-        _selectedDate.day == now.day) {
-      return 'today';
-    }
-    return DateFormat('yyyy-MM-dd').format(_selectedDate);
-  }
-
   String get _dateChipLabel {
     final now = DateTime.now();
     if (_selectedDate.year == now.year &&
@@ -113,19 +73,18 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     return _dateFormat.format(_selectedDate);
   }
 
+  String get _locationSummaryLabel {
+    final withoutLocation = _orders.length - _routeStops.length;
+    if (withoutLocation <= 0) return 'all located';
+    return '$withoutLocation without location';
+  }
+
   Future<void> _loadData() async {
     setState(() {
       _isLoading = true;
       _loadError = null;
       _selectedStop = null;
-      _zones = [];
-      _zonePlanMeta = null;
-      _zoneRiderSelections = {};
       _markerCache = {};
-      if (_tabController.length != 2) {
-        _tabController.dispose();
-        _tabController = TabController(length: 2, vsync: this);
-      }
     });
 
     try {
@@ -143,11 +102,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       setState(() {
         _orders = activeOrders;
         _routeStops = _buildStopsFromOrderList(activeOrders);
-        _routeMeta = null;
         _isLoading = false;
       });
 
-      await _buildMapElements();
+      await _buildActiveOrderMapElements();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -155,7 +113,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         _isLoading = false;
         _orders = [];
         _routeStops = [];
-        _routeMeta = null;
       });
     }
   }
@@ -164,14 +121,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     final status = (order['status'] ?? '').toString().toLowerCase();
     if (status.isEmpty) return false;
     return !_inactiveStatuses.contains(status);
-  }
-
-  Future<void> _buildMapElements() async {
-    if (_isZoneMode) {
-      await _buildZoneMapElements();
-      return;
-    }
-    await _buildActiveOrderMapElements();
   }
 
   Future<void> _buildActiveOrderMapElements() async {
@@ -190,479 +139,11 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       markers.add(marker);
     }
 
-    setState(() {
-      _markers = markers;
-      _polylines = {};
-    });
+    setState(() => _markers = markers);
 
     if (_mapController != null && markers.length > 1) {
       _fitCameraToBounds();
     }
-  }
-
-  List<Map<String, dynamic>> _parseZones(Map<String, dynamic> planData) {
-    final rawZones = planData['zones'];
-    if (rawZones is! List) return [];
-
-    return rawZones.asMap().entries.map((entry) {
-      final zone = Map<String, dynamic>.from(entry.value as Map);
-      final zoneId = _asInt(zone['zoneId'] ?? zone['zone_id'] ?? entry.key + 1);
-      final rawRoute = zone['route'];
-      final stops = rawRoute is List
-          ? rawRoute.asMap().entries.map((routeEntry) {
-              final stop = Map<String, dynamic>.from(routeEntry.value as Map);
-              return {
-                'stopNumber': _asInt(
-                  stop['stopNumber'] ??
-                      stop['stop_number'] ??
-                      routeEntry.key + 1,
-                ),
-                'orderId':
-                    (stop['orderId'] ?? stop['order_id'] ?? '').toString(),
-                'customerName': stop['customerName'] ??
-                    stop['customer_name'] ??
-                    'Customer',
-                'customerPhone': stop['customerPhone'] ??
-                    stop['customer_phone'] ??
-                    '',
-                'address': stop['address'] ?? '',
-                'latitude': _asDouble(stop['lat'] ?? stop['latitude']),
-                'longitude': _asDouble(stop['lng'] ?? stop['longitude']),
-                'status': (stop['status'] ?? '').toString(),
-                'distanceFromPrevKm': _asDouble(
-                  stop['distanceFromPrevKm'] ?? stop['distance_from_prev_km'],
-                ),
-                'zoneId': zoneId,
-              };
-            }).where((stop) {
-              final lat = stop['latitude'] as double;
-              final lng = stop['longitude'] as double;
-              return lat != 0 && lng != 0;
-            }).toList()
-          : <Map<String, dynamic>>[];
-
-      return {
-        'zoneId': zoneId,
-        'orderCount': () {
-          final count = _asInt(
-            zone['orderCount'] ??
-                zone['ordersCount'] ??
-                zone['orders_count'],
-          );
-          return count > 0 ? count : stops.length;
-        }(),
-        'totalDistanceKm': _asDouble(
-          zone['totalDistanceKm'] ?? zone['total_distance_km'],
-        ),
-        'estimatedMinutes': _asInt(
-          zone['estimatedMinutes'] ?? zone['estimated_minutes'],
-        ),
-        'stops': stops,
-      };
-    }).toList();
-  }
-
-  Color _zoneColor(int zoneIndex) =>
-      _zoneColors[zoneIndex.clamp(0, _zoneColors.length - 1)];
-
-  String _routeCacheKey(
-    double fromLat,
-    double fromLng,
-    double toLat,
-    double toLng,
-  ) =>
-      '$fromLat,$fromLng-$toLat,$toLng';
-
-  Future<List<LatLng>> _getSegmentRoutePoints(LatLng from, LatLng to) async {
-    final key = _routeCacheKey(
-      from.latitude,
-      from.longitude,
-      to.latitude,
-      to.longitude,
-    );
-    final cached = _routePolylineCache[key];
-    if (cached != null) return cached;
-
-    final fallback = [from, to];
-    try {
-      final drivingRoute = await _mapsService.getDrivingRoute(
-        originLat: from.latitude,
-        originLng: from.longitude,
-        destLat: to.latitude,
-        destLng: to.longitude,
-      );
-      if (drivingRoute != null && drivingRoute.points.isNotEmpty) {
-        final points =
-            drivingRoute.points.map((p) => LatLng(p.lat, p.lng)).toList();
-        _routePolylineCache[key] = points;
-        return points;
-      }
-    } catch (_) {}
-
-    _routePolylineCache[key] = fallback;
-    return fallback;
-  }
-
-  Future<List<LatLng>> _buildRoutePolylinePoints(
-    List<LatLng> waypoints,
-  ) async {
-    if (waypoints.length < 2) return waypoints;
-
-    final allPoints = <LatLng>[];
-    for (var i = 0; i < waypoints.length - 1; i++) {
-      final segmentPoints =
-          await _getSegmentRoutePoints(waypoints[i], waypoints[i + 1]);
-      if (allPoints.isEmpty) {
-        allPoints.addAll(segmentPoints);
-      } else {
-        allPoints.addAll(segmentPoints.skip(1));
-      }
-    }
-    return allPoints;
-  }
-
-  Future<void> _buildZoneMapElements() async {
-    final storeLocation = LatLng(
-      StoreConfig.storeLatitude,
-      StoreConfig.storeLongitude,
-    );
-
-    final markers = <Marker>{};
-    final polylines = <Polyline>{};
-    final storeMarker = await _createStoreMarker(storeLocation);
-    markers.add(storeMarker);
-
-    for (var zoneIndex = 0; zoneIndex < _zones.length; zoneIndex++) {
-      final zone = _zones[zoneIndex];
-      final color = _zoneColor(zoneIndex);
-      final stops = zone['stops'] as List<Map<String, dynamic>>? ?? [];
-
-      for (final stop in stops) {
-        final marker = await _createZoneOrderMarker(
-          stop: stop,
-          color: color,
-        );
-        markers.add(marker);
-      }
-
-      final waypoints = <LatLng>[storeLocation];
-      for (final stop in stops) {
-        waypoints.add(
-          LatLng(
-            stop['latitude'] as double,
-            stop['longitude'] as double,
-          ),
-        );
-      }
-
-      final polylinePoints = await _buildRoutePolylinePoints(waypoints);
-
-      polylines.add(
-        Polyline(
-          polylineId: PolylineId('zone_${zone['zoneId']}'),
-          points: polylinePoints,
-          color: color,
-          width: 3,
-        ),
-      );
-    }
-
-    setState(() {
-      _markers = markers;
-      _polylines = polylines;
-    });
-
-    if (_mapController != null && markers.length > 1) {
-      _fitCameraToBounds();
-    }
-  }
-
-  Future<Marker> _createZoneOrderMarker({
-    required Map<String, dynamic> stop,
-    required Color color,
-  }) async {
-    final orderId = stop['orderId'] as String;
-    final stopNumber = stop['stopNumber'] as int;
-    final icon = await MapMarkers.numberedStop(stopNumber);
-
-    return Marker(
-      markerId: MarkerId('zone_order_$orderId'),
-      position: LatLng(
-        stop['latitude'] as double,
-        stop['longitude'] as double,
-      ),
-      icon: icon,
-      anchor: const Offset(0.5, 0.5),
-      onTap: () => _onMarkerTapped(stop),
-    );
-  }
-
-  Future<void> _loadOnlineRiders() async {
-    try {
-      final riders = await _adminService.getAvailableRiders();
-      if (!mounted) return;
-      setState(() {
-        _onlineRiders = riders.where((rider) {
-          final profile = rider['profile'] as Map<String, dynamic>? ?? {};
-          return profile['online'] == true;
-        }).toList();
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _onlineRiders = []);
-    }
-  }
-
-  Future<void> _showSplitZonesDialog() async {
-    var riderCount = 2;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Split Zones'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'Split orders for $riderCount riders',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton(
-                        onPressed: riderCount > 1
-                            ? () => setDialogState(() => riderCount--)
-                            : null,
-                        icon: const Icon(Icons.remove_circle_outline),
-                      ),
-                      Container(
-                        width: 48,
-                        alignment: Alignment.center,
-                        child: Text(
-                          '$riderCount',
-                          style: const TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: riderCount < 4
-                            ? () => setDialogState(() => riderCount++)
-                            : null,
-                        icon: const Icon(Icons.add_circle_outline),
-                      ),
-                    ],
-                  ),
-                  const Text(
-                    '1 – 4 riders',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: _isCalculatingZones
-                      ? null
-                      : () {
-                          Navigator.of(dialogContext).pop();
-                          _calculateZones(riderCount);
-                        },
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                  ),
-                  child: _isCalculatingZones
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Text('Calculate'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _calculateZones(int numRiders) async {
-    setState(() => _isCalculatingZones = true);
-    try {
-      final planData = await _adminService.assignMultiRiderRoutes(
-        numRiders: numRiders,
-        date: _dateQueryParam,
-      );
-      final zones = _parseZones(planData);
-
-      if (!mounted) return;
-      if (zones.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No unassigned orders to split for this date'),
-            backgroundColor: AppColors.warning,
-          ),
-        );
-        return;
-      }
-
-      final selections = <int, String?>{};
-      for (final zone in zones) {
-        selections[_asInt(zone['zoneId'])] = null;
-      }
-
-      _reinitTabController(zones.length + 1);
-      setState(() {
-        _zones = zones;
-        _zonePlanMeta = planData;
-        _zoneRiderSelections = selections;
-        _selectedStop = null;
-      });
-
-      await Future.wait([
-        _buildZoneMapElements(),
-        _loadOnlineRiders(),
-      ]);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Split into ${zones.length} zones'),
-          backgroundColor: AppColors.success,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to calculate zones: $e'),
-          backgroundColor: AppColors.primary,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isCalculatingZones = false);
-    }
-  }
-
-  Future<void> _assignZoneToRider(int zoneIndex) async {
-    if (zoneIndex < 0 || zoneIndex >= _zones.length) return;
-
-    final zone = _zones[zoneIndex];
-    final zoneId = _asInt(zone['zoneId']);
-    final riderId = _zoneRiderSelections[zoneId];
-    if (riderId == null || riderId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Select a rider for this zone'),
-          backgroundColor: AppColors.warning,
-        ),
-      );
-      return;
-    }
-
-    final stops = zone['stops'] as List<Map<String, dynamic>>? ?? [];
-    final orderIds = stops.map((s) => s['orderId'] as String).toList();
-    final routeOrder = stops.map((s) => s['orderId'] as String).toList();
-
-    setState(() => _isBulkAssigning = true);
-    try {
-      await _adminService.bulkAssignZones(
-        riderIds: [riderId],
-        date: _dateQueryParam,
-        zones: [
-          {
-            'zoneId': zoneId,
-            'riderId': riderId,
-            'orderIds': orderIds,
-            'routeOrder': routeOrder,
-          },
-        ],
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Zone $zoneId assigned — rider notified'),
-          backgroundColor: AppColors.success,
-        ),
-      );
-      await _loadData();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to assign zone: $e'),
-          backgroundColor: AppColors.primary,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isBulkAssigning = false);
-    }
-  }
-
-  double get _zonesTotalDistanceKm {
-    if (_zones.isEmpty) return _totalDistanceKm;
-    return _zones.fold<double>(
-      0,
-      (sum, zone) => sum + _asDouble(zone['totalDistanceKm']),
-    );
-  }
-
-  int get _zonesTotalEstimatedMinutes {
-    if (_zones.isEmpty) return _estimatedMinutes;
-    return _zones.fold<int>(
-      0,
-      (sum, zone) => sum + _asInt(zone['estimatedMinutes']),
-    );
-  }
-
-  int get _summaryOrderCount {
-    if (_zonePlanMeta != null) {
-      final total = _zonePlanMeta!['totalOrders'] ?? _zonePlanMeta!['total_orders'];
-      if (total != null) return _asInt(total);
-    }
-    return _orders.length;
-  }
-
-  String get _summaryRiderLabel {
-    if (_isZoneMode) return '${_zones.length} riders';
-    return '${_routeStops.length} on map';
-  }
-
-  String get _summaryDurationLabel {
-    if (_isZoneMode) {
-      final minutes = _zonesTotalEstimatedMinutes;
-      if (minutes <= 0) return '~0 min';
-      if (minutes >= 60) {
-        final hours = minutes / 60;
-        return hours >= 2
-            ? '~${hours.toStringAsFixed(0)} hrs'
-            : '~${hours.toStringAsFixed(1)} hrs';
-      }
-      return '~$minutes min';
-    }
-    final withoutLocation = _orders.length - _routeStops.length;
-    if (withoutLocation <= 0) return 'all located';
-    return '$withoutLocation without location';
   }
 
   List<Map<String, dynamic>> _buildStopsFromOrders() =>
@@ -838,48 +319,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     }
   }
 
-  Future<void> _assignRouteToRider(String riderId) async {
-    if (_routeStops.isEmpty) return;
-
-    final orderIds =
-        _routeStops.map((s) => s['orderId'] as String).toList();
-    final routeOrder = _routeStops
-        .map((s) => s['orderId'] as String)
-        .toList();
-
-    setState(() => _isAssigningRoute = true);
-    try {
-      await _adminService.assignRouteToRider(
-        orderIds: orderIds,
-        riderId: riderId,
-        routeOrder: routeOrder,
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Route assigned to rider'),
-          backgroundColor: AppColors.success,
-        ),
-      );
-      await _loadData();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to assign route: $e'),
-          backgroundColor: AppColors.primary,
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _isAssigningRoute = false);
-    }
-  }
-
-  Future<void> _showAssignRiderSheet({
-    required String orderId,
-    bool forRoute = false,
-  }) async {
+  Future<void> _showAssignRiderSheet({required String orderId}) async {
     try {
       final riders = await _adminService.getAvailableRiders();
       if (!mounted) return;
@@ -915,9 +355,9 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
-                Text(
-                  forRoute ? 'Assign Route to Rider' : 'Assign Rider',
-                  style: const TextStyle(
+                const Text(
+                  'Assign Rider',
+                  style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
                     color: AppColors.textPrimary,
@@ -932,9 +372,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                       final rider = riders[index];
                       final user =
                           rider['user'] as Map<String, dynamic>? ?? {};
-                      final isLoading = forRoute
-                          ? _isAssigningRoute
-                          : _assigningOrderId == orderId;
+                      final isLoading = _assigningOrderId == orderId;
 
                       return ListTile(
                         contentPadding: const EdgeInsets.symmetric(
@@ -961,13 +399,8 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                                 ),
                               )
                             : TextButton(
-                                onPressed: () {
-                                  if (forRoute) {
-                                    _assignRouteToRider(rider['id']);
-                                  } else {
-                                    _assignRider(orderId, rider['id']);
-                                  }
-                                },
+                                onPressed: () =>
+                                    _assignRider(orderId, rider['id']),
                                 child: const Text('Assign'),
                               ),
                       );
@@ -990,18 +423,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         ),
       );
     }
-  }
-
-  double get _totalDistanceKm {
-    final value = _routeMeta?['totalDistanceKm'] ??
-        _routeMeta?['total_distance_km'];
-    return _asDouble(value);
-  }
-
-  int get _estimatedMinutes {
-    final value = _routeMeta?['estimatedMinutes'] ??
-        _routeMeta?['estimated_minutes'];
-    return _asInt(value);
   }
 
   @override
@@ -1034,7 +455,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                         zoom: 13,
                       ),
                       markers: _markers,
-                      polylines: _polylines,
+                      polylines: const {},
                       myLocationEnabled: false,
                       zoomControlsEnabled: false,
                       mapToolbarEnabled: false,
@@ -1060,29 +481,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                         return _buildBottomSheet(scrollController);
                       },
                     ),
-                    if (!_isLoading && _loadError == null)
-                      Positioned(
-                        right: 16,
-                        bottom: MediaQuery.sizeOf(context).height * 0.34,
-                        child: FloatingActionButton.extended(
-                          onPressed: _isCalculatingZones
-                              ? null
-                              : _showSplitZonesDialog,
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          icon: _isCalculatingZones
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.grid_view),
-                          label: const Text('Split Zones'),
-                        ),
-                      ),
                   ],
                 ),
     );
@@ -1227,42 +625,18 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
             labelColor: AppColors.primary,
             unselectedLabelColor: AppColors.textSecondary,
             indicatorColor: AppColors.primary,
-            isScrollable: _isZoneMode,
-            tabs: _isZoneMode
-                ? [
-                    ..._zones.asMap().entries.map((entry) {
-                      final zone = entry.value;
-                      final zoneId = _asInt(zone['zoneId']);
-                      final count = _asInt(zone['orderCount']);
-                      final km = _asDouble(zone['totalDistanceKm']);
-                      return Tab(
-                        text: 'Zone $zoneId ($count orders · ${km.toStringAsFixed(1)}km)',
-                      );
-                    }),
-                    const Tab(text: 'All Orders'),
-                  ]
-                : const [
-                    Tab(text: 'Active Orders'),
-                    Tab(text: 'All Orders'),
-                  ],
+            tabs: const [
+              Tab(text: 'Active Orders'),
+              Tab(text: 'All Orders'),
+            ],
           ),
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: _isZoneMode
-                  ? [
-                      ..._zones.asMap().entries.map(
-                            (entry) => _buildZoneTab(
-                              scrollController,
-                              entry.key,
-                            ),
-                          ),
-                      _buildAllOrdersTab(scrollController),
-                    ]
-                  : [
-                      _buildActiveOrdersTab(scrollController),
-                      _buildAllOrdersTab(scrollController),
-                    ],
+              children: [
+                _buildActiveOrdersTab(scrollController),
+                _buildAllOrdersTab(scrollController),
+              ],
             ),
           ),
         ],
@@ -1280,11 +654,8 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         border: Border.all(color: AppColors.divider),
       ),
       child: Text(
-        _isZoneMode
-            ? '$_dateChipLabel: $_summaryOrderCount orders | $_summaryRiderLabel | '
-                '~${_zonesTotalDistanceKm.toStringAsFixed(1)}km total | $_summaryDurationLabel'
-            : '$_dateChipLabel: $_summaryOrderCount active orders | $_summaryRiderLabel | '
-                '$_summaryDurationLabel',
+        '$_dateChipLabel: ${_orders.length} active orders | '
+        '${_routeStops.length} on map | $_locationSummaryLabel',
         style: const TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
@@ -1293,178 +664,6 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
-    );
-  }
-
-  Widget _buildZoneTab(ScrollController scrollController, int zoneIndex) {
-    final zone = _zones[zoneIndex];
-    final zoneId = _asInt(zone['zoneId']);
-    final color = _zoneColor(zoneIndex);
-    final stops = zone['stops'] as List<Map<String, dynamic>>? ?? [];
-    final selectedRiderId = _zoneRiderSelections[zoneId];
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Row(
-            children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'Zone $zoneId',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const Spacer(),
-              Text(
-                '${_asDouble(zone['totalDistanceKm']).toStringAsFixed(1)} km · '
-                '~${_asInt(zone['estimatedMinutes'])} min',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: DropdownButtonFormField<String>(
-            value: selectedRiderId != null &&
-                    _onlineRiders.any((r) => r['id'] == selectedRiderId)
-                ? selectedRiderId
-                : null,
-            decoration: InputDecoration(
-              labelText: 'Assign to rider',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
-            ),
-            hint: Text(
-              _onlineRiders.isEmpty
-                  ? 'No online riders'
-                  : 'Select online rider',
-            ),
-            items: _onlineRiders.map((rider) {
-              final user = rider['user'] as Map<String, dynamic>? ?? {};
-              final id = rider['id']?.toString() ?? '';
-              return DropdownMenuItem<String>(
-                value: id,
-                child: Text('${user['name'] ?? 'Rider'} · ${user['phone'] ?? ''}'),
-              );
-            }).toList(),
-            onChanged: _onlineRiders.isEmpty
-                ? null
-                : (value) {
-                    setState(() => _zoneRiderSelections[zoneId] = value);
-                  },
-          ),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: stops.isEmpty
-              ? const Center(
-                  child: Text(
-                    'No stops in this zone',
-                    style: TextStyle(color: AppColors.textSecondary),
-                  ),
-                )
-              : ListView.separated(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: stops.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, index) {
-                    final stop = stops[index];
-                    return _buildZoneStopRow(stop, color);
-                  },
-                ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _isBulkAssigning
-                  ? null
-                  : () => _assignZoneToRider(zoneIndex),
-              icon: _isBulkAssigning
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.notifications_active_outlined),
-              label: const Text('Assign & Notify Rider'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: color,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 48),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildZoneStopRow(Map<String, dynamic> stop, Color color) {
-    final stopNumber = stop['stopNumber'] as int;
-
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Container(
-        width: 30,
-        height: 30,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.15),
-          shape: BoxShape.circle,
-          border: Border.all(color: color, width: 2),
-        ),
-        child: Center(
-          child: Text(
-            stopNumber.toString(),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ),
-      ),
-      title: Text(
-        stop['customerName'] as String? ?? 'Customer',
-        style: const TextStyle(fontWeight: FontWeight.w600),
-      ),
-      subtitle: Text(
-        (stop['address'] as String?)?.isNotEmpty == true
-            ? stop['address'] as String
-            : 'Order #${stop['orderId']}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Text(
-        '${_asDouble(stop['distanceFromPrevKm']).toStringAsFixed(1)} km',
-        style: const TextStyle(
-          fontSize: 12,
-          color: AppColors.textSecondary,
-        ),
-      ),
-      onTap: () => _onMarkerTapped(stop),
     );
   }
 
@@ -1660,17 +859,4 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
     if (amount is num) return amount.toStringAsFixed(0);
     return double.tryParse(amount.toString())?.toStringAsFixed(0) ?? '0';
   }
-
-  int _asInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  double _asDouble(dynamic value) {
-    if (value is double) return value;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0.0;
-  }
-
 }

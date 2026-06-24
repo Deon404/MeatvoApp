@@ -6,18 +6,19 @@ import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/tokens/meatvo_durations.dart';
 import '../../models/cart_model.dart';
 import '../../utils/media_url_resolver.dart';
-import 'cart_pill_anchor.dart';
 
 /// Overlapping product thumbnails for the floating cart pill (Blinkit-style).
 class CartPillThumbnailStack extends StatelessWidget {
   const CartPillThumbnailStack({
     super.key,
     required this.items,
+    required this.anchorKey,
     this.size = 32,
     this.overlap = 12,
   });
 
   final List<CartItem> items;
+  final GlobalKey anchorKey;
   final double size;
   final double overlap;
 
@@ -41,13 +42,12 @@ class CartPillThumbnailStack extends StatelessWidget {
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final visible = visibleItems(items);
-    final stackKey = CartPillAnchor.thumbnailStackKey;
     final width = visible.isEmpty
         ? size
         : size + (visible.length - 1) * (size - overlap);
 
     return SizedBox(
-      key: stackKey,
+      key: anchorKey,
       width: width,
       height: size,
       child: visible.isEmpty

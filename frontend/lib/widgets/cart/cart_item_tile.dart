@@ -1,10 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/cart_model.dart';
+import '../cached_image_widget.dart';
 
 class CartItemTile extends StatelessWidget {
   const CartItemTile({
@@ -12,14 +12,12 @@ class CartItemTile extends StatelessWidget {
     required this.item,
     required this.onIncrement,
     required this.onDecrement,
-    required this.emojiFallback,
     this.isBusy = false,
   });
 
   final CartItem item;
   final VoidCallback? onIncrement;
   final VoidCallback? onDecrement;
-  final String emojiFallback;
   final bool isBusy;
 
   @override
@@ -39,9 +37,14 @@ class CartItemTile extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ProductImage(
-            imageUrl: item.product.primaryImageUrl,
-            emoji: emojiFallback,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: CachedImageWidget(
+              imageUrl: item.product.primaryImageUrl,
+              width: 72,
+              height: 72,
+              fit: BoxFit.cover,
+            ),
           ),
           SizedBox(width: mv.spacing.sm),
           Expanded(
@@ -87,47 +90,6 @@ class CartItemTile extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ProductImage extends StatelessWidget {
-  const _ProductImage({
-    required this.imageUrl,
-    required this.emoji,
-  });
-
-  final String? imageUrl;
-  final String emoji;
-
-  @override
-  Widget build(BuildContext context) {
-    final mv = context.meatvo;
-    final safeUrl = imageUrl ?? '';
-    final hasUrl = safeUrl.isNotEmpty;
-
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(mv.radii.md),
-      child: SizedBox(
-        width: 70,
-        height: 70,
-        child: !hasUrl
-            ? _placeholder(mv, emoji)
-            : CachedNetworkImage(
-                imageUrl: safeUrl,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => _placeholder(mv, emoji),
-                errorWidget: (_, __, ___) => _placeholder(mv, emoji),
-              ),
-      ),
-    );
-  }
-
-  Widget _placeholder(MeatvoThemeData mv, String emoji) {
-    return Container(
-      color: MeatvoColors.surfaceMuted,
-      alignment: Alignment.center,
-      child: Text(emoji, style: const TextStyle(fontSize: 28)),
     );
   }
 }

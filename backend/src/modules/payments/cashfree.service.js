@@ -1,12 +1,20 @@
 const axios = require('axios');
+const { logger } = require('../../utils/logger');
 
 const API_VERSION = '2023-08-01';
 const SANDBOX_BASE_URL = 'https://sandbox.cashfree.com/pg';
 const PRODUCTION_BASE_URL = 'https://api.cashfree.com/pg';
 
+function getCashfreeEnv() {
+  const env = String(process.env.CASHFREE_ENV || '').toLowerCase();
+  if (env !== 'sandbox' && env !== 'production') {
+    throw new Error('CASHFREE_ENV must be explicitly set to "sandbox" or "production"');
+  }
+  return env;
+}
+
 function getBaseUrl() {
-  const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
-  return isProd ? PRODUCTION_BASE_URL : SANDBOX_BASE_URL;
+  return getCashfreeEnv() === 'production' ? PRODUCTION_BASE_URL : SANDBOX_BASE_URL;
 }
 
 function getCredentials() {
@@ -109,7 +117,17 @@ async function createOrder({
     },
   };
 
+  const cashfreeEnv = getCashfreeEnv();
+
   try {
+    logger.info('cashfree_create_order_start', {
+      orderId: String(orderId),
+      amount: Number(amount),
+      currency: String(currency).toUpperCase(),
+      cashfreeEnv,
+      baseUrl: getBaseUrl(),
+    });
+
     const response = await axios.post(`${getBaseUrl()}/orders`, payload, {
       headers: buildHeaders(),
       timeout: 30000,
@@ -118,8 +136,19 @@ async function createOrder({
     const { payment_session_id, cf_order_id } = response.data || {};
 
     if (!payment_session_id) {
+      logger.error('cashfree_create_order_missing_session', {
+        orderId: String(orderId),
+        cashfreeEnv,
+        responseData: response.data,
+      });
       throw new Error('Cashfree createOrder failed: payment_session_id missing in response');
     }
+
+    logger.info('cashfree_create_order_success', {
+      orderId: String(orderId),
+      cf_order_id: cf_order_id != null ? String(cf_order_id) : String(orderId),
+      cashfreeEnv,
+    });
 
     return {
       payment_session_id,
@@ -127,7 +156,15 @@ async function createOrder({
     };
   } catch (error) {
     if (error.message.startsWith('Cashfree createOrder failed:')) throw error;
-    throw formatAxiosError(error, 'createOrder');
+    const formatted = formatAxiosError(error, 'createOrder');
+    logger.error('cashfree_create_order_failed', {
+      orderId: String(orderId),
+      cashfreeEnv,
+      status: error.response?.status,
+      responseData: error.response?.data,
+      message: formatted.message,
+    });
+    throw formatted;
   }
 }
 
@@ -198,4 +235,6 @@ module.exports = {
   createOrder,
   getOrderStatus,
   getPayments,
+  getCashfreeEnv,
+  getBaseUrl,
 };

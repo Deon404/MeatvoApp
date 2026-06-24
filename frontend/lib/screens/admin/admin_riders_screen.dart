@@ -13,7 +13,7 @@ class _RiderProfile {
     required this.name,
     required this.phone,
     required this.vehicle,
-    required this.joinedOn,
+    this.joinedOn,
     required this.status,
   });
 
@@ -21,7 +21,7 @@ class _RiderProfile {
   final String name;
   final String phone;
   final String vehicle;
-  final DateTime joinedOn;
+  final DateTime? joinedOn;
   final RiderKycStatus status;
 }
 
@@ -63,7 +63,9 @@ class _AdminRidersScreenState extends State<AdminRidersScreen> {
       name: profile['name']?.toString() ?? partner['phone']?.toString() ?? 'Rider',
       phone: partner['phone']?.toString() ?? '',
       vehicle: profile['vehicle']?.toString() ?? 'Not specified',
-      joinedOn: DateTime.now(),
+      joinedOn: partner['joined_at'] != null
+          ? DateTime.tryParse(partner['joined_at'].toString())
+          : null,
       status: _kycStatusFromPartner(partner),
     );
   }
@@ -132,6 +134,18 @@ class _AdminRidersScreenState extends State<AdminRidersScreen> {
         ],
       ),
     );
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day} ${_monthName(date.month)} ${date.year}';
+  }
+
+  String _monthName(int m) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return months[m - 1];
   }
 
   @override
@@ -230,6 +244,26 @@ class _AdminRidersScreenState extends State<AdminRidersScreen> {
                                     ),
                                   ],
                                 ),
+                                if (rider.joinedOn != null) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.calendar_today_outlined,
+                                        size: 14,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'Joined ${_formatDate(rider.joinedOn!)}',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                                 const SizedBox(height: 12),
                                 Row(
                                   children: [

@@ -11,34 +11,20 @@ const formatCategory = (category, baseUrl) => ({
   image_url: signStoredImageUrl(category.image_url || '', baseUrl),
 });
 
-const ALLOWED_CATEGORY_COLUMNS = ['name', 'image_url', 'active'];
-
-function buildCategoryUpdateClause(updates) {
-  const sets = [];
-  const params = [];
-  for (const [key, value] of Object.entries(updates)) {
-    if (!ALLOWED_CATEGORY_COLUMNS.includes(key)) continue;
-    params.push(value);
-    sets.push(`${key} = $${params.length}`);
-  }
-  return { sets, params };
-}
+const { buildUpdateSet } = require('../../utils/sqlParams');
 
 const listCategories = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
   const includeInactive = req.user?.role === ROLES.ADMIN ? includeInactiveRequested : false;
 
-  const params = [];
-  let where = '';
-  if (!includeInactive) {
-    params.push(true);
-    where = `WHERE active = $${params.length}`;
-  }
-
-  const { rows } = await query(
-    `SELECT id, name, image_url, active FROM categories ${where} ORDER BY id DESC`,
-    params
-  );
+  const { rows } = includeInactive
+    ? await query(
+        'SELECT id, name, image_url, active FROM categories ORDER BY id DESC'
+      )
+    : await query(
+        'SELECT id, name, image_url, active FROM categories WHERE active = $1 ORDER BY id DESC',
+        [true]
+      );
   const baseUrl = requestBaseUrl(req);
   const categories = rows.map((row) => formatCategory(row, baseUrl));
   return ok(res, { categories }, 'Categories');
@@ -57,7 +43,7 @@ const createCategory = asyncHandler(async (req, res) => {
 const updateCategory = asyncHandler(async (req, res) => {
   const id = Number(req.validated.params.id);
   const patch = req.validated.body;
-  const { sets, params } = buildCategoryUpdateClause(patch || {});
+  const { sets, params } = buildUpdateSet(['name', 'image_url', 'active'], patch || {});
   if (!sets.length) return fail(res, 400, 'No fields to update');
 
   params.push(id);

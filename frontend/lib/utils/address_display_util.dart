@@ -40,6 +40,55 @@ String formatAddressLine(Iterable<String> parts) {
   return dedupeAddressParts(parts).join(', ');
 }
 
+/// Two-line checkout address — strips repeated city/state/pincode from street parts.
+String formatCheckoutAddress({
+  required String addressLine1,
+  String? addressLine2,
+  String? landmark,
+  required String city,
+  required String state,
+  required String pincode,
+}) {
+  final cityClean = cleanAddressPart(city);
+  final stateClean = cleanAddressPart(state);
+  final pinClean = cleanAddressPart(pincode);
+
+  bool isLocalitySegment(String part) {
+    final lower = part.toLowerCase();
+    if (lower.isEmpty || lower == 'city') return true;
+    if (cityClean.isNotEmpty && lower == cityClean.toLowerCase()) return true;
+    if (stateClean.isNotEmpty && lower == stateClean.toLowerCase()) return true;
+    if (pinClean.isNotEmpty && lower == pinClean.toLowerCase()) return true;
+    if (cityClean.isNotEmpty &&
+        lower.contains(cityClean.toLowerCase()) &&
+        lower.replaceAll(cityClean.toLowerCase(), '').trim().length <= 2) {
+      return true;
+    }
+    return false;
+  }
+
+  final streetSegments = <String>[];
+  for (final raw in [addressLine1, addressLine2, landmark]) {
+    if (raw == null || raw.trim().isEmpty) continue;
+    for (final segment in raw.split(',')) {
+      final part = cleanAddressPart(segment);
+      if (part.isEmpty || isLocalitySegment(part)) continue;
+      streetSegments.add(part);
+    }
+  }
+
+  final street = dedupeAddressParts(streetSegments).join(', ');
+  final area = dedupeAddressParts([
+    if (cityClean.isNotEmpty) cityClean,
+    if (stateClean.isNotEmpty) stateClean,
+    if (pinClean.isNotEmpty) pinClean,
+  ]).join(', ');
+
+  if (street.isEmpty) return area;
+  if (area.isEmpty) return street;
+  return '$street\n$area';
+}
+
 /// Backend requires addressLine1 length >= 5.
 const int kAddressLine1MinLength = 5;
 

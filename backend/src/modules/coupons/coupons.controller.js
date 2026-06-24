@@ -3,23 +3,25 @@ const { query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 const { validateCouponForOrder } = require('./coupons.service');
+const { buildUpdateSet } = require('../../utils/sqlParams');
 
 const listCoupons = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
   const includeInactive = req.user?.role === ROLES.ADMIN ? includeInactiveRequested : false;
 
-  const params = [];
-  let where = '';
-  if (!includeInactive) {
-    params.push(true);
-    where = `WHERE active = $${params.length}`;
-  }
-  const { rows } = await query(
-    `SELECT id, code, discount_type, discount_value, min_order_value, max_uses, used_count, active
-     FROM coupons ${where}
-     ORDER BY id DESC`,
-    params
-  );
+  const { rows } = includeInactive
+    ? await query(
+        `SELECT id, code, discount_type, discount_value, min_order_value, max_uses, used_count, active
+         FROM coupons
+         ORDER BY id DESC`
+      )
+    : await query(
+        `SELECT id, code, discount_type, discount_value, min_order_value, max_uses, used_count, active
+         FROM coupons
+         WHERE active = $1
+         ORDER BY id DESC`,
+        [true]
+      );
   return ok(res, { coupons: rows }, 'Coupons');
 });
 
@@ -72,25 +74,25 @@ const updateCoupon = asyncHandler(async (req, res) => {
 
   const fields = [];
   const values = [];
-  let idx = 1;
-  for (const [key, column] of [
-    ['discount_type', 'discount_type'],
-    ['discount_value', 'discount_value'],
-    ['min_order_value', 'min_order_value'],
-    ['max_uses', 'max_uses'],
-    ['active', 'active'],
-  ]) {
-    if (body[key] !== undefined) {
-      fields.push(`${column} = $${idx++}`);
-      values.push(body[key]);
-    }
+  const couponFieldMap = {
+    discount_type: 'discount_type',
+    discount_value: 'discount_value',
+    min_order_value: 'min_order_value',
+    max_uses: 'max_uses',
+    active: 'active',
+  };
+  const patch = {};
+  for (const key of Object.keys(couponFieldMap)) {
+    if (body[key] !== undefined) patch[key] = body[key];
   }
-  values.push(couponId);
+  const { sets: fieldSets, params: fieldParams } = buildUpdateSet(couponFieldMap, patch);
+  if (!fieldSets.length) return fail(res, 400, 'No fields to update');
 
+  fieldParams.push(couponId);
   const { rows } = await query(
-    `UPDATE coupons SET ${fields.join(', ')} WHERE id = $${idx}
+    `UPDATE coupons SET ${fieldSets.join(', ')} WHERE id = $${fieldParams.length}
      RETURNING id, code, discount_type, discount_value, min_order_value, max_uses, used_count, active`,
-    values
+    fieldParams
   );
   return ok(res, { coupon: rows[0] }, 'Coupon updated');
 });

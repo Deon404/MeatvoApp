@@ -211,10 +211,10 @@
       "description": "Cashfree webhook notification URL"
     },
     "CASHFREE_ENV": {
-      "required": "optional",
-      "default": "",
+      "required": "production",
+      "default": null,
       "type": "string",
-      "description": "Flutter Cashfree SDK environment: production | sandbox (defaults from APP_ENV)"
+      "description": "Cashfree API + SDK environment: production | sandbox (must match Flutter CASHFREE_ENV)"
     },
     "GOOGLE_MAPS_API_KEY": {
       "required": "production",
@@ -257,6 +257,12 @@
       "default": null,
       "type": "string",
       "description": "Firebase VAPID key for web push; required when FIREBASE_API_KEY is set in production"
+    },
+    "FIREBASE_SERVICE_ACCOUNT_JSON": {
+      "required": "production",
+      "default": null,
+      "type": "string",
+      "description": "Stringified Firebase service account JSON for FCM via Firebase Admin SDK; required for production push (FCM_SERVER_KEY legacy fallback used until set)"
     },
     "AWS_REGION": {
       "required": "optional",
@@ -376,7 +382,8 @@
       "required": "optional",
       "default": null,
       "type": "string",
-      "description": "Legacy FCM server key for push notifications"
+      "deprecated": true,
+      "description": "[DEPRECATED] Legacy FCM server key; used only when FIREBASE_SERVICE_ACCOUNT_JSON is unset"
     },
     "NOTIFICATION_COOLDOWN_MS": {
       "required": "optional",

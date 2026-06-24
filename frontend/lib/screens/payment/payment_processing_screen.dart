@@ -18,12 +18,16 @@ class PaymentProcessingScreen extends StatefulWidget {
     required this.deliveryAddress,
     required this.paymentService,
     required this.amount,
+    this.checkoutMode,
+    this.upiPackageId,
   });
 
   final OrderModel order;
   final Map<String, dynamic> deliveryAddress;
   final PaymentService paymentService;
   final double amount;
+  final CashfreeCheckoutMode? checkoutMode;
+  final String? upiPackageId;
 
   @override
   State<PaymentProcessingScreen> createState() =>
@@ -78,10 +82,25 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
       final status = (statusData['status'] ?? statusData['paymentStatus'])
           ?.toString()
           .toUpperCase();
-      if (status == 'SUCCESS' || status == 'PAID') {
+      if (status != 'SUCCESS' && status != 'PAID') return;
+
+      final orderStatus = (statusData['orderStatus'] ?? statusData['order_status'])
+          ?.toString()
+          .toUpperCase();
+
+      if (orderStatus == 'CONFIRMED') {
         await _completeSuccess(
           gatewayPaymentId: statusData['gateway_payment_id']?.toString() ??
               statusData['gateway_transaction_id']?.toString(),
+        );
+        return;
+      }
+
+      // Backend may still be confirming — verify order row before showing success.
+      final order = await _orderService.getOrderById(widget.order.id);
+      if (order.status.toUpperCase() == 'CONFIRMED') {
+        await _completeSuccess(
+          gatewayPaymentId: statusData['gateway_payment_id']?.toString(),
         );
       }
     } catch (_) {
@@ -96,6 +115,8 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
     final result = await widget.paymentService.initiatePayment(
       orderId: widget.order.id,
       amount: widget.amount,
+      checkoutMode: widget.checkoutMode,
+      upiPackageId: widget.upiPackageId,
     );
 
     if (_navigated || !mounted) return;
@@ -109,8 +130,6 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
 
   Future<void> _completeSuccess({String? gatewayPaymentId}) async {
     if (_navigated || !mounted) return;
-    _navigated = true;
-    _pollTimer?.cancel();
 
     OrderModel confirmedOrder = widget.order;
     try {
@@ -118,6 +137,17 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
     } catch (_) {
       // Use original order if refresh fails.
     }
+
+    final orderStatus = confirmedOrder.status.toUpperCase();
+    final paymentStatus = confirmedOrder.paymentStatus?.toUpperCase() ?? '';
+    if (orderStatus != 'CONFIRMED' && paymentStatus != 'PAID') {
+      // Payment row may show SUCCESS before order confirm finishes — keep waiting.
+      return;
+    }
+
+    if (_navigated || !mounted) return;
+    _navigated = true;
+    _pollTimer?.cancel();
 
     if (!mounted) return;
 
@@ -153,6 +183,8 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
                   deliveryAddress: widget.deliveryAddress,
                   paymentService: widget.paymentService,
                   amount: widget.amount,
+                  checkoutMode: widget.checkoutMode,
+                  upiPackageId: widget.upiPackageId,
                 ),
               ),
             );
@@ -210,8 +242,8 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
                   ),
                   SizedBox(height: mv.spacing.sm),
                   Text(
-                    'Complete payment in the secure Cashfree window.\n'
-                    'Do not close this screen.',
+                    'Complete payment in the secure Cashfree checkout.\n'
+                    'UPI opens your installed payment app when available.',
                     style: textTheme.bodyMedium?.copyWith(
                       color: mv.textSecondary,
                       height: 1.45,

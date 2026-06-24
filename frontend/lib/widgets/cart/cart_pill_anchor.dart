@@ -3,16 +3,25 @@ import 'package:flutter/scheduler.dart';
 
 /// Shared landing target for fly-to-cart animations.
 ///
-/// [FloatingCartBar] mounts [thumbnailStackKey] on the thumbnail stack.
-/// Only one bar is visible at a time (tab shell or pushed catalog).
+/// Each visible [FloatingCartBar] registers its own thumbnail key so multiple
+/// bars in the tree never share one [GlobalKey].
 abstract final class CartPillAnchor {
-  static final GlobalKey thumbnailStackKey = GlobalKey();
+  static GlobalKey? _activeThumbnailKey;
 
-  /// Bumped when a fly animation completes — pill thumbnails briefly scale up.
   static final ValueNotifier<int> punchTick = ValueNotifier<int>(0);
 
+  static void register(GlobalKey key) {
+    _activeThumbnailKey = key;
+  }
+
+  static void unregister(GlobalKey key) {
+    if (_activeThumbnailKey == key) {
+      _activeThumbnailKey = null;
+    }
+  }
+
   static Rect? get targetRect {
-    final context = thumbnailStackKey.currentContext;
+    final context = _activeThumbnailKey?.currentContext;
     if (context == null) return null;
     final box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize || !box.attached) return null;

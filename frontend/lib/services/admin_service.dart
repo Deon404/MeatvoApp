@@ -564,11 +564,12 @@ class AdminService {
     try {
       var orders = await getOrders(fromDate, toDate);
       if (status != null && status.isNotEmpty) {
-        final normalizedStatus = status.toLowerCase();
+        final targetStatus = _mapOrderStatusToBackend(status);
         orders = orders
             .where((order) =>
-                (order['status'] ?? '').toString().toLowerCase() ==
-                normalizedStatus)
+                _mapOrderStatusToBackend(
+                      (order['status'] ?? '').toString()) ==
+                  targetStatus)
             .toList();
       }
       if (page != null && page > 0) {
@@ -1456,7 +1457,7 @@ class AdminService {
     try {
       final res = await _api.patch(
         ApiAdminPaths.userStatus(userId),
-        data: {'isActive': isActive},
+        data: {'is_active': isActive},
       );
       if (res.data['success'] != true) {
         throw Exception(res.data['message'] ?? 'Failed to update user status');

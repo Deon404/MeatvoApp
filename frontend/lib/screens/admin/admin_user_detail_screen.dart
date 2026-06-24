@@ -1005,22 +1005,22 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
       );
     }
 
-    final status = riderInfo['status'] as String? ?? 'offline';
-    final vehicleType = riderInfo['vehicle_type'] as String? ?? '';
+    final status = riderInfo['online'] == true ? 'Online' : 'Offline';
+    final vehicleType = riderInfo['vehicle'] as String? ?? '';
     final vehicleNumber = riderInfo['vehicle_number'] as String? ?? '';
     final totalDeliveries = riderInfo['total_deliveries'] as int? ?? 0;
-    final completedDeliveries = riderInfo['completed_deliveries'] as int? ?? 0;
-    final averageRating = (riderInfo['average_rating'] as num?)?.toDouble() ?? 0.0;
-    final earningsTotal = (riderInfo['earnings_total'] as num?)?.toDouble() ?? 0.0;
-    final kycVerified = riderInfo['kyc_verified'] as bool? ?? false;
+    final completedDeliveries = riderInfo['total_deliveries'] as int? ?? 0;
+    final averageRating = (riderInfo['rating'] as num?)?.toDouble() ?? 0.0;
+    final earningsTotal = (riderInfo['earnings'] as num?)?.toDouble() ?? 0.0;
+    final kycVerified = riderInfo['approved'] as bool? ?? false;
 
     Color statusColor;
     switch (status) {
-      case 'available':
+      case 'Online':
         statusColor = AppColors.success;
         break;
-      case 'busy':
-        statusColor = Colors.blue;
+      case 'Offline':
+        statusColor = AppColors.surface;
         break;
       default:
         statusColor = AppColors.surface;

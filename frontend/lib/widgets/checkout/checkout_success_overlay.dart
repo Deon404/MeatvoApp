@@ -116,22 +116,33 @@ class _CheckoutSuccessOverlayState extends State<CheckoutSuccessOverlay>
 
 /// Inline loading overlay for the checkout screen body.
 class CheckoutLoadingOverlay extends StatelessWidget {
-  const CheckoutLoadingOverlay({super.key, this.message = 'Placing your order…'});
+  const CheckoutLoadingOverlay({
+    super.key,
+    this.message = 'Placing your order…',
+    this.subtitle = 'Please stay on this screen',
+    this.errorMessage,
+    this.onCancel,
+  });
 
   final String message;
+  final String subtitle;
+  final String? errorMessage;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
+    final hasError = errorMessage != null && errorMessage!.isNotEmpty;
 
     return Material(
-      color: MeatvoColors.black.withValues(alpha: 0.35),
+      color: MeatvoColors.black.withValues(alpha: 0.42),
       child: Center(
         child: Container(
+          margin: EdgeInsets.symmetric(horizontal: mv.spacing.xl),
           padding: EdgeInsets.symmetric(
             horizontal: mv.spacing.xl,
-            vertical: mv.spacing.lg,
+            vertical: mv.spacing.lg + 4,
           ),
           decoration: BoxDecoration(
             color: mv.surfaceCard,
@@ -142,21 +153,40 @@ class CheckoutLoadingOverlay extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               SizedBox(
-                width: 36,
-                height: 36,
-                child: CircularProgressIndicator(
-                  strokeWidth: 3,
-                  color: mv.brandPrimary,
-                ),
+                width: 48,
+                height: 48,
+                child: hasError
+                    ? Icon(Icons.error_outline_rounded, size: 40, color: mv.error)
+                    : CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: mv.brandPrimary,
+                      ),
               ),
               SizedBox(height: mv.spacing.md),
               Text(
-                message,
-                style: textTheme.titleSmall?.copyWith(
+                hasError ? 'Could not place order' : message,
+                textAlign: TextAlign.center,
+                style: textTheme.titleMedium?.copyWith(
                   color: mv.textPrimary,
-                  fontWeight: FontWeight.w600,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
+              SizedBox(height: mv.spacing.xxs),
+              Text(
+                hasError ? errorMessage! : subtitle,
+                textAlign: TextAlign.center,
+                style: textTheme.bodySmall?.copyWith(
+                  color: hasError ? mv.textSecondary : mv.textMuted,
+                  height: 1.4,
+                ),
+              ),
+              if (hasError && onCancel != null) ...[
+                SizedBox(height: mv.spacing.md),
+                TextButton(
+                  onPressed: onCancel,
+                  child: const Text('Dismiss'),
+                ),
+              ],
             ],
           ),
         ),

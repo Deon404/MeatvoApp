@@ -1,4 +1,5 @@
-// Keys must match shared/env-manifest.json — do not add keys here
+// Keys must match shared/env-manifest.json — do not add keys here.
+// Env file paths: env_files_config.dart | frontend/env.manifest.json
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';

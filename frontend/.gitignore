@@ -6,11 +6,18 @@ web-build/
 # Dependencies
 node_modules/
 
-# Environment variables
+# Environment variables (secrets — never commit)
 .env
 .env.local
 .env.production
+.env*.local
 assets/env.local
+
+# Env JSON with real keys (templates + manifest stay committed)
+env.production.json
+env.local.json
+!env.manifest.json
+!env.*.example.json
 
 # Native
 *.orig.*
@@ -22,6 +29,7 @@ assets/env.local
 *.ipa
 *.apk
 *.aab
+*.keystore
 
 # Metro
 .metro-health-check*
@@ -34,9 +42,6 @@ yarn-error.*
 # macOS
 .DS_Store
 *.pem
-
-# Local env files
-.env*.local
 
 # Typescript
 *.tsbuildinfo
@@ -66,6 +71,7 @@ android/app/release/
 android/.gradle/
 android/local.properties
 android/secrets.properties
+android/keystore.properties
 android/app/google-services.json
 android/app/google-services.local.json
 ios/Pods/

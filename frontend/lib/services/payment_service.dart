@@ -3,14 +3,63 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfupi.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfupipayment.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfwebcheckoutpayment.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfpaymentgateway/cfpaymentgatewayservice.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cfsession/cfsession.dart';
 import 'package:flutter_cashfree_pg_sdk/api/cftheme/cftheme.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfupi/cfupiutils.dart';
 import 'package:flutter_cashfree_pg_sdk/utils/cfenums.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 import '../config/env_config.dart';
 import 'api_service.dart';
+import 'error_tracking_service.dart';
+
+/// Installed UPI app returned by Cashfree [CFUPIUtils.getUPIApps].
+class InstalledUpiApp {
+  const InstalledUpiApp({
+    required this.packageId,
+    required this.displayName,
+  });
+
+  final String packageId;
+  final String displayName;
+
+  factory InstalledUpiApp.fromMap(Map<dynamic, dynamic> map) {
+    final packageId = map['id']?.toString().trim() ?? '';
+    final displayName = map['displayName']?.toString().trim();
+    return InstalledUpiApp(
+      packageId: packageId,
+      displayName: (displayName != null && displayName.isNotEmpty)
+          ? displayName
+          : _labelForPackage(packageId),
+    );
+  }
+
+  static String _labelForPackage(String packageId) {
+    final lower = packageId.toLowerCase();
+    if (lower.contains('google') || lower.contains('paisa')) return 'GPay';
+    if (lower.contains('phonepe')) return 'PhonePe';
+    if (lower.contains('paytm')) return 'Paytm';
+    if (lower.contains('bhim')) return 'BHIM';
+    if (packageId.isEmpty) return 'UPI';
+    return packageId.split('.').last;
+  }
+}
+
+/// How the Cashfree SDK should collect payment.
+enum CashfreeCheckoutMode {
+  /// Native Android UPI app picker (INTENT_WITH_UI).
+  upiIntentPicker,
+
+  /// Launch a specific installed UPI app (INTENT + package id).
+  upiApp,
+
+  /// Hosted WebView checkout for cards/wallets/more options.
+  webCheckout,
+}
 
 /// Result of a Cashfree payment attempt (SDK + backend verify).
 class PaymentResult {
@@ -31,7 +80,7 @@ class PaymentResult {
   final String? errorMessage;
 }
 
-/// Payment Service — Node.js backend + Cashfree Web Checkout SDK.
+/// Payment Service — Node.js backend + Cashfree SDK (UPI intent + web fallback).
 class PaymentService {
   final ApiService _api = ApiService();
 
@@ -54,8 +103,31 @@ class PaymentService {
     if (_isInitialized) return;
     _isInitialized = true;
     debugPrint(
-      'PaymentService initialized (Cashfree ${_cashfreeEnvironment.name})',
+      'PaymentService initialized (Cashfree ${_cashfreeEnvironment.name}, '
+      'env=${EnvConfig.cashfreeEnv.isNotEmpty ? EnvConfig.cashfreeEnv : EnvConfig.appEnv})',
     );
+  }
+
+  /// Returns UPI apps installed on the device (Android). Empty on web/iOS.
+  Future<List<InstalledUpiApp>> getInstalledUpiApps() async {
+    try {
+      final raw = await CFUPIUtils().getUPIApps();
+      if (raw == null || raw.isEmpty) return const [];
+
+      return raw
+          .whereType<Map>()
+          .map((entry) => InstalledUpiApp.fromMap(entry))
+          .where((app) => app.packageId.isNotEmpty)
+          .toList();
+    } catch (e, st) {
+      debugPrint('Failed to load installed UPI apps: $e');
+      await ErrorTrackingService.captureException(
+        e,
+        stackTrace: st,
+        tag: 'cashfree_upi_apps',
+      );
+      return const [];
+    }
   }
 
   Future<Map<String, dynamic>> _initiatePaymentRequest({
@@ -90,30 +162,73 @@ class PaymentService {
     return Map<String, dynamic>.from(res.data['data'] as Map);
   }
 
-  String _mapCashfreeError(CFErrorResponse error) {
+  ({String code, String message}) _mapCashfreeError(CFErrorResponse error) {
     final message = error.getMessage()?.trim() ?? '';
     final lower = message.toLowerCase();
+
     if (lower.contains('cancel') || lower.contains('dismiss')) {
-      return 'PAYMENT_CANCELLED';
+      return (code: 'PAYMENT_CANCELLED', message: message.isNotEmpty ? message : 'Payment cancelled');
     }
-    if (lower.contains('network')) return 'NETWORK_ERROR';
-    return 'PAYMENT_DECLINED';
+    if (lower.contains('network')) {
+      return (code: 'NETWORK_ERROR', message: message.isNotEmpty ? message : 'Network error');
+    }
+
+    final sdkCode = error.getCode()?.trim();
+    if (sdkCode != null && sdkCode.isNotEmpty) {
+      return (
+        code: sdkCode.toUpperCase(),
+        message: message.isNotEmpty ? message : sdkCode,
+      );
+    }
+
+    return (
+      code: 'PAYMENT_DECLINED',
+      message: message.isNotEmpty ? message : 'Payment was declined',
+    );
   }
 
-  /// Opens Cashfree native checkout and completes when SDK callback fires.
-  Future<PaymentResult> _openCashfreeCheckout(
-    String paymentSessionId,
-    String orderId,
-  ) async {
-    final completer = Completer<PaymentResult>();
+  Future<void> _logCashfreeError(CFErrorResponse error, String orderId) async {
+    // Force print even in release mode for debugging (remove after root-cause found).
+    print('=== CASHFREE ERROR ===');
+    print('Message: ${error.getMessage()}');
+    print('Code: ${error.getCode()}');
+    print('Type: ${error.getType()}');
+    print('Status: ${error.getStatus()}');
+    print('Environment: $_cashfreeEnvironment');
+    print('OrderId: $orderId');
+    print('=== END CASHFREE ERROR ===');
 
-    var session = CFSessionBuilder()
+    final details = <String, String?>{
+      'orderId': orderId,
+      'message': error.getMessage(),
+      'code': error.getCode(),
+      'type': error.getType(),
+      'status': error.getStatus(),
+      'cashfreeEnv': EnvConfig.cashfreeEnv.isNotEmpty
+          ? EnvConfig.cashfreeEnv
+          : EnvConfig.appEnv,
+    };
+
+    debugPrint('Cashfree SDK onError: $details');
+
+    await ErrorTrackingService.captureMessage(
+      'Cashfree SDK error: ${error.getMessage() ?? "unknown"}',
+      level: SentryLevel.warning,
+      context: details.map((key, value) => MapEntry(key, value ?? '')),
+      tag: 'cashfree_sdk',
+    );
+  }
+
+  CFSession _buildSession(String paymentSessionId, String orderId) {
+    return CFSessionBuilder()
         .setEnvironment(_cashfreeEnvironment)
         .setOrderId(orderId)
         .setPaymentSessionId(paymentSessionId)
         .build();
+  }
 
-    var theme = CFThemeBuilder()
+  CFTheme _buildTheme() {
+    return CFThemeBuilder()
         .setNavigationBarBackgroundColorColor('#C8102E')
         .setNavigationBarTextColor('#FFFFFF')
         .setPrimaryFont('Poppins')
@@ -124,19 +239,23 @@ class PaymentService {
         .setButtonBackgroundColor('#C8102E')
         .setButtonTextColor('#FFFFFF')
         .build();
+  }
 
-    var cfWebCheckout = CFWebCheckoutPaymentBuilder()
-        .setSession(session)
-        .setTheme(theme)
-        .build();
+  Future<PaymentResult> _runCashfreePayment({
+    required String paymentSessionId,
+    required String orderId,
+    required CashfreeCheckoutMode mode,
+    String? upiPackageId,
+  }) async {
+    final completer = Completer<PaymentResult>();
+    final session = _buildSession(paymentSessionId, orderId);
 
     final cfPaymentGatewayService = CFPaymentGatewayService();
     cfPaymentGatewayService.setCallback(
       (String callbackOrderId) async {
         if (completer.isCompleted) return;
         try {
-          final verification =
-              await _verifyPaymentRequest(orderId);
+          final verification = await _verifyPaymentRequest(orderId);
           final verified = verification['verified'] == true ||
               verification['status']?.toString().toUpperCase() == 'SUCCESS';
           if (!verified) {
@@ -172,22 +291,81 @@ class PaymentService {
           );
         }
       },
-      (CFErrorResponse error, String callbackOrderId) {
+      (CFErrorResponse error, String callbackOrderId) async {
         if (completer.isCompleted) return;
-        final code = _mapCashfreeError(error);
+        await _logCashfreeError(error, orderId);
+        final mapped = _mapCashfreeError(error);
         completer.complete(
           PaymentResult(
             success: false,
             orderId: orderId,
-            errorCode: code,
-            errorMessage: error.getMessage() ?? 'Payment failed',
+            errorCode: mapped.code,
+            errorMessage: mapped.message,
           ),
         );
       },
     );
 
-    cfPaymentGatewayService.doPayment(cfWebCheckout);
+    switch (mode) {
+      case CashfreeCheckoutMode.webCheckout:
+        final webCheckout = CFWebCheckoutPaymentBuilder()
+            .setSession(session)
+            .setTheme(_buildTheme())
+            .build();
+        cfPaymentGatewayService.doPayment(webCheckout);
+      case CashfreeCheckoutMode.upiIntentPicker:
+        final upi = CFUPIBuilder()
+            .setChannel(CFUPIChannel.INTENT_WITH_UI)
+            .build();
+        final upiPayment =
+            CFUPIPaymentBuilder().setSession(session).setUPI(upi).build();
+        cfPaymentGatewayService.doPayment(upiPayment);
+      case CashfreeCheckoutMode.upiApp:
+        final packageId = upiPackageId?.trim() ?? '';
+        if (packageId.isEmpty) {
+          return _runCashfreePayment(
+            paymentSessionId: paymentSessionId,
+            orderId: orderId,
+            mode: CashfreeCheckoutMode.upiIntentPicker,
+          );
+        }
+        final upi = CFUPIBuilder()
+            .setChannel(CFUPIChannel.INTENT)
+            .setUPIID(packageId)
+            .build();
+        final upiPayment =
+            CFUPIPaymentBuilder().setSession(session).setUPI(upi).build();
+        cfPaymentGatewayService.doPayment(upiPayment);
+    }
+
     return completer.future;
+  }
+
+  CashfreeCheckoutMode _resolveCheckoutMode({
+    CashfreeCheckoutMode? preferredMode,
+    String? upiPackageId,
+  }) {
+    // Explicit web checkout request — honor it
+    if (preferredMode == CashfreeCheckoutMode.webCheckout) {
+      return CashfreeCheckoutMode.webCheckout;
+    }
+
+    // Explicit specific UPI app — honor it
+    if (preferredMode == CashfreeCheckoutMode.upiApp &&
+        upiPackageId != null &&
+        upiPackageId.trim().isNotEmpty) {
+      return CashfreeCheckoutMode.upiApp;
+    }
+
+    // Android default: always UPI intent picker
+    // DO NOT call getInstalledUpiApps() — this was causing silent
+    // fallback to webCheckout when SDK couldn't detect apps
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return CashfreeCheckoutMode.upiIntentPicker;
+    }
+
+    // iOS / other: web checkout
+    return CashfreeCheckoutMode.webCheckout;
   }
 
   /// Initiate payment via backend and launch Cashfree checkout.
@@ -200,6 +378,8 @@ class PaymentService {
     String? customerName,
     String? customerEmail,
     String? customerPhone,
+    CashfreeCheckoutMode? checkoutMode,
+    String? upiPackageId,
     Function(Map<String, dynamic>)? onSuccess,
     Function(String)? onFailure,
   }) async {
@@ -221,9 +401,21 @@ class PaymentService {
         throw Exception('Missing payment session from backend');
       }
 
-      final result = await _openCashfreeCheckout(
-        paymentSessionId,
-        orderId.toString(),
+      final mode = _resolveCheckoutMode(
+        preferredMode: checkoutMode,
+        upiPackageId: upiPackageId,
+      );
+
+      debugPrint(
+        'Launching Cashfree checkout mode=$mode '
+        'env=${_cashfreeEnvironment.name} orderId=$orderId',
+      );
+
+      final result = await _runCashfreePayment(
+        paymentSessionId: paymentSessionId,
+        orderId: orderId.toString(),
+        mode: mode,
+        upiPackageId: upiPackageId,
       );
 
       if (result.success) {
@@ -240,8 +432,13 @@ class PaymentService {
       }
 
       return result;
-    } catch (e) {
+    } catch (e, st) {
       debugPrint('Payment initiation error: $e');
+      await ErrorTrackingService.captureException(
+        e,
+        stackTrace: st,
+        tag: 'cashfree_initiate',
+      );
       _onFailure?.call(e.toString());
       return PaymentResult(
         success: false,

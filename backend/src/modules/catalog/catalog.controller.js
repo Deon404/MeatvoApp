@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok } = require('../../utils/response');
 const { signStoredImageUrl } = require('../../utils/uploadSigning');
+const { createParamBinder, joinWhere } = require('../../utils/sqlParams');
 
 const listCategories = asyncHandler(async (req, res) => {
   let rows;
@@ -42,33 +43,29 @@ const listProducts = asyncHandler(async (req, res) => {
   const categoryId = q.categoryId ? Number(q.categoryId) : null;
   const search = q.q ? String(q.q).toLowerCase() : null;
 
-  const params = [];
+  const binder = createParamBinder();
   const conditions = ['p.active = TRUE'];
 
   if (categoryId) {
-    params.push(categoryId);
-    conditions.push(`p.category_id = $${params.length}`);
+    conditions.push(`p.category_id = ${binder.ph(categoryId)}`);
   }
 
   if (search) {
-    params.push(`%${search}%`);
-    conditions.push(`LOWER(p.name) LIKE $${params.length}`);
+    conditions.push(`LOWER(p.name) LIKE ${binder.ph(`%${search}%`)}`);
   }
 
-  params.push(limit);
-  const limitIdx = params.length;
-  params.push(skip);
-  const offsetIdx = params.length;
+  const limitPh = binder.ph(limit);
+  const offsetPh = binder.ph(skip);
 
   const { rows } = await query(
     `
     SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url, p.stock, p.unit, p.active
     FROM products p
-    WHERE ${conditions.join(' AND ')}
+    ${joinWhere(conditions)}
     ORDER BY p.id DESC
-    LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    LIMIT ${limitPh} OFFSET ${offsetPh}
     `,
-    params
+    binder.params
   );
 
   const baseUrl = `${req.protocol}://${req.get('host')}`;

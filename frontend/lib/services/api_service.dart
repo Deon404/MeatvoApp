@@ -27,8 +27,16 @@ class ApiService {
     _client = _ref?.read(apiClientProvider) ?? ApiClient();
   }
 
-  Future<Response> get(String path, {Map<String, dynamic>? queryParameters}) =>
-      _client.dio.get(path, queryParameters: queryParameters);
+  Future<Response> get(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+    Options? options,
+  }) =>
+      _client.dio.get(
+        path,
+        queryParameters: queryParameters,
+        options: options,
+      );
 
   Future<Response> post(String path, {dynamic data, Options? options}) =>
       _client.dio.post(path, data: data, options: options);

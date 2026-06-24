@@ -22,8 +22,6 @@ const {
   startPacking,
   markPacked,
   verifyPayment,
-  acceptOrder,
-  startDelivery,
   updateLocation,
   getDeliveryOTP,
   completeDelivery,
@@ -123,32 +121,11 @@ router.post(
 );
 
 // ===== Delivery Partner Endpoints =====
-
-/**
- * Accept order
- * POST /api/orders/:id/accept
- */
-router.post(
-  '/:id/accept',
-  protect,
-  rbac(ROLES.DELIVERY),
-  validateOrderOwnership,
-  requireOrderState('RIDER_ASSIGNED'),
-  acceptOrder
-);
-
-/**
- * Start delivery
- * POST /api/orders/:id/start-delivery
- */
-router.post(
-  '/:id/start-delivery',
-  protect,
-  rbac(ROLES.DELIVERY),
-  validateOrderOwnership,
-  requireOrderState('RIDER_ACCEPTED'),
-  startDelivery
-);
+//
+// Rider accept / start-delivery live on the legacy delivery module:
+//   POST /api/delivery/orders/:id/accept  → PACKED → OUT_FOR_DELIVERY
+// Enhanced RIDER_ASSIGNED → RIDER_ACCEPTED → OUT_FOR_DELIVERY routes were
+// retired — assignment writes order_assignments only, not orders.status.
 
 /**
  * Update rider location

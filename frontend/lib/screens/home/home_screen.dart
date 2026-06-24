@@ -10,6 +10,7 @@ import '../../screens/notifications/notifications_screen.dart';
 import '../../screens/product/product_detail_screen.dart';
 import '../../ui/shells/meatvo_layout.dart';
 import '../../ui/shells/offline_banner.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../utils/app_transitions.dart';
 import '../../utils/responsive_helper.dart';
 import '../../providers/store_settings_provider.dart';
@@ -90,14 +91,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: const Color(0xFFFAF9F7),
+      backgroundColor: context.meatvo.surfaceWarm,
       body: SafeArea(
         top: false,
         bottom: true,
         child: Stack(
           children: [
             RefreshIndicator(
-              color: Colors.red.shade600,
+              color: context.meatvo.brandAccent,
               onRefresh: () =>
                   ref.read(homeViewModelProvider.notifier).refresh(),
               child: CustomScrollView(

@@ -403,6 +403,48 @@ class OrderService {
     }
   }
 
+  /// After a checkout timeout, the server may have created the order anyway.
+  /// Returns the newest matching order placed on/after [since], if any.
+  Future<OrderModel?> findRecentlyPlacedOrder({
+    required DateTime since,
+    required String paymentMethod,
+  }) async {
+    try {
+      final res = await _api.get(
+        ApiOrderPaths.orders,
+        queryParameters: {'page': 1, 'limit': 3},
+        options: Options(
+          receiveTimeout: const Duration(seconds: 15),
+          sendTimeout: const Duration(seconds: 12),
+        ),
+      );
+      if (!_isRequestSuccessful(res.data)) return null;
+
+      final data = _extractData(res.data);
+      final list = _extractOrdersPayload(data);
+      if (list.isEmpty) return null;
+
+      final normalizedPayment = paymentMethod.trim().toUpperCase();
+      for (final raw in list) {
+        if (raw is! Map<String, dynamic>) continue;
+        final order = _parseOrder(raw);
+        final createdAt = order.createdAt;
+        if (createdAt == null) continue;
+        if (createdAt.isBefore(since.subtract(const Duration(seconds: 10)))) {
+          continue;
+        }
+        final orderPayment = order.paymentMethod.toUpperCase();
+        if (orderPayment != normalizedPayment) continue;
+        final status = order.status.toUpperCase();
+        if (status == 'CANCELLED') continue;
+        return order;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Cancel order.
   /// PUT /orders/:id/cancel
   Future<void> cancelOrder(String orderId) async {

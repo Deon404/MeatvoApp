@@ -8,19 +8,19 @@ const listBanners = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
   const includeInactive = req.user?.role === ROLES.ADMIN ? includeInactiveRequested : false;
 
-  const params = [];
-  let where = '';
-  if (!includeInactive) {
-    params.push(true);
-    where = `WHERE active = $${params.length}`;
-  }
-
-  const { rows } = await query(
-    `SELECT id, image_url, active, sort_order
-     FROM banners ${where}
-     ORDER BY sort_order ASC, id DESC`,
-    params
-  );
+  const { rows } = includeInactive
+    ? await query(
+        `SELECT id, image_url, active, sort_order
+         FROM banners
+         ORDER BY sort_order ASC, id DESC`
+      )
+    : await query(
+        `SELECT id, image_url, active, sort_order
+         FROM banners
+         WHERE active = $1
+         ORDER BY sort_order ASC, id DESC`,
+        [true]
+      );
   const baseUrl = `${req.protocol}://${req.get('host')}`;
   const banners = rows.map((b) => ({
     ...b,

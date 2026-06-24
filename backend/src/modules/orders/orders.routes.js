@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 
 const { protect } = require('../../middlewares/auth.middleware');
+const { orderCreateRateLimiter } = require('../../middlewares/rateLimiter');
 const { rbac } = require('../../middlewares/rbac.middleware');
 const { validate } = require('../../middlewares/validate.middleware');
 const { ROLES } = require('../../utils/roles');
@@ -34,11 +35,11 @@ router.get('/my', protect, validate(getOrdersSchema), getOrders);
 router.get('/admin', protect, rbac(ROLES.ADMIN), validate(getAllOrdersSchema), getAllOrders);
 router.put('/admin/:id/status', protect, rbac(ROLES.ADMIN), validate(updateOrderStatusSchema), updateOrderStatus);
 
-router.post('/', protect, validate(createOrderSchema), createOrder);
+router.post('/', protect, orderCreateRateLimiter, validate(createOrderSchema), createOrder);
 router.get('/', protect, validate(getOrdersSchema), getOrders);
 router.get('/:id', protect, validate(getOrderSchema), getOrder);
 router.put('/:id/cancel', protect, validate(cancelOrderSchema), cancelOrder);
-router.put('/:id/status', protect, validate(updateOrderStatusSchema), updateOrderStatus);
+router.put('/:id/status', protect, rbac(ROLES.ADMIN, ROLES.STAFF), validate(updateOrderStatusSchema), updateOrderStatus);
 
 
 module.exports = router;

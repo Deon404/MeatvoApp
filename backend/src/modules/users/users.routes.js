@@ -19,20 +19,33 @@ const {
   submitReviewSchema,
 } = require('./users.validation');
 
-router.get('/me', protect, (req, res) => {
+router.get('/me', protect, asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+
+  const [ordersRes, wishlistRes, addressesRes] = await Promise.all([
+    query('SELECT COUNT(*)::int AS count FROM orders WHERE customer_id = $1', [userId]),
+    query('SELECT COUNT(*)::int AS count FROM wishlists WHERE user_id = $1', [userId]),
+    query('SELECT COUNT(*)::int AS count FROM addresses WHERE user_id = $1', [userId]),
+  ]);
+
   return ok(
     res,
     {
-      id: String(req.user.id),
+      id: String(userId),
       phone: req.user.phone,
       role: req.user.role,
       name: req.user.name || '',
       email: req.user.email || '',
       profile_image_url: req.user.profile_image_url || '',
+      stats: {
+        ordersCount: Number(ordersRes.rows[0].count),
+        wishlistCount: Number(wishlistRes.rows[0].count),
+        addressesCount: Number(addressesRes.rows[0].count),
+      },
     },
     'Me'
   );
-});
+}));
 
 router.post('/fcm-token', protect, validate(fcmTokenSchema), asyncHandler(async (req, res) => {
   try {

@@ -19,6 +19,7 @@ const {
   restoreStockForOrder,
   shouldRestoreStockOnCancel,
 } = require('../payments/payment-stock');
+const { createParamBinder, joinWhere, buildUpdateSet } = require('../../utils/sqlParams');
 
 const requestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
 const signImageField = (req, url) => signStoredImageUrl(url || '', requestBaseUrl(req));
@@ -308,6 +309,21 @@ const toggleUserStatus = asyncHandler(async (req, res) => {
   const userId = Number(req.validated.params.id);
   const isActive = Boolean(req.validated.body.is_active);
 
+  let previousIsActive;
+  try {
+    const { rows: prevRows } = await query(
+      'SELECT is_active FROM users WHERE id = $1',
+      [userId]
+    );
+    if (!prevRows[0]) {
+      return fail(res, 404, 'User not found');
+    }
+    previousIsActive = prevRows[0].is_active !== false;
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    return fail(res, 501, 'User status toggle requires users.is_active column');
+  }
+
   let rows;
   try {
     ({ rows } = await query(
@@ -322,6 +338,15 @@ const toggleUserStatus = asyncHandler(async (req, res) => {
   if (!rows[0]) {
     return fail(res, 404, 'User not found');
   }
+
+  logger.info('admin_action', {
+    adminId: req.user.id,
+    action: 'toggle_user_status',
+    targetId: userId,
+    before: previousIsActive,
+    after: isActive,
+    timestamp: new Date().toISOString(),
+  });
 
   const u = rows[0];
   return ok(
@@ -376,6 +401,7 @@ const deliveryPartners = asyncHandler(async (req, res) => {
     id: String(p.id),
     user_id: String(p.user_id),
     phone: p.phone || '',
+    joined_at: p.created_at ? new Date(p.created_at).toISOString() : null,
     profile: {
       name: p.name || '',
       online: Boolean(p.is_online),
@@ -510,22 +536,18 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
   const fromDate = req.validated?.query?.from || null;
   const toDate = req.validated?.query?.to || null;
 
+  const binder = createParamBinder([limit, offset]);
   const conditions = [];
-  const params = [limit, offset];
-  let paramIndex = 3;
 
   if (fromDate) {
-    conditions.push(`o.created_at >= $${paramIndex}::date`);
-    params.push(fromDate);
-    paramIndex += 1;
+    conditions.push(`o.created_at >= ${binder.ph(fromDate)}::date`);
   }
   if (toDate) {
-    conditions.push(`o.created_at < ($${paramIndex}::date + INTERVAL '1 day')`);
-    params.push(toDate);
-    paramIndex += 1;
+    conditions.push(`o.created_at < (${binder.ph(toDate)}::date + INTERVAL '1 day')`);
   }
 
-  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause = joinWhere(conditions);
+  const params = binder.params;
 
   const baseSelect = `
     SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address,
@@ -755,6 +777,7 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
       return {
         ...(updatedRows[0] || {}),
         cancelledPartnerUserId,
+        previousStatus: currentStatus,
       };
     } else if (orderStatus === 'ASSIGNED') {
       const partnerId = Number(deliveryUserId);
@@ -835,6 +858,17 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
   });
 
   if (!result) return fail(res, 404, 'Order not found');
+
+  if (orderStatus === 'CANCELLED') {
+    logger.info('admin_action', {
+      adminId: req.user.id,
+      action: 'force_cancel',
+      targetId: orderId,
+      before: result.previousStatus,
+      after: 'CANCELLED',
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   const io = req.app.get('io');
   if (io) {
@@ -1417,15 +1451,7 @@ const createProduct = asyncHandler(async (req, res) => {
 const updateProduct = asyncHandler(async (req, res) => {
   const { id } = mergeParams(req);
   const updates = mergeBody(req);
-  const sets = [];
-  const params = [];
-
-  for (const [key, value] of Object.entries(updates)) {
-    const column = PRODUCT_UPDATE_COLUMNS[key];
-    if (!column || value === undefined) continue;
-    params.push(value);
-    sets.push(`${column} = $${params.length}`);
-  }
+  const { sets, params } = buildUpdateSet(PRODUCT_UPDATE_COLUMNS, updates);
 
   if (!sets.length) return fail(res, 400, 'No valid fields');
 
@@ -1853,6 +1879,13 @@ const changeUserRole = asyncHandler(async (req, res) => {
 
   const userId = Number(id);
 
+  const { rows: prevRows } = await query('SELECT role FROM users WHERE id = $1', [userId]);
+  if (prevRows.length === 0) {
+    return fail(res, 404, 'User not found');
+  }
+  const previousRole =
+    prevRows[0].role === 'delivery' ? 'delivery_partner' : prevRows[0].role;
+
   // Update user role in database
   const { rows } = await query(
     'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, phone, name, role',
@@ -1879,6 +1912,15 @@ const changeUserRole = asyncHandler(async (req, res) => {
     ...rows[0],
     role: rows[0].role === 'delivery' ? 'delivery_partner' : rows[0].role,
   };
+
+  logger.info('admin_action', {
+    adminId: req.user.id,
+    action: 'change_role',
+    targetId: userId,
+    before: previousRole,
+    after: role,
+    timestamp: new Date().toISOString(),
+  });
 
   return ok(res, { user: updatedUser }, 'User role updated successfully');
 });

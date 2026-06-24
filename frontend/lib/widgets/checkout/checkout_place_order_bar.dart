@@ -28,6 +28,7 @@ class CheckoutPlaceOrderBar extends StatefulWidget {
     required this.isLoading,
     required this.onPlaceOrder,
     this.label = 'Place Order',
+    this.showBreakdownSpinner = false,
   });
 
   final CheckoutBillBreakdown bill;
@@ -35,6 +36,7 @@ class CheckoutPlaceOrderBar extends StatefulWidget {
   final bool isLoading;
   final VoidCallback? onPlaceOrder;
   final String label;
+  final bool showBreakdownSpinner;
 
   @override
   State<CheckoutPlaceOrderBar> createState() => _CheckoutPlaceOrderBarState();
@@ -61,13 +63,6 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
         border: Border(
           top: BorderSide(color: mv.border.withValues(alpha: 0.6)),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: MeatvoColors.black.withValues(alpha: 0.06),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
-          ),
-        ],
       ),
       child: SafeArea(
         top: false,
@@ -136,7 +131,7 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                             Row(
                               children: [
                                 Text(
-                                  'Total payable',
+                                  'Total',
                                   style: textTheme.bodySmall?.copyWith(
                                     color: mv.textMuted,
                                   ),
@@ -170,7 +165,8 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
                     child: _PlaceOrderButton(
                       label: widget.label,
                       isEnabled: widget.isEnabled,
-                      isLoading: widget.isLoading,
+                      isLoading:
+                          widget.isLoading && widget.showBreakdownSpinner,
                       onTap: widget.onPlaceOrder,
                     ),
                   ),
@@ -203,24 +199,11 @@ class _PlaceOrderButton extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return SizedBox(
-      height: 52,
+      height: 48,
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(mv.radii.pill),
-          gradient: LinearGradient(
-            colors: isEnabled && !isLoading
-                ? [mv.brandPrimaryDark, mv.brandPrimary]
-                : [mv.textMuted, mv.textMuted],
-          ),
-          boxShadow: isEnabled && !isLoading
-              ? [
-                  BoxShadow(
-                    color: mv.brandPrimary.withValues(alpha: 0.3),
-                    blurRadius: 16,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
+          color: isEnabled && !isLoading ? mv.brandPrimary : mv.textMuted,
         ),
         child: Material(
           color: Colors.transparent,
@@ -242,23 +225,12 @@ class _PlaceOrderButton extends StatelessWidget {
                         color: MeatvoColors.white,
                       ),
                     )
-                  : Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.shopping_bag_outlined,
-                          color: MeatvoColors.white,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          label,
-                          style: textTheme.titleSmall?.copyWith(
-                            color: MeatvoColors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                  : Text(
+                      label,
+                      style: textTheme.titleSmall?.copyWith(
+                        color: MeatvoColors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
             ),
           ),

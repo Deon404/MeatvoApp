@@ -96,7 +96,7 @@ class _CartScreenState extends State<CartScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _errorMessage = e.toString();
+        _errorMessage = 'Could not load your cart. Please try again.';
         _isLoading = false;
         _isUpdating = false;
       });
@@ -155,10 +155,26 @@ class _CartScreenState extends State<CartScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _cart = previousCart);
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Cart update failed: ${e.toString().replaceFirst('Exception: ', '')}'),
-          backgroundColor: context.meatvo.brandPrimaryDark,
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Cart Update Failed'),
+          content: const Text(
+            'Could not update your cart. Would you like to try again?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _loadCartData();
+              },
+              child: const Text('Retry'),
+            ),
+          ],
         ),
       );
     } finally {
@@ -265,15 +281,6 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  String _emojiForItem(CartItem item) {
-    final category = (item.product.categoryName ?? '').toLowerCase();
-    if (category.contains('chicken')) return '🍗';
-    if (category.contains('egg')) return '🥚';
-    if (category.contains('fish')) return '🐟';
-    if (category.contains('mutton')) return '🐑';
-    return '🥩';
-  }
-
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
@@ -370,7 +377,6 @@ class _CartScreenState extends State<CartScreen> {
       onDismissed: (_) => _removeItem(item),
       child: CartItemTile(
         item: item,
-        emojiFallback: _emojiForItem(item),
         isBusy: _updatingItems.contains(_cartLineKey(item)),
         onDecrement: _updatingItems.contains(_cartLineKey(item))
             ? null

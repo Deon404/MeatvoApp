@@ -27,10 +27,12 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
     with SingleTickerProviderStateMixin {
   late final AnimationController _punchController;
   late final Animation<double> _punchScale;
+  final GlobalKey _thumbnailStackKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
+    CartPillAnchor.register(_thumbnailStackKey);
     _punchController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 220),
@@ -52,6 +54,7 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
 
   @override
   void dispose() {
+    CartPillAnchor.unregister(_thumbnailStackKey);
     CartPillAnchor.punchTick.removeListener(_onPunch);
     _punchController.dispose();
     super.dispose();
@@ -118,7 +121,10 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
                             children: [
                               ScaleTransition(
                                 scale: _punchScale,
-                                child: CartPillThumbnailStack(items: cart.items),
+                                child: CartPillThumbnailStack(
+                                  items: cart.items,
+                                  anchorKey: _thumbnailStackKey,
+                                ),
                               ),
                               SizedBox(width: mv.spacing.sm),
                               Expanded(

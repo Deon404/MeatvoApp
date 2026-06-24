@@ -7,7 +7,12 @@ const { readCartMap, clearCart } = require('../cart/cart.service');
 const { logger } = require('../../utils/logger');
 const { addressToText } = require('../../utils/address');
 const { canTransition } = require('../../utils/orderStateMachine');
-const { ensureOrderAssigned } = require('../../services/assignment.service');
+const {
+  ensureOrderAssigned,
+  cancelRiderAssignmentForOrder,
+  notifyRiderAssignmentCancelled,
+} = require('../../services/assignment.service');
+const { createParamBinder, joinWhere } = require('../../utils/sqlParams');
 
 // Enhanced lifecycle imports
 const {
@@ -26,6 +31,10 @@ const { getStoreSettings } = require('../settings/settings.controller');
 const { resolveUnitSalePrice } = require('../../utils/productPricing.util');
 const { resolveDeliveryCharge } = require('../../utils/orderPricing.util');
 const { calculateExpressETA, calculateRiderTrackingETA } = require('../../utils/eta-calculator');
+const {
+  restoreStockForOrder,
+  shouldRestoreStockOnCancel,
+} = require('../payments/payment-stock');
 
 /** Push/SMS/OTP after checkout — must not block the HTTP response (FCM can take 8s+ per user). */
 function schedulePostOrderSideEffects({
@@ -166,6 +175,7 @@ const createOrder = asyncHandler(async (req, res) => {
     lat,
     lng,
     addressId,
+    couponCode,
   } = req.validated.body;
 
   if (!deliveryAddress || deliveryAddress.trim().length < 10) {
@@ -240,7 +250,12 @@ const createOrder = asyncHandler(async (req, res) => {
           serverQty: quantities.get(pid) ?? 0,
           clientQty: clientMap.get(pid) ?? 0,
         });
-        break;
+        return fail(res, 409, 'Cart is out of sync with the server. Please refresh your cart and try again.', {
+          code: 'CART_MISMATCH',
+          productId: pid,
+          serverQty: quantities.get(pid) ?? 0,
+          clientQty: clientMap.get(pid) ?? 0,
+        });
       }
     }
   }
@@ -288,7 +303,25 @@ const createOrder = asyncHandler(async (req, res) => {
     }
 
     const deliveryCharge = resolveDeliveryCharge(subtotal, storeSettings);
-    const totalAmount = subtotal + deliveryCharge;
+
+    let discountAmount = 0;
+    let appliedCouponId = null;
+
+    if (couponCode) {
+      const couponResult = await validateCouponForOrder({
+        code: couponCode,
+        orderAmount: subtotal + deliveryCharge,
+        userId: String(customerId),
+      });
+      if (couponResult.valid) {
+        discountAmount = couponResult.discountAmount;
+        appliedCouponId = couponResult.coupon.id;
+      }
+      // If invalid coupon — silently ignore (discount = 0)
+      // Client-side already validated; race condition edge case only
+    }
+
+    const totalAmount = Math.max(0, (subtotal + deliveryCharge) - discountAmount);
 
     const payment_mode = paymentMethod.toUpperCase();
     const shouldDeductStockNow = payment_mode === 'COD';
@@ -296,9 +329,11 @@ const createOrder = asyncHandler(async (req, res) => {
     // COD orders deduct immediately, ONLINE orders deduct only after payment success.
     if (shouldDeductStockNow) {
       for (const item of items) {
-        await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [
-          item.quantity,
-          item.product_id
+        const p = productById.get(item.product_id);
+        const newStock = Number(p.stock) - item.quantity;
+        await client.query('UPDATE products SET stock = $1 WHERE id = $2', [
+          newStock,
+          item.product_id,
         ]);
       }
     }
@@ -321,12 +356,19 @@ const createOrder = asyncHandler(async (req, res) => {
     const status = payment_mode === 'COD' ? 'CONFIRMED' : 'PLACED';
 
     const oRes = await client.query(
-      `INSERT INTO orders (customer_id, status, total_amount, address, payment_mode)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, customer_id, status, total_amount, address, payment_mode, created_at`,
-      [customerId, status, totalAmount, address, payment_mode]
+      `INSERT INTO orders (customer_id, status, total_amount, coupon_id, address, payment_mode)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, customer_id, status, total_amount, coupon_id, address, payment_mode, created_at`,
+      [customerId, status, totalAmount, appliedCouponId, address, payment_mode]
     );
     const order = oRes.rows[0];
+
+    if (appliedCouponId) {
+      await client.query(
+        'UPDATE coupons SET used_count = used_count + 1 WHERE id = $1',
+        [appliedCouponId]
+      );
+    }
 
     // Order items
     const orderIds = [];
@@ -396,32 +438,25 @@ const listOrders = asyncHandler(async (req, res) => {
     SELECT o.id, o.customer_id, o.status, o.total_amount, o.coupon_id, o.address, o.payment_mode, o.created_at
     FROM orders o
   `;
-  const params = [];
+  const binder = createParamBinder();
   const conditions = [];
-  const nextParam = (value) => {
-    params.push(value);
-    return `$${params.length}`;
-  };
 
   if (isCustomer) {
-    const customerIdParam = nextParam(Number(req.user.id));
-    conditions.push(`o.customer_id = ${customerIdParam}`);
+    conditions.push(`o.customer_id = ${binder.ph(Number(req.user.id))}`);
   } else if (isDelivery) {
-    // Delivery sees assigned orders
     sql += ' JOIN order_assignments oa ON oa.order_id = o.id JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id ';
-    const deliveryUserParam = nextParam(Number(req.user.id));
-    conditions.push(`dp.user_id = ${deliveryUserParam}`);
+    conditions.push(`dp.user_id = ${binder.ph(Number(req.user.id))}`);
   } else if (!isAdmin) {
     return fail(res, 403, 'Not allowed');
   }
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const limitParam = nextParam(limit);
-  const offsetParam = nextParam(offset);
+  const where = joinWhere(conditions);
+  const limitPh = binder.ph(limit);
+  const offsetPh = binder.ph(offset);
 
   const { rows } = await query(
-    `${sql} ${where} ORDER BY o.created_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
-    params
+    `${sql} ${where} ORDER BY o.created_at DESC LIMIT ${limitPh} OFFSET ${offsetPh}`,
+    binder.params
   );
   return ok(res, { orders: rows }, 'Orders');
 });
@@ -696,32 +731,35 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return fail(res, 400, 'Order can only be cancelled from PLACED or CONFIRMED');
   }
 
+  let cancelledPartnerUserId = null;
   await withTransaction(async (client) => {
-    // Restore stock
-    const { rows: items } = await client.query(
-      `SELECT oi.product_id, oi.quantity 
-       FROM order_items oi WHERE oi.order_id = $1`,
-      [orderId]
-    );
-
-    for (const item of items) {
-      await client.query(
-        'UPDATE products SET stock = stock + $1 WHERE id = $2',
-        [item.quantity, item.product_id]
-      );
+    if (shouldRestoreStockOnCancel(order.status)) {
+      await restoreStockForOrder(client, orderId);
     }
 
-    // Update order
     await client.query(
       'UPDATE orders SET status = $1 WHERE id = $2',
       ['CANCELLED', orderId]
     );
+
+    const assignmentResult = await cancelRiderAssignmentForOrder({
+      orderId,
+      dbClient: client,
+    });
+    cancelledPartnerUserId = assignmentResult.partnerUserId;
   });
 
   logger.info('order_cancelled', { orderId, customerId });
 
   const io = req.app.get('io');
-  
+
+  notifyRiderAssignmentCancelled({
+    orderId,
+    partnerUserId: cancelledPartnerUserId,
+    io,
+    reason: 'order_cancelled',
+  });
+
   // Send enhanced cancellation notifications
   await sendOrderStateNotifications({
     orderId,
@@ -747,7 +785,13 @@ const cancelOrder = asyncHandler(async (req, res) => {
     io.to('staff_room').emit('order:updated', payload);
   }
 
-  return ok(res, {}, 'Order cancelled, stock restored');
+  return ok(
+    res,
+    {},
+    shouldRestoreStockOnCancel(order.status)
+      ? 'Order cancelled, stock restored'
+      : 'Order cancelled'
+  );
 });
 
 // GET /api/orders - paginated user orders
@@ -822,34 +866,29 @@ const getAllOrders = asyncHandler(async (req, res) => {
   const userPhone = req.query.user;
 
   const conditions = [];
-  const params = [];
-  const nextParam = (value) => {
-    params.push(value);
-    return `$${params.length}`;
-  };
+  const binder = createParamBinder();
 
   if (status) {
-    const statusParam = nextParam(status);
-    conditions.push(`o.status = ${statusParam}`);
+    conditions.push(`o.status = ${binder.ph(status)}`);
   }
   if (userPhone) {
-    const userPhoneParam = nextParam(userPhone);
-    conditions.push(`u.phone = ${userPhoneParam}`);
+    conditions.push(`u.phone = ${binder.ph(userPhone)}`);
   }
 
-  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const whereClause = joinWhere(conditions);
+  const limitPh = binder.ph(limit);
+  const offsetPh = binder.ph(offset);
+  const listParams = binder.params;
 
-  const limitParam = nextParam(limit);
-  const offsetParam = nextParam(offset);
   const listSql = `
     SELECT o.id, o.status, o.total_amount, o.address, o.payment_mode, o.created_at, u.phone as customer_phone
     FROM orders o
     LEFT JOIN users u ON u.id = o.customer_id
     ${whereClause}
     ORDER BY o.created_at DESC
-    LIMIT ${limitParam} OFFSET ${offsetParam}
+    LIMIT ${limitPh} OFFSET ${offsetPh}
   `;
-  const { rows: orders } = await query(listSql, params);
+  const { rows: orders } = await query(listSql, listParams);
 
   const countSql = `
     SELECT COUNT(*)::int AS total
@@ -857,7 +896,7 @@ const getAllOrders = asyncHandler(async (req, res) => {
     LEFT JOIN users u ON u.id = o.customer_id
     ${whereClause}
   `;
-  const countRes = await query(countSql, params.slice(0, params.length - 2));
+  const countRes = await query(countSql, listParams.slice(0, listParams.length - 2));
   const total = Number(countRes.rows[0].total);
   const pages = Math.ceil(total / limit);
 

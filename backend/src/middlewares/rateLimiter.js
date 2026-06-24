@@ -4,8 +4,7 @@ const { logger } = require('../utils/logger');
 const { fail } = require('../utils/response');
 
 const isProduction = process.env.NODE_ENV === 'production';
-const disableApiRateLimit =
-  process.env.DISABLE_API_RATE_LIMIT === 'true' || !isProduction;
+const disableApiRateLimit = process.env.DISABLE_API_RATE_LIMIT === 'true';
 
 // Max 10 requests per phone per 10 minutes (development-friendly)
 const otpRateLimiter = async (req, res, next) => {
@@ -89,6 +88,27 @@ const couponValidateRateLimiter = rateLimit({
   handler: jsonRateLimitHandler('Too many coupon validation attempts. Try again later.'),
 });
 
+const userRateLimitKey = (req) =>
+  req.user?.id != null ? `user:${req.user.id}` : req.ip;
+
+const orderCreateRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  keyGenerator: userRateLimitKey,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: jsonRateLimitHandler('Too many order creation attempts. Try again later.'),
+});
+
+const addressCreateRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: userRateLimitKey,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  handler: jsonRateLimitHandler('Too many address creation attempts. Try again later.'),
+});
+
 module.exports = {
   otpRateLimiter,
   apiRateLimiter,
@@ -97,4 +117,6 @@ module.exports = {
   refreshTokenRateLimiter,
   adminRateLimiter,
   couponValidateRateLimiter,
+  orderCreateRateLimiter,
+  addressCreateRateLimiter,
 };

@@ -14,7 +14,7 @@ const { ok, fail } = require('../../utils/response');
 const asyncMiddleware = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 // MFA setup routes
-router.post('/mfa/setup', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, async (req, res) => {
+router.post('/setup', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, async (req, res) => {
   try {
     const existing = await mfaService.getUserMFA(req.user.id);
     if (existing && mfaService.isMFAEnabled(existing)) {
@@ -28,7 +28,7 @@ router.post('/mfa/setup', asyncMiddleware(authenticateToken), requireRole(['cust
   }
 });
 
-router.post('/mfa/enable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, validate(enableMfaSchema), async (req, res) => {
+router.post('/enable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, validate(enableMfaSchema), async (req, res) => {
   try {
     const existing = await mfaService.getUserMFA(req.user.id);
     if (existing && mfaService.isMFAEnabled(existing)) {
@@ -62,9 +62,9 @@ const verifyMfa = async (req, res) => {
   }
 };
 
-router.post('/mfa/verify', protect, mfaRateLimiter, validate(verifyMfaSchema), verifyMfa);
+router.post('/verify', protect, mfaRateLimiter, validate(verifyMfaSchema), verifyMfa);
 
-router.post('/mfa/disable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, validate(disableMfaSchema), async (req, res) => {
+router.post('/disable', asyncMiddleware(authenticateToken), requireRole(['customer', 'delivery', 'admin']), mfaRateLimiter, validate(disableMfaSchema), async (req, res) => {
   try {
     const { token } = req.body;
     const user = await mfaService.getUserMFA(req.user.id);
@@ -85,7 +85,7 @@ router.post('/mfa/disable', asyncMiddleware(authenticateToken), requireRole(['cu
   }
 });
 
-router.get('/mfa/status', asyncMiddleware(authenticateToken), async (req, res) => {
+router.get('/status', asyncMiddleware(authenticateToken), async (req, res) => {
   try {
     const status = mfaService.getMFAStatus(req.user);
     return ok(res, status);

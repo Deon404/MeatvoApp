@@ -42,7 +42,7 @@ else
     TARGET_MONTH=$1
 fi
 
-# SECURITY FIX: reject malformed month arg before SQL interpolation
+# Reject malformed TARGET_MONTH before SQL interpolation (CLI arg or date-derived)
 if ! echo "$TARGET_MONTH" | grep -Eq '^[0-9]{4}-(0[1-9]|1[0-2])$'; then
     print_error "Invalid month format: $TARGET_MONTH (expected YYYY-MM)"
     exit 1
@@ -195,20 +195,20 @@ SELECT
   COUNT(*) AS partition_count
 FROM pg_tables 
 WHERE schemaname = 'public' 
-  AND tablename LIKE '%_${YEAR}_${MONTH}';
+  AND tablename LIKE '%_' || :'year' || '_' || :'month';
 EOF
 )
 
 # Execute SQL
 print_info "Connecting to database: ${DB_NAME}"
 
-if PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "$SQL"; then
+if PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v year="$YEAR" -v month="$MONTH" -c "$SQL"; then
     print_info "✓ Partitions created successfully for ${TARGET_MONTH}"
     
     # Display partition list
     print_info "Created partitions:"
-    PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -c \
-        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%_${YEAR}_${MONTH}' ORDER BY tablename;"
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v year="$YEAR" -v month="$MONTH" -t -c \
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%_' || :'year' || '_' || :'month' ORDER BY tablename;"
 else
     print_error "✗ Failed to create partitions"
     exit 1
@@ -217,17 +217,17 @@ fi
 # Analyze new partitions
 print_info "Analyzing new partitions..."
 PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c \
-    "ANALYZE orders_${YEAR}_${MONTH}, order_items_${YEAR}_${MONTH}, payments_${YEAR}_${MONTH};"
+    "ANALYZE orders_${YEAR}_${MONTH}, order_items_${YEAR}_${MONTH}, payments_${YEAR}_${MONTH}, inventory_movements_${YEAR}_${MONTH}, notifications_${YEAR}_${MONTH}, wallet_transactions_${YEAR}_${MONTH}, rider_location_history_${YEAR}_${MONTH}, otp_logs_${YEAR}_${MONTH}, audit_users_${YEAR}_${MONTH}, audit_orders_${YEAR}_${MONTH}, audit_payments_${YEAR}_${MONTH};"
 
 print_info "✓ Partition creation complete!"
 
 # Display partition summary
 print_info "Partition summary:"
-PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c \
+PGPASSWORD=$POSTGRES_PASSWORD psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -v year="$YEAR" -v month="$MONTH" -c \
     "SELECT 
        schemaname,
        tablename,
        pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
      FROM pg_tables 
-     WHERE schemaname = 'public' AND tablename LIKE '%_${YEAR}_${MONTH}'
+     WHERE schemaname = 'public' AND tablename LIKE '%_' || :'year' || '_' || :'month'
      ORDER BY tablename;"

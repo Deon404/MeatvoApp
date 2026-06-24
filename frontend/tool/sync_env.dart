@@ -1,27 +1,45 @@
 // Syncs frontend/.env → assets/env.local for Flutter runtime (Places, API URL).
+// Registry: env.manifest.json + lib/config/env_files_config.dart
 // Usage: dart run tool/sync_env.dart
 
+import 'dart:convert';
 import 'dart:io';
 
-const keysToSync = [
-  'APP_ENV',
-  'API_BASE_URL',
-  'GOOGLE_MAPS_API_KEY',
-  'FIREBASE_API_KEY',
-  'FIREBASE_APP_ID',
-  'FIREBASE_MESSAGING_SENDER_ID',
-  'FIREBASE_PROJECT_ID',
-  'FIREBASE_STORAGE_BUCKET',
-  'MEATVO_API_ROOT',
-  'BACKEND_ROOT_URL',
-  'API_URL',
-  'CASHFREE_ENV',
-];
+List<String> _loadSyncKeys(Directory projectRoot) {
+  final manifestFile = File('${projectRoot.path}/env.manifest.json');
+  if (manifestFile.existsSync()) {
+    try {
+      final manifest =
+          jsonDecode(manifestFile.readAsStringSync()) as Map<String, dynamic>;
+      final keys = manifest['sync_keys'];
+      if (keys is List && keys.isNotEmpty) {
+        return keys.map((e) => e.toString()).toList();
+      }
+    } catch (_) {
+      // fall through to defaults
+    }
+  }
+  return const [
+    'APP_ENV',
+    'API_BASE_URL',
+    'GOOGLE_MAPS_API_KEY',
+    'FIREBASE_API_KEY',
+    'FIREBASE_APP_ID',
+    'FIREBASE_MESSAGING_SENDER_ID',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_STORAGE_BUCKET',
+    'MEATVO_API_ROOT',
+    'BACKEND_ROOT_URL',
+    'API_URL',
+    'CASHFREE_ENV',
+  ];
+}
 
 void main() {
   final projectRoot = Directory.current.path.endsWith('tool')
       ? Directory.current.parent
       : Directory.current;
+  final keysToSync = _loadSyncKeys(projectRoot);
   final envFile = File('${projectRoot.path}/.env');
   final outFile = File('${projectRoot.path}/assets/env.local');
 

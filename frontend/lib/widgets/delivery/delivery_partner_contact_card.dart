@@ -96,10 +96,16 @@ class _DeliveryPartnerContactCardState
         status == 'on_way' ||
         status == 'picked_up' ||
         status == 'rider_nearby';
+    // Live backend keeps orders.status at PACKED until rider accepts
+    // (POST /api/delivery/orders/:id/accept → OUT_FOR_DELIVERY).
     final isAssignedOnly = status == 'assigned' ||
         status == 'rider_assigned' ||
         status == 'rider_accepted' ||
-        status == 'accepted';
+        status == 'accepted' ||
+        status == 'packed' ||
+        status == 'preparing' ||
+        status == 'packing_started' ||
+        status == 'confirmed';
 
     return SlideTransition(
       position: _slideAnimation,

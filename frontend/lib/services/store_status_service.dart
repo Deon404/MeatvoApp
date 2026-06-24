@@ -250,9 +250,12 @@ class StoreStatusService {
 
   StoreStatusService({ApiService? api}) : _api = api ?? ApiService();
 
-
-
   final ApiService _api;
+
+  static StoreStatus? _cachedStatus;
+  static DateTime? _cachedAt;
+  static const _cacheTtl = Duration(minutes: 2);
+  static const _fetchTimeout = Duration(seconds: 12);
 
 
 
@@ -276,32 +279,44 @@ class StoreStatusService {
 
 
 
-  Future<StoreStatus> fetchStatus() async {
-
-    try {
-
-      final res = await _api.get('/store/status');
-
-      final data = _extractData(res.data);
-
-      if (data is Map<String, dynamic>) {
-
-        return StoreStatus.fromJson(data);
-
-      }
-
-      return const StoreStatus(isOpen: true);
-
-    } on DioException catch (e) {
-
-      throw Exception(
-
-        e.response?.data?['message']?.toString() ?? 'Could not load store status',
-
-      );
-
+  Future<StoreStatus> fetchStatus({bool forceRefresh = false}) async {
+    final now = DateTime.now();
+    if (!forceRefresh &&
+        _cachedStatus != null &&
+        _cachedAt != null &&
+        now.difference(_cachedAt!) < _cacheTtl) {
+      return _cachedStatus!;
     }
 
+    try {
+      final res = await _api.get(
+        '/store/status',
+        options: Options(
+          receiveTimeout: _fetchTimeout,
+          sendTimeout: _fetchTimeout,
+        ),
+      );
+      final data = _extractData(res.data);
+      if (data is Map<String, dynamic>) {
+        final status = StoreStatus.fromJson(data);
+        _cachedStatus = status;
+        _cachedAt = DateTime.now();
+        return status;
+      }
+      return const StoreStatus(isOpen: true);
+    } on DioException catch (e) {
+      if (_cachedStatus != null) return _cachedStatus!;
+      if (_isTimeout(e)) return const StoreStatus(isOpen: true);
+      throw Exception(
+        e.response?.data?['message']?.toString() ?? 'Could not load store status',
+      );
+    }
+  }
+
+  static bool _isTimeout(DioException e) {
+    return e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout;
   }
 
 

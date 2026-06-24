@@ -2,9 +2,48 @@ const { reserveStockForPaidOrder } = require('./payment-stock');
 const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
 const { logger } = require('../../utils/logger');
 
+const UNCONFIRMED_ORDER_STATUSES = new Set(['PLACED', 'PAYMENT_PENDING']);
+
+const confirmOrderAfterPayment = async (client, { orderId, customerId, io }) => {
+  await reserveStockForPaidOrder(client, orderId);
+  const orderUpdateResult = await client.query(
+    `UPDATE orders o
+     SET status = 'CONFIRMED', payment_status = 'PAID', updated_at = NOW()
+     FROM users u
+     WHERE o.id = $1 AND o.customer_id = u.id
+       AND o.status IN ('PLACED', 'PAYMENT_PENDING')
+     RETURNING o.id, o.total_amount, u.phone AS customer_phone`,
+    [orderId]
+  );
+
+  emitOrderLifecycleEvent(io, {
+    orderId,
+    customerId,
+    payload: {
+      orderId,
+      status: 'CONFIRMED',
+      message: 'Your order is confirmed — preparing now',
+      updatedAt: new Date().toISOString(),
+    },
+  });
+
+  if (io && orderUpdateResult.rows.length) {
+    const order = orderUpdateResult.rows[0];
+    io.to('staff_room').emit('order:new', {
+      orderId: order.id,
+      customerPhone: order.customer_phone,
+      totalAmount: Number(order.total_amount),
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  return orderUpdateResult.rows.length > 0;
+};
+
 /**
- * Shared ONLINE payment success handler (webhook, verify, reconciliation).
- * Idempotent: skips stock deduction when payment is already SUCCESS.
+ * Shared ONLINE payment success handler (webhook, verify, status poll, reconciliation).
+ * Idempotent: skips when payment and order are both fully confirmed.
+ * Recovers when payment row is SUCCESS but order was never confirmed (legacy status poll bug).
  */
 const applyPaymentSuccess = async (client, {
   paymentId,
@@ -15,7 +54,11 @@ const applyPaymentSuccess = async (client, {
   gatewayResponse = null,
 }) => {
   const lockResult = await client.query(
-    `SELECT status FROM payment_transactions WHERE id = $1 FOR UPDATE`,
+    `SELECT pt.status AS payment_status, o.status AS order_status
+     FROM payment_transactions pt
+     JOIN orders o ON o.id = pt.order_id
+     WHERE pt.id = $1
+     FOR UPDATE OF pt`,
     [paymentId]
   );
 
@@ -23,10 +66,25 @@ const applyPaymentSuccess = async (client, {
     return { applied: false, reason: 'not_found' };
   }
 
-  const currentStatus = lockResult.rows[0].status;
+  const currentStatus = lockResult.rows[0].payment_status;
+  const orderStatus = lockResult.rows[0].order_status;
+
   if (currentStatus === 'SUCCESS') {
+    if (UNCONFIRMED_ORDER_STATUSES.has(orderStatus)) {
+      const confirmed = await confirmOrderAfterPayment(client, {
+        orderId,
+        customerId,
+        io,
+      });
+      if (confirmed) {
+        logger.warn('payment_success_order_recovered', { paymentId, orderId });
+        return { applied: true, reason: 'order_recovered' };
+      }
+      return { applied: false, reason: 'order_not_confirmable' };
+    }
     return { applied: false, reason: 'already_success' };
   }
+
   if (currentStatus !== 'PENDING' && currentStatus !== 'INITIATED') {
     return { applied: false, reason: 'invalid_status' };
   }
@@ -66,37 +124,7 @@ const applyPaymentSuccess = async (client, {
     return { applied: false, reason: 'already_processed' };
   }
 
-  await reserveStockForPaidOrder(client, orderId);
-  const orderUpdateResult = await client.query(
-    `UPDATE orders o
-     SET status = 'CONFIRMED', payment_status = 'PAID', updated_at = NOW()
-     FROM users u
-     WHERE o.id = $1 AND o.customer_id = u.id
-       AND o.status IN ('PLACED', 'PAYMENT_PENDING')
-     RETURNING o.id, o.total_amount, u.phone AS customer_phone`,
-    [orderId]
-  );
-
-  emitOrderLifecycleEvent(io, {
-    orderId,
-    customerId,
-    payload: {
-      orderId,
-      status: 'CONFIRMED',
-      message: 'Your order is confirmed — preparing now',
-      updatedAt: new Date().toISOString(),
-    },
-  });
-
-  if (io && orderUpdateResult.rows.length) {
-    const order = orderUpdateResult.rows[0];
-    io.to('staff_room').emit('order:new', {
-      orderId: order.id,
-      customerPhone: order.customer_phone,
-      totalAmount: Number(order.total_amount),
-      createdAt: new Date().toISOString(),
-    });
-  }
+  await confirmOrderAfterPayment(client, { orderId, customerId, io });
 
   return { applied: true };
 };

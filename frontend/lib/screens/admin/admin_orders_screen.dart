@@ -32,13 +32,13 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
 
   final List<Map<String, String?>> _statusFilters = const [
     {'label': 'All', 'value': null},
-    {'label': 'Placed', 'value': 'placed'},
-    {'label': 'Accepted', 'value': 'accepted'},
-    {'label': 'Packed', 'value': 'packed'},
-    {'label': 'Assigned', 'value': 'assigned'},
-    {'label': 'On the Way', 'value': 'on_way'},
-    {'label': 'Delivered', 'value': 'delivered'},
-    {'label': 'Cancelled', 'value': 'cancelled'},
+    {'label': 'Placed', 'value': 'PLACED'},
+    {'label': 'Accepted', 'value': 'CONFIRMED'},
+    {'label': 'Packed', 'value': 'PACKED'},
+    {'label': 'Assigned', 'value': 'RIDER_ASSIGNED'},
+    {'label': 'On the Way', 'value': 'OUT_FOR_DELIVERY'},
+    {'label': 'Delivered', 'value': 'DELIVERED'},
+    {'label': 'Cancelled', 'value': 'CANCELLED'},
   ];
 
   List<Map<String, dynamic>> _orders = [];

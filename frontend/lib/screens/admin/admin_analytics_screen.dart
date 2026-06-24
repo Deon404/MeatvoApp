@@ -39,8 +39,8 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final kpis = (_data?['kpis'] as Map?)?.cast<String, dynamic>() ?? {};
-    final revenue = (_data?['revenue'] as Map?)?.cast<String, dynamic>() ?? {};
+    final kpis = (_data?['kpi'] as Map?)?.cast<String, dynamic>() ?? {};
+    final revenue = (_data?['kpi'] as Map?)?.cast<String, dynamic>() ?? {};
 
     return Scaffold(
       drawer: AdminNavigationDrawer(
@@ -75,11 +75,11 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
                 children: [
                   _MetricCard(
                     title: 'Orders',
-                    value: '${kpis['totalOrders'] ?? revenue['orderCount'] ?? 0}',
+                    value: '${kpis['totalOrders'] ?? 0}',
                   ),
                   _MetricCard(
                     title: 'Revenue',
-                    value: '₹${(kpis['totalRevenue'] ?? revenue['total'] ?? 0).toString()}',
+                    value: '₹${(kpis['totalRevenue'] ?? 0).toString()}',
                   ),
                   _MetricCard(
                     title: 'Delivered',

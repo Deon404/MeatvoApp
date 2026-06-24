@@ -118,6 +118,40 @@ function validateSecretsAlways() {
   return errors;
 }
 
+function validateCashfreeEnv() {
+  const errors = [];
+  const env = String(process.env.CASHFREE_ENV || '').trim().toLowerCase();
+
+  if (!env) {
+    errors.push('CASHFREE_ENV is required and must be "sandbox" or "production"');
+    return errors;
+  }
+
+  if (env !== 'sandbox' && env !== 'production') {
+    errors.push('CASHFREE_ENV must be "sandbox" or "production"');
+    return errors;
+  }
+
+  const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+  if (isProduction && env !== 'production') {
+    errors.push('CASHFREE_ENV must be "production" when NODE_ENV=production');
+  }
+
+  const legacyApiBase = String(process.env.CASHFREE_API_BASE || '').toLowerCase();
+  if (legacyApiBase) {
+    const legacyIsSandbox = legacyApiBase.includes('sandbox');
+    const legacyIsProduction = legacyApiBase.includes('api.cashfree.com');
+    if (env === 'production' && legacyIsSandbox) {
+      errors.push('CASHFREE_API_BASE points to sandbox but CASHFREE_ENV=production');
+    }
+    if (env === 'sandbox' && legacyIsProduction) {
+      errors.push('CASHFREE_API_BASE points to production but CASHFREE_ENV=sandbox');
+    }
+  }
+
+  return errors;
+}
+
 function validateProductionSecurity() {
   const errors = [];
 
@@ -174,9 +208,9 @@ function validateProductionSecurity() {
     }
   }
 
-  const cashfreeApiBase = (process.env.CASHFREE_API_BASE || '').toLowerCase();
-  if (cashfreeApiBase.includes('sandbox')) {
-    console.warn('WARNING: CASHFREE_API_BASE is sandbox — switch to production API before go-live');
+  const cashfreeEnvErrors = validateCashfreeEnv();
+  for (const err of cashfreeEnvErrors) {
+    errors.push(err);
   }
 
   return errors;
@@ -223,6 +257,15 @@ function validateEnv() {
     process.exit(1);
   }
 
+  const cashfreeEnvErrors = validateCashfreeEnv();
+  if (cashfreeEnvErrors.length > 0) {
+    console.error('Cashfree env validation failed:');
+    for (const err of cashfreeEnvErrors) {
+      console.error(`  - ${err}`);
+    }
+    process.exit(1);
+  }
+
   if (process.env.FIREBASE_API_KEY && !process.env.FIREBASE_VAPID_KEY) {
     const msg = 'FIREBASE_VAPID_KEY is required when FIREBASE_API_KEY is set (admin web push)';
     if (isProduction) {
@@ -249,6 +292,7 @@ module.exports = {
   validateEnv,
   validateProductionSecurity,
   validateSecretsAlways,
+  validateCashfreeEnv,
   isWeakSecret,
   isKnownDevSecret,
   KNOWN_DEV_SECRETS,

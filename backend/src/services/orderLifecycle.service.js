@@ -15,7 +15,11 @@ const {
   sendOrderStateNotifications,
   sendRiderNearbyNotification,
 } = require('./notification.service');
-const { assignOrderToPartner } = require('./assignment.service');
+const {
+  assignOrderToPartner,
+  cancelRiderAssignmentForOrder,
+  notifyRiderAssignmentCancelled,
+} = require('./assignment.service');
 const {
   calculateDeliveryEarnings,
   recordEarningsHistory,
@@ -100,6 +104,12 @@ async function transitionOrderState({
       orderId,
     ]);
 
+    let cancelledPartnerUserId = null;
+    if (newState === ORDER_STATES.CANCELLED) {
+      const assignmentResult = await cancelRiderAssignmentForOrder({ orderId });
+      cancelledPartnerUserId = assignmentResult.partnerUserId;
+    }
+
     // Log state change
     logger.info('order_state_changed', {
       orderId,
@@ -156,6 +166,15 @@ async function transitionOrderState({
       context,
       io,
     });
+
+    if (newState === ORDER_STATES.CANCELLED) {
+      notifyRiderAssignmentCancelled({
+        orderId,
+        partnerUserId: cancelledPartnerUserId,
+        io,
+        reason: 'order_cancelled',
+      });
+    }
 
     // LIFECYCLE FIX: emit to canonical + legacy socket rooms on every transition
     if (io) {
