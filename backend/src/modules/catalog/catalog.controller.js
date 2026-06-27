@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const { query } = require('../../db/postgres');
 const { ok } = require('../../utils/response');
 const { signStoredImageUrl } = require('../../utils/uploadSigning');
+const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
 const { createParamBinder, joinWhere } = require('../../utils/sqlParams');
 
 const listCategories = asyncHandler(async (req, res) => {
@@ -24,7 +25,7 @@ const listCategories = asyncHandler(async (req, res) => {
     rows = rows.map((c) => ({ ...c, sort_order: 0 }));
   }
 
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const baseUrl = getPublicBaseUrl(req);
   const out = rows.map((c) => ({
     id: String(c.id),
     name: c.name,
@@ -68,7 +69,7 @@ const listProducts = asyncHandler(async (req, res) => {
     binder.params
   );
 
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const baseUrl = getPublicBaseUrl(req);
   const out = rows.map((p) => ({
     id: String(p.id),
     name: p.name,

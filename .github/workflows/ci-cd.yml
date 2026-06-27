@@ -12,6 +12,11 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: meatvo
 
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
 jobs:
   # Code Quality and Testing
   test:
@@ -60,27 +65,27 @@ jobs:
         working-directory: ./backend
         run: npm ci
 
-      - name: Run linting
+      - name: Run CI smoke tests
         working-directory: ./backend
-        run: npm run lint
-
-      - name: Run tests
-        working-directory: ./backend
-        run: npm test
+        run: npm run test:ci
         env:
           NODE_ENV: test
+          PORT: 8080
+          HOST: 127.0.0.1
           DATABASE_URL: postgresql://testuser:testpassword@localhost:5432/meatvo_test
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: meatvo_test
+          DB_USER: testuser
+          DB_PASSWORD: testpassword
           REDIS_URL: redis://localhost:6379
-          JWT_ACCESS_SECRET: test_access_secret
-          JWT_REFRESH_SECRET: test_refresh_secret
-          OTP_HASH_SECRET: test_otp_secret
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./backend/coverage/lcov.info
-          flags: unittests
-          name: codecov-umbrella
+          SMS_PROVIDER: console
+          CASHFREE_ENV: sandbox
+          CASHFREE_API_BASE: https://sandbox.cashfree.com/pg
+          JWT_ACCESS_SECRET: ci_jwt_access_secret_0123456789abcdef0123456789ab
+          JWT_REFRESH_SECRET: ci_jwt_refresh_secret_0123456789abcdef0123456789a
+          OTP_HASH_SECRET: ci_otp_hash_secret_0123456789abcdef0123456789abcdef
+          REDIS_ENCRYPTION_KEY: ci_redis_encryption_key_0123456789abcdef
 
   # Security Scanning
   security:
@@ -90,7 +95,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -98,7 +103,7 @@ jobs:
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
 

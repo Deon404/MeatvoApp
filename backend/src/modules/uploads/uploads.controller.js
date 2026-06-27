@@ -5,6 +5,7 @@ const asyncHandler = require('express-async-handler');
 const { ok, fail } = require('../../utils/response');
 const fileSecurity = require('../../security/file.security');
 const { buildSignedUploadUrl, UPLOAD_PATH_PREFIX } = require('../../utils/uploadSigning');
+const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
 
 const UPLOAD_DIR = path.join(__dirname, '../../../uploads/images');
 
@@ -64,7 +65,7 @@ const handleMulterError = (err, req, res, next) => {
 const uploadImageMiddleware = upload.single('image');
 
 const uploadImage = asyncHandler(async (req, res) => {
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const baseUrl = getPublicBaseUrl(req);
   const storagePath = `${UPLOAD_PATH_PREFIX}${req.file.filename}`;
   const signedUrl = buildSignedUploadUrl(baseUrl, req.file.filename);
   const relativePath = signedUrl.replace(baseUrl, '');

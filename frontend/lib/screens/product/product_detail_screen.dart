@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../utils/product_unit_helper.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../models/cart_model.dart';
 import '../../models/product_variant_model.dart';
@@ -271,14 +272,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   String get _displayUnit => _displayUnitFor(_product?.product.unit);
 
-  String _displayUnitFor(String? rawUnit) {
-    final unit = (rawUnit ?? '').trim().toLowerCase();
-    if (unit.contains('piece') || unit.contains('pc')) return 'piece';
-    if (unit.contains('kg') || unit.contains('gm') || unit.contains('g')) {
-      return 'kg';
-    }
-    return unit.isEmpty ? 'piece' : unit;
-  }
+  String _displayUnitFor(String? rawUnit) =>
+      ProductUnitHelper.normalizeDisplayUnit(rawUnit);
 
   Future<void> _saveCart() async {
     final localProduct = _product;
@@ -297,7 +292,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
     final product = localProduct.product;
     final selectedVariantId = _selectedVariant?.id;
-    final selectedUnit = _selectedVariant?.weight ?? product.unit;
+    final selectedUnit = ProductUnitHelper.isPieceUnit(product.unit)
+        ? ProductUnitHelper.normalizeDisplayUnit(product.unit)
+        : (_selectedVariant?.weight ?? product.unit);
     final variant = _selectedVariant;
 
     final optimisticCart = _cartService.buildOptimisticCart(
@@ -752,7 +749,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Select weight',
+          ProductUnitHelper.isPieceUnit(activeProduct.product.unit)
+              ? 'Select quantity'
+              : 'Select weight',
           style: AppTextStyles.button.copyWith(
             fontSize: 15,
             color: mv.textPrimary,

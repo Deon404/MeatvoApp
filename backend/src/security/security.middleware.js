@@ -250,9 +250,20 @@ class SecurityMiddleware {
         req.body = this.sanitizeObject(req.body);
       }
 
-      // Sanitize query parameters
+      // Express 5: req.query is read-only — sanitize values in place
       if (req.query && typeof req.query === 'object') {
-        req.query = this.sanitizeObject(req.query);
+        for (const [key, value] of Object.entries(req.query)) {
+          if (typeof value === 'string') {
+            const sanitized = this.sanitizeString(value);
+            if (sanitized !== value) {
+              try {
+                req.query[key] = sanitized;
+              } catch {
+                // read-only query object — skip
+              }
+            }
+          }
+        }
       }
 
       next();
@@ -260,6 +271,14 @@ class SecurityMiddleware {
       logger.error('xss_protection_error', { error: error.message });
       next(); // Don't block requests on XSS protection errors
     }
+  }
+
+  sanitizeString(value) {
+    return value
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+      .replace(/javascript:/gi, '')
+      .replace(/on\w+\s*=/gi, '');
   }
 
   /**
@@ -277,12 +296,7 @@ class SecurityMiddleware {
     const sanitized = {};
     for (const [key, value] of Object.entries(obj)) {
       if (typeof value === 'string') {
-        // Basic XSS sanitization
-        sanitized[key] = value
-          .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-          .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
-          .replace(/javascript:/gi, '')
-          .replace(/on\w+\s*=/gi, '');
+        sanitized[key] = this.sanitizeString(value);
       } else if (typeof value === 'object') {
         sanitized[key] = this.sanitizeObject(value);
       } else {

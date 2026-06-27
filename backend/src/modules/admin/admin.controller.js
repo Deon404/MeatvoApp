@@ -21,9 +21,14 @@ const {
 } = require('../payments/payment-stock');
 const { createParamBinder, joinWhere, buildUpdateSet } = require('../../utils/sqlParams');
 
-const requestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
-const signImageField = (req, url) => signStoredImageUrl(url || '', requestBaseUrl(req));
+const redis = require('../../db/redis');
+const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
+const signImageField = (req, url) => signStoredImageUrl(url || '', getPublicBaseUrl(req));
 const storeImageField = (url) => (url ? normalizeStoredImageUrl(url) : null);
+
+const invalidateCatalogCache = async () => {
+  await redis.deleteByPattern('products:*');
+};
 
 const dashboard = asyncHandler(async (req, res) => {
   const [
@@ -1010,10 +1015,11 @@ const createCategoryCompat = asyncHandler(async (req, res) => {
   }
 
   const c = rows[0];
+  await invalidateCatalogCache();
   emitToAll('catalog:categories_changed', { id: String(c.id) });
   return ok(
     res,
-    { id: String(c.id), name: c.name, imageUrl: c.image_url || '', isActive: Boolean(c.active), sortOrder: Number(c.sort_order || 0) },
+    { id: String(c.id), name: c.name, imageUrl: signImageField(req, c.image_url), isActive: Boolean(c.active), sortOrder: Number(c.sort_order || 0) },
     'Category created'
   );
 });
@@ -1051,10 +1057,11 @@ const patchCategoryCompat = asyncHandler(async (req, res) => {
   if (!rows[0]) return fail(res, 404, 'Category not found');
 
   const c = rows[0];
+  await invalidateCatalogCache();
   emitToAll('catalog:categories_changed', { id: String(c.id) });
   return ok(
     res,
-    { id: String(c.id), name: c.name, imageUrl: c.image_url || '', isActive: Boolean(c.active), sortOrder: Number(c.sort_order || 0) },
+    { id: String(c.id), name: c.name, imageUrl: signImageField(req, c.image_url), isActive: Boolean(c.active), sortOrder: Number(c.sort_order || 0) },
     'Category updated'
   );
 });
@@ -1219,6 +1226,7 @@ const createProductCompat = asyncHandler(async (req, res) => {
   );
 
   const p = rows[0];
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(p.id) });
 
   return ok(res, mapProductAdminOut(req, p), 'Product created');
@@ -1349,6 +1357,7 @@ const patchProductCompat = asyncHandler(async (req, res) => {
   if (!rows[0]) return fail(res, 404, 'Product not found');
 
   const p = rows[0];
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(p.id) });
 
   return ok(res, mapProductAdminOut(req, p), 'Product updated');
@@ -1365,6 +1374,7 @@ const deleteProductCompat = asyncHandler(async (req, res) => {
   );
   if (!rows[0]) return fail(res, 404, 'Product not found');
 
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(rows[0].id) });
   return ok(
     res,
@@ -1444,6 +1454,7 @@ const createProduct = asyncHandler(async (req, res) => {
     ]
   );
 
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(rows[0].id) });
   return ok(res, rows[0], 'Product created');
 });
@@ -1466,6 +1477,7 @@ const updateProduct = asyncHandler(async (req, res) => {
 
   if (!rows[0]) return fail(res, 404, 'Product not found');
 
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(rows[0].id) });
   return ok(res, rows[0], 'Product updated');
 });
@@ -1475,6 +1487,7 @@ const deleteProduct = asyncHandler(async (req, res) => {
   const { rowCount } = await query('UPDATE products SET active = FALSE WHERE id = $1', [Number(id)]);
   if (!rowCount) return fail(res, 404, 'Product not found');
 
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(id) });
   return ok(res, null, 'Product deactivated');
 });
@@ -1493,6 +1506,7 @@ const updateStock = asyncHandler(async (req, res) => {
   );
   if (!rows[0]) return fail(res, 404, 'Product not found');
 
+  await invalidateCatalogCache();
   emitToAll('catalog:products_changed', { id: String(rows[0].id) });
   return ok(res, rows[0], 'Stock updated');
 });
@@ -1537,6 +1551,7 @@ const createCategory = asyncHandler(async (req, res) => {
     ));
   }
 
+  await invalidateCatalogCache();
   emitToAll('catalog:categories_changed', { id: String(rows[0].id) });
   return ok(res, rows[0], 'Category created');
 });
@@ -1575,6 +1590,7 @@ const updateCategory = asyncHandler(async (req, res) => {
 
   if (!rows[0]) return fail(res, 404, 'Category not found');
 
+  await invalidateCatalogCache();
   emitToAll('catalog:categories_changed', { id: String(rows[0].id) });
   return ok(res, rows[0], 'Category updated');
 });
@@ -1594,6 +1610,7 @@ const deleteCategory = asyncHandler(async (req, res) => {
   const { rowCount } = await query('DELETE FROM categories WHERE id = $1', [categoryId]);
   if (!rowCount) return fail(res, 404, 'Category not found');
 
+  await invalidateCatalogCache();
   emitToAll('catalog:categories_changed', { id: String(categoryId) });
   return ok(res, null, 'Category deleted');
 });
@@ -1720,7 +1737,7 @@ const readOperationalSettings = async () => {
       `SELECT delivery_charge, min_order_amount, store_open,
               store_open_time, store_close_time, delivery_radius_km
        FROM app_settings
-       ORDER BY id
+       ORDER BY updated_at DESC NULLS LAST
        LIMIT 1`
     );
     return mapOperationalRow(rows[0]);
@@ -1732,7 +1749,7 @@ const readOperationalSettings = async () => {
         `SELECT delivery_charge, min_order_amount, store_open,
                 store_open_time, store_close_time, delivery_radius_km
          FROM app_settings
-         ORDER BY id
+         ORDER BY updated_at DESC NULLS LAST
          LIMIT 1`
       );
       return mapOperationalRow(rows[0]);
@@ -1753,7 +1770,9 @@ const writeOperationalSettings = async (value) => {
 
   try {
     const { rows: existing } = await query(
-      'SELECT id FROM app_settings ORDER BY id LIMIT 1'
+      `SELECT ctid FROM app_settings
+       ORDER BY updated_at DESC NULLS LAST
+       LIMIT 1`
     );
 
     if (existing[0]) {
@@ -1766,25 +1785,40 @@ const writeOperationalSettings = async (value) => {
              store_close_time = $5,
              delivery_radius_km = $6,
              updated_at = NOW()
-         WHERE id = $7
+         WHERE ctid = $7
          RETURNING delivery_charge, min_order_amount, store_open,
                    store_open_time, store_close_time, delivery_radius_km`,
-        [...params, existing[0].id]
+        [...params, existing[0].ctid]
       );
       return mapOperationalRow(rows[0]);
     }
 
-    const { rows } = await query(
-      `INSERT INTO app_settings (
-         delivery_charge, min_order_amount, store_open,
-         store_open_time, store_close_time, delivery_radius_km, updated_at
-       )
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING delivery_charge, min_order_amount, store_open,
-                 store_open_time, store_close_time, delivery_radius_km`,
-      params
-    );
-    return mapOperationalRow(rows[0]);
+    try {
+      const { rows } = await query(
+        `INSERT INTO app_settings (
+           key, value, delivery_charge, min_order_amount, store_open,
+           store_open_time, store_close_time, delivery_radius_km, updated_at
+         )
+         VALUES ('operational', '{}'::jsonb, $1, $2, $3, $4, $5, $6, NOW())
+         RETURNING delivery_charge, min_order_amount, store_open,
+                   store_open_time, store_close_time, delivery_radius_km`,
+        params
+      );
+      return mapOperationalRow(rows[0]);
+    } catch (insertErr) {
+      if (insertErr?.code !== '42703') throw insertErr;
+      const { rows } = await query(
+        `INSERT INTO app_settings (
+           delivery_charge, min_order_amount, store_open,
+           store_open_time, store_close_time, delivery_radius_km, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         RETURNING delivery_charge, min_order_amount, store_open,
+                   store_open_time, store_close_time, delivery_radius_km`,
+        params
+      );
+      return mapOperationalRow(rows[0]);
+    }
   } catch (err) {
     if (err?.code === '42703') {
       await repairAppSettingsSchema();

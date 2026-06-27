@@ -31,48 +31,63 @@ class CheckoutOrderSummary extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const CheckoutSectionHeader(title: 'Bill details'),
-        _BillRow(
-          label: 'Item total',
-          value: '₹${subtotal.toStringAsFixed(0)}',
-        ),
-        if (discount > 0) ...[
-          SizedBox(height: mv.spacing.xxs),
-          _BillRow(
-            label: couponCode != null ? 'Coupon ($couponCode)' : 'Discount',
-            value: '-₹${discount.toStringAsFixed(0)}',
-            valueColor: mv.freshBadge,
+        Container(
+          decoration: BoxDecoration(
+            color: mv.surfaceCard,
+            borderRadius: BorderRadius.circular(mv.radii.md),
+            border: Border.all(color: mv.border),
           ),
-        ],
-        SizedBox(height: mv.spacing.xxs),
-        _BillRow(
-          label: 'Delivery fee',
-          value:
-              isFreeDelivery ? 'FREE' : '₹${deliveryCharge.toStringAsFixed(0)}',
-          valueColor: isFreeDelivery ? mv.freshBadge : null,
-          emphasizeValue: isFreeDelivery,
-        ),
-        Padding(
-          padding: EdgeInsets.symmetric(vertical: mv.spacing.sm),
-          child: Divider(height: 1, color: mv.border),
-        ),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'To pay',
-                style: textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
+          padding: EdgeInsets.all(mv.spacing.md),
+          child: Column(
+            children: [
+              _BillRow(
+                label:
+                    'Item total ($itemCount ${itemCount == 1 ? 'item' : 'items'})',
+                value: '₹${subtotal.toStringAsFixed(0)}',
+              ),
+              if (discount > 0) ...[
+                SizedBox(height: mv.spacing.xxs),
+                _BillRow(
+                  label:
+                      couponCode != null ? 'Coupon ($couponCode)' : 'Discount',
+                  value: '-₹${discount.toStringAsFixed(0)}',
+                  valueColor: mv.freshBadge,
                 ),
+              ],
+              SizedBox(height: mv.spacing.xxs),
+              _BillRow(
+                label: 'Delivery fee',
+                value: isFreeDelivery
+                    ? 'FREE'
+                    : '₹${deliveryCharge.toStringAsFixed(0)}',
+                valueColor: isFreeDelivery ? mv.freshBadge : null,
+                emphasizeValue: isFreeDelivery,
               ),
-            ),
-            Text(
-              '₹${total.toStringAsFixed(0)}',
-              style: textTheme.titleLarge?.copyWith(
-                color: mv.brandPrimary,
-                fontWeight: FontWeight.w800,
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: mv.spacing.sm),
+                child: Divider(height: 1, color: mv.border),
               ),
-            ),
-          ],
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'To pay',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '₹${total.toStringAsFixed(0)}',
+                    style: textTheme.titleLarge?.copyWith(
+                      color: mv.brandPrimary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );

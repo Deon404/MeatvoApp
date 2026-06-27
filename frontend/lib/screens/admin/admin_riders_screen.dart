@@ -123,8 +123,8 @@ class _AdminRidersScreenState extends State<AdminRidersScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Create Rider Profile'),
         content: const Text(
-          'Pehle Manage Users se kisi user ko delivery partner role assign karein. '
-          'Uske baad woh yahan riders list mein dikhega.',
+          'Assign a delivery partner role from Manage Users first. '
+          'They will then appear in the riders list here.',
         ),
         actions: [
           TextButton(

@@ -97,7 +97,7 @@ const readOperationalSettings = async () => {
       `SELECT delivery_charge, min_order_amount, store_open,
               store_open_time, store_close_time, delivery_radius_km
        FROM app_settings
-       ORDER BY id
+       ORDER BY updated_at DESC NULLS LAST
        LIMIT 1`
     );
     return rows[0] || {};
@@ -144,7 +144,7 @@ const ensureStoreSettingsTable = async () => {
 const readStoreSettingsRow = async () => {
   try {
     const { rows } = await queryWithTimeout(
-      `SELECT id, delivery_radius_km, center_lat, center_lng,
+      `SELECT delivery_radius_km, center_lat, center_lng,
               min_order_amount, delivery_fee, is_open
        FROM store_settings
        LIMIT 1`
@@ -250,13 +250,15 @@ const syncOperationalToStoreSettings = async (operational = {}) => {
          delivery_radius_km = COALESCE($3, delivery_radius_km),
          is_open = COALESCE($4, is_open),
          updated_at = NOW()
-     WHERE id = $5`,
+     WHERE ctid = (
+       SELECT ctid FROM store_settings
+       LIMIT 1
+     )`,
     [
       deliveryFee ?? null,
       minOrder ?? null,
       radius ?? null,
       isOpen ?? null,
-      existing.id,
     ]
   );
   invalidateStoreSettingsCache();
@@ -269,15 +271,17 @@ const toggleManualStoreOpen = async () => {
   const nextManual = !currentManual;
 
   const { rows: existing } = await query(
-    'SELECT id FROM app_settings ORDER BY id LIMIT 1'
+    `SELECT ctid FROM app_settings
+     ORDER BY updated_at DESC NULLS LAST
+     LIMIT 1`
   );
 
   if (existing[0]) {
     await query(
       `UPDATE app_settings
        SET store_open = $1, updated_at = NOW()
-       WHERE id = $2`,
-      [nextManual, existing[0].id]
+       WHERE ctid = $2`,
+      [nextManual, existing[0].ctid]
     );
   } else {
     await query(

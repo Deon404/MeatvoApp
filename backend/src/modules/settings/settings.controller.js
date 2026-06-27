@@ -80,7 +80,7 @@ const getSetting = async (key) => {
     const { rows } = await queryWithTimeout(
       `SELECT value->$1 AS value
        FROM app_settings
-       ORDER BY id
+       ORDER BY updated_at DESC NULLS LAST
        LIMIT 1`,
       [key]
     );
@@ -99,16 +99,18 @@ const getSetting = async (key) => {
 const putSetting = async (key, value) => {
   try {
     const { rows: existing } = await queryWithTimeout(
-      'SELECT id FROM app_settings ORDER BY id LIMIT 1'
+      `SELECT ctid FROM app_settings
+       ORDER BY updated_at DESC NULLS LAST
+       LIMIT 1`
     );
     if (existing[0]) {
       const { rows } = await queryWithTimeout(
         `UPDATE app_settings
          SET value = jsonb_set(COALESCE(value, '{}'::jsonb), ARRAY[$1], $2::jsonb, true),
              updated_at = NOW()
-         WHERE id = $3
+         WHERE ctid = $3
          RETURNING value->$1 AS value`,
-        [key, value, existing[0].id]
+        [key, value, existing[0].ctid]
       );
       return rows[0]?.value || value;
     }

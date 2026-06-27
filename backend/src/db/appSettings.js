@@ -32,6 +32,11 @@ const repairAppSettingsSchema = async () => {
   );
 
   const existing = new Set(rows.map((row) => row.column_name));
+
+  if (!existing.has('id')) {
+    await query(`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS id SERIAL`);
+  }
+
   const missing = REQUIRED_APP_SETTINGS_COLUMNS.filter((col) => !existing.has(col));
 
   if (missing.length === 0) {

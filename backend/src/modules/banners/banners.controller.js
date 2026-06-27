@@ -3,6 +3,7 @@ const { query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 const { signStoredImageUrl, normalizeStoredImageUrl } = require('../../utils/uploadSigning');
+const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
 
 const listBanners = asyncHandler(async (req, res) => {
   const includeInactiveRequested = Boolean(req.validated?.query?.includeInactive);
@@ -21,7 +22,7 @@ const listBanners = asyncHandler(async (req, res) => {
          ORDER BY sort_order ASC, id DESC`,
         [true]
       );
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const baseUrl = getPublicBaseUrl(req);
   const banners = rows.map((b) => ({
     ...b,
     image_url: signStoredImageUrl(b.image_url || '', baseUrl),
@@ -38,7 +39,7 @@ const createBanner = asyncHandler(async (req, res) => {
      RETURNING id, image_url, active, sort_order`,
     [imageUrl, body.active ?? true, body.sort_order ?? 0]
   );
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  const baseUrl = getPublicBaseUrl(req);
   return created(res, {
     banner: {
       ...rows[0],

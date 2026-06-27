@@ -103,6 +103,12 @@ step_pm2() {
   pm2 save
 }
 
+step_landing() {
+  # shellcheck source=scripts/lib/sync-landing.sh
+  source "${APP_DIR}/scripts/lib/sync-landing.sh"
+  meatvo_sync_landing
+}
+
 step_health() {
   log "Waiting for health checks"
   local i
@@ -136,6 +142,7 @@ main() {
   step_install
   step_node_migrations
   step_pm2
+  step_landing
   step_health
   log "Deploy complete."
 }

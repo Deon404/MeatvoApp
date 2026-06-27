@@ -1,5 +1,6 @@
 import '../../models/product_variant_model.dart';
 import '../../services/store_status_service.dart';
+import '../../utils/product_unit_helper.dart';
 import 'meatvo_product_card.dart';
 
 /// Maps [ProductWithVariants] to card display values.
@@ -28,6 +29,9 @@ abstract final class ProductCardAdapter {
   }
 
   static String displayUnit(ProductWithVariants product) {
+    if (ProductUnitHelper.isPieceUnit(product.product.unit)) {
+      return ProductUnitHelper.normalizeDisplayUnit(product.product.unit);
+    }
     return preferredVariant(product)?.weight ?? product.product.unit;
   }
 

@@ -4,7 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../services/app_info_service.dart';
 
-/// Brand footer — MEATVO wordmark, made-with-love tagline, DB-driven version.
+/// Brand footer — MEATVO wordmark, made-with-love tagline, pubspec version.
 class HomeBrandFooter extends StatefulWidget {
   const HomeBrandFooter({
     super.key,
@@ -35,7 +35,7 @@ class _HomeBrandFooterState extends State<HomeBrandFooter> {
       child: FutureBuilder<AppInfo>(
         future: _appInfoFuture,
         builder: (context, snapshot) {
-          final version = snapshot.data?.appVersion ?? AppInfo.fallback.appVersion;
+          final version = snapshot.data?.appVersion;
 
           return Column(
             crossAxisAlignment: widget.align,
@@ -74,16 +74,18 @@ class _HomeBrandFooterState extends State<HomeBrandFooter> {
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                'ver. $version',
-                textAlign: widget.textAlign,
-                style: GoogleFonts.poppins(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w400,
-                  color: AppColors.textMuted.withValues(alpha: 0.85),
+              if (version != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'ver. $version',
+                  textAlign: widget.textAlign,
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                    color: AppColors.textMuted.withValues(alpha: 0.85),
+                  ),
                 ),
-              ),
+              ],
             ],
           );
         },

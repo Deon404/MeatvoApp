@@ -1,5 +1,6 @@
 const redis = require('../db/redis');
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = rateLimit;
 const { logger } = require('../utils/logger');
 const { fail } = require('../utils/response');
 
@@ -89,7 +90,7 @@ const couponValidateRateLimiter = rateLimit({
 });
 
 const userRateLimitKey = (req) =>
-  req.user?.id != null ? `user:${req.user.id}` : req.ip;
+  req.user?.id != null ? `user:${req.user.id}` : ipKeyGenerator(req.ip);
 
 const orderCreateRateLimiter = rateLimit({
   windowMs: 60 * 1000,

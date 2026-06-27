@@ -120,7 +120,7 @@ class CartService {
       final unit = (variantJson?['weight'] ??
               j['unit'] ??
               productJson['unit'] ??
-              'kg')
+              'piece')
           .toString();
 
       return CartItem(

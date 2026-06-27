@@ -1,29 +1,48 @@
 # Frontend Deployment Model
 
-Meatvo does **not** use a separate frontend container on the VPS path.
+Meatvo production uses **static marketing landing** + **Node.js API**. There are **no web SPAs** (no `/customer`, `/admin`, or `/delivery` web apps). Customer, rider, and admin UX is the **Flutter mobile app** only.
 
-## Architecture
-
-The Node.js backend (`backend/index.js`) serves:
+## Architecture (VPS)
 
 | Path | Content |
 |------|---------|
-| `/admin`, `/admin/*` | Admin web SPA (from `admin/` when present) |
-| `/customer`, `/customer/*` | Customer web SPA |
-| `/delivery`, `/delivery/*` | Delivery rider web SPA |
-| `/api/*` | REST API |
-| `/ws` | Socket.io |
+| `/` | Marketing landing (`landing/` → `/var/www/meatvo-landing`) |
+| `/api/*` | REST API (Node backend on `:8080`) |
+| `/ws` | Socket.io (Flutter live tracking) |
+| `/uploads/*` | Product images (proxied to backend) |
 
-## VPS Deployment
+Nginx terminates TLS and routes by path. See `scripts/nginx-meatvo.conf`.
 
-1. Deploy only the backend via `scripts/vps-phase2-deploy.sh`
-2. Nginx proxies all traffic to `localhost:8080`
-3. No `Dockerfile.frontend` is required for VPS
+## Landing deploy
 
-## Docker/Kubernetes (future)
+Source of truth: `landing/index.html` + `landing/assets/`.
 
-`docker-compose.production.yml` references a separate `frontend` image for a split deployment model. That path is optional and not used by the current VPS scripts.
+On VPS:
 
-## Flutter Mobile
+```bash
+# Sync landing files (also runs inside phase2/deploy)
+bash -c 'source /opt/meatvo/scripts/lib/sync-landing.sh && meatvo_sync_landing'
 
-Customer/rider/admin mobile apps are built from `frontend/` and connect to the same backend API.
+# Install nginx routing (after SSL certs exist)
+MEATVO_DOMAIN=meatvo.com bash /opt/meatvo/scripts/vps-install-nginx.sh
+```
+
+Phase 2 (`vps-phase2-deploy.sh`) syncs landing. Phase 3 (`vps-phase3-ssl.sh`) installs nginx config after Certbot.
+
+## Flutter mobile
+
+Build from `frontend/` with:
+
+```bash
+flutter build appbundle --release --dart-define-from-file=env.production.json
+```
+
+Set `API_BASE_URL` to the site root (no `/api` suffix), e.g. `https://meatvo.com`. The app appends `/api` automatically.
+
+## Docker/Kubernetes (optional)
+
+`docker-compose.production.yml` and `nginx/conf.d/meatvo.conf` describe a split-container setup. The current VPS path uses bare-metal Nginx + PM2 only.
+
+## Legacy backend SPA routes
+
+`backend/index.js` still has `/customer`, `/admin`, `/delivery` handlers for optional future web bundles. They are **not** proxied in production nginx and are **out of scope** for the current mobile-only product.

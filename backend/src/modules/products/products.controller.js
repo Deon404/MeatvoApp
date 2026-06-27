@@ -38,7 +38,8 @@ const requireAdmin = (req) => {
  * Format product with full Meatvo schema
  * Adds calculated fields: display_price, freshness_badge, etc.
  */
-const getRequestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
+const getRequestBaseUrl = (req) => getPublicBaseUrl(req);
 
 const formatProduct = (product, weight_g = null, baseUrl = null) => {
   if (!product) return null;

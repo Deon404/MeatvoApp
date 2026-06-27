@@ -50,6 +50,12 @@ step_dirs() {
   mkdir -p "${APP_DIR}/public"
 }
 
+step_landing() {
+  # shellcheck source=scripts/lib/sync-landing.sh
+  source "${APP_DIR}/scripts/lib/sync-landing.sh"
+  meatvo_sync_landing
+}
+
 step_schema() {
   local schema_file="${BACKEND_DIR}/src/db/schema.sql"
   if [[ ! -f "${schema_file}" ]]; then
@@ -115,6 +121,11 @@ step_verify() {
   curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1:8080/" || echo "000"
   echo -n "Via Nginx: "
   curl -s -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/" || echo "000"
+  if [[ -f /var/www/meatvo-landing/index.html ]]; then
+    echo -n "Landing (nginx /): "
+    curl -s "http://127.0.0.1/" | head -c 40 || true
+    echo ""
+  fi
   echo ""
   echo "Logs: pm2 logs ${PM2_APP} --lines 50"
 }
@@ -125,13 +136,15 @@ main() {
   require_env
   log "Starting Meatvo Phase 2 deploy at ${APP_DIR}"
   step_dirs
+  step_landing
   step_schema
   step_npm
   step_migrations
   step_pm2
   step_verify
   log "Phase 2 deploy complete."
-  log "Open http://187.127.179.95/ in browser. Set ENFORCE_HTTPS=true after SSL (Phase 3)."
+  log "Install landing nginx routing: MEATVO_DOMAIN=https://meatvo.com bash scripts/vps-install-nginx.sh"
+  log "Open https://meatvo.com/ after SSL (Phase 3)."
 }
 
 main "$@"

@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../services/payment_service.dart';
-import '../cart/premium_cart_card.dart';
 import 'checkout_section_header.dart';
 
 enum CheckoutPaymentOption { online, cod }
@@ -106,33 +105,17 @@ class _CheckoutPaymentMethodsState extends State<CheckoutPaymentMethods> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const CheckoutSectionHeader(title: 'Pay with'),
-        PremiumCartCard(
-          padding: EdgeInsets.all(mv.spacing.sm),
-          child: Column(
-            children: CheckoutPaymentOption.values.map((option) {
-              final isSelected = widget.selected == option;
-              final isRecommended = option == CheckoutPaymentOption.online;
-              final isLast =
-                  option == CheckoutPaymentOption.values.last;
+        ...CheckoutPaymentOption.values.map((option) {
+          final isSelected = widget.selected == option;
+          final isRecommended = option == CheckoutPaymentOption.online;
 
-              return Column(
-                children: [
-                  _PaymentOptionRow(
-                    option: option,
-                    isSelected: isSelected,
-                    isRecommended: isRecommended,
-                    onTap: () => widget.onSelected(option),
-                  ),
-                  if (!isLast)
-                    Padding(
-                      padding: EdgeInsets.symmetric(vertical: mv.spacing.xxs),
-                      child: Divider(height: 1, color: mv.border),
-                    ),
-                ],
-              );
-            }).toList(),
-          ),
-        ),
+          return _PaymentOptionRow(
+            option: option,
+            isSelected: isSelected,
+            isRecommended: isRecommended,
+            onTap: () => widget.onSelected(option),
+          );
+        }),
         if (widget.selected == CheckoutPaymentOption.online) ...[
           SizedBox(height: mv.spacing.sm),
           if (_loadingUpiApps)
@@ -226,72 +209,97 @@ class _PaymentOptionRow extends StatelessWidget {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {
-          HapticFeedback.lightImpact();
-          onTap();
-        },
-        borderRadius: BorderRadius.circular(mv.radii.md),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: EdgeInsets.symmetric(
-            horizontal: mv.spacing.sm,
-            vertical: mv.spacing.sm,
-          ),
-          decoration: BoxDecoration(
-            color: isSelected
-                ? mv.brandPrimary.withValues(alpha: 0.06)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(mv.radii.md),
-            border: Border(
-              left: BorderSide(
-                color: isSelected ? mv.brandPrimary : Colors.transparent,
-                width: 3,
+    return Padding(
+      padding: EdgeInsets.only(bottom: mv.spacing.xs),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            HapticFeedback.lightImpact();
+            onTap();
+          },
+          borderRadius: BorderRadius.circular(mv.radii.md),
+          child: Container(
+            padding: EdgeInsets.all(mv.spacing.sm),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? mv.brandPrimary.withValues(alpha: 0.04)
+                  : mv.surfaceCard,
+              borderRadius: BorderRadius.circular(mv.radii.md),
+              border: Border.all(
+                color: isSelected ? mv.brandPrimary : mv.border,
+                width: isSelected ? 1.5 : 1,
               ),
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(option.icon, color: mv.brandPrimary, size: 20),
-              SizedBox(width: mv.spacing.sm),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          option.label,
-                          style: textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        if (isRecommended) ...[
-                          SizedBox(width: mv.spacing.xs),
-                          Text(
-                            '· Recommended',
-                            style: textTheme.bodySmall?.copyWith(
+            child: Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: isSelected ? mv.brandPrimary : mv.border,
+                      width: 2,
+                    ),
+                  ),
+                  child: isSelected
+                      ? Center(
+                          child: Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
                               color: mv.brandPrimary,
-                              fontWeight: FontWeight.w500,
-                              fontSize: 11,
                             ),
                           ),
-                        ],
-                      ],
-                    ),
-                    Text(
-                      option.subtitle,
-                      style: textTheme.bodySmall?.copyWith(
-                        color: mv.textMuted,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
+                        )
+                      : null,
                 ),
-              ),
-            ],
+                SizedBox(width: mv.spacing.sm),
+                Icon(
+                  option.icon,
+                  size: 20,
+                  color: isSelected ? mv.brandPrimary : mv.textSecondary,
+                ),
+                SizedBox(width: mv.spacing.xs),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            option.label,
+                            style: textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: isSelected
+                                  ? mv.brandPrimary
+                                  : mv.textPrimary,
+                            ),
+                          ),
+                          if (isRecommended) ...[
+                            const SizedBox(width: 4),
+                            Text(
+                              '· Recommended',
+                              style: textTheme.labelSmall?.copyWith(
+                                color: mv.brandPrimary,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      Text(
+                        option.subtitle,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: mv.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

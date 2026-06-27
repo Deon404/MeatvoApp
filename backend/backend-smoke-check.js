@@ -12,8 +12,9 @@ async function getJson(path) {
 async function run() {
   logger.info(`Backend smoke check started on ${BASE_URL}`);
 
-  const health = await getJson('/health');
-  if (!health.response.ok || health.json?.status !== 'ok' || health.json?.db !== 'connected') {
+  const health = await getJson('/api/auth/health');
+  const healthStatus = String(health.json?.status || '').toUpperCase();
+  if (!health.response.ok || healthStatus !== 'OK' || health.json?.db !== 'connected') {
     throw new Error(
       `Health check failed (${health.response.status}): ${JSON.stringify(health.json)}`
     );

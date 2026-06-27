@@ -4,6 +4,7 @@ import '../../constants/home_strings.dart';
 import '../../models/cart_model.dart';
 import '../../models/product_variant_model.dart';
 import '../common/empty_state.dart';
+import '../../ui/organisms/product_card_adapter.dart';
 import '../common/product_card.dart';
 import '../common/shimmer_loader.dart';
 import 'home_inline_state_card.dart';
@@ -439,7 +440,7 @@ bool _canAdd(ProductWithVariants product) {
 }
 
 String _productUnit(ProductWithVariants product) {
-  return _preferredVariant(product)?.weight ?? product.product.unit;
+  return ProductCardAdapter.displayUnit(product);
 }
 
 double _displayPrice(ProductWithVariants product) {

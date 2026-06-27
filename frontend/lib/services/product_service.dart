@@ -4,6 +4,7 @@ import '../config/api_config.dart' show ApiProductPaths, ApiUserPaths;
 import '../models/product_model.dart';
 import '../models/product_variant_model.dart';
 import '../utils/media_url_resolver.dart';
+import '../utils/product_unit_helper.dart';
 import 'api_service.dart';
 import 'cache_service.dart';
 
@@ -114,32 +115,56 @@ class ProductService {
     if (variants.isEmpty) {
       final rawWeights =
           productJson['weight_variants'] ?? productJson['weightVariants'];
+      final isPieceProduct = ProductUnitHelper.isPieceUnit(product.unit);
       if (rawWeights is List && rawWeights.isNotEmpty) {
-        final basePerKgRaw = productJson['base_price_per_kg'] ??
-            productJson['basePricePerKg'] ??
-            productJson['price'];
-        final basePerKg = basePerKgRaw is num
-            ? basePerKgRaw.toDouble()
-            : double.tryParse('$basePerKgRaw') ?? product.price;
-        variants = rawWeights.map((weightRaw) {
-          final grams = weightRaw is num
-              ? weightRaw.toInt()
-              : int.tryParse('$weightRaw') ?? 500;
-          final kgLabel = grams >= 1000
-              ? '${(grams / 1000).toStringAsFixed(grams % 1000 == 0 ? 0 : 1)}kg'
-              : '${grams}g';
-          final variantPrice =
-              (basePerKg * (grams / 1000) * 100).round() / 100;
-          return ProductVariantModel(
-            id: '${product.id}_$grams',
-            productId: product.id,
-            weight: kgLabel,
-            weightValue: grams / 1000,
-            price: variantPrice,
-            stock: product.stock?.toInt() ?? 0,
-            isAvailable: product.isAvailable,
-          );
-        }).toList();
+        if (isPieceProduct &&
+            ProductUnitHelper.isDefaultMeatWeightVariants(rawWeights)) {
+          // Eggs etc.: admin unit is piece — ignore default gram variants.
+          variants = [];
+        } else if (isPieceProduct) {
+          final pricePerPiece = product.finalPrice;
+          variants = rawWeights.map((countRaw) {
+            final count = countRaw is num
+                ? countRaw.toInt()
+                : int.tryParse('$countRaw') ?? 1;
+            final safeCount = count > 0 ? count : 1;
+            return ProductVariantModel(
+              id: '${product.id}_$safeCount',
+              productId: product.id,
+              weight: ProductUnitHelper.pieceVariantLabel(safeCount),
+              weightValue: safeCount.toDouble(),
+              price: (pricePerPiece * safeCount * 100).round() / 100,
+              stock: product.stock?.toInt() ?? 0,
+              isAvailable: product.isAvailable,
+            );
+          }).toList();
+        } else {
+          final basePerKgRaw = productJson['base_price_per_kg'] ??
+              productJson['basePricePerKg'] ??
+              productJson['price'];
+          final basePerKg = basePerKgRaw is num
+              ? basePerKgRaw.toDouble()
+              : double.tryParse('$basePerKgRaw') ?? product.price;
+          variants = rawWeights.map((weightRaw) {
+            final grams = weightRaw is num
+                ? weightRaw.toInt()
+                : int.tryParse('$weightRaw') ?? 500;
+            final kgLabel = grams >= 1000
+                ? '${(grams / 1000).toStringAsFixed(grams % 1000 == 0 ? 0 : 1)}kg'
+                : '${grams}g';
+            final variantPrice =
+                (basePerKg * (grams / 1000) * 100).round() / 100;
+            return ProductVariantModel(
+              id: '${product.id}_$grams',
+              productId: product.id,
+              weight: kgLabel,
+              weightValue: grams / 1000,
+              price: variantPrice,
+              stock: product.stock?.toInt() ?? 0,
+              isAvailable: product.isAvailable,
+            );
+          }).toList();
+        }
       }
     }
 

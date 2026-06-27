@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../config/api_config.dart' show ApiAdminPaths, ApiDeliveryPaths;
 import '../config/backend_resolver.dart';
+import '../utils/media_url_resolver.dart';
 import 'api_service.dart';
 import 'error_tracking_service.dart';
 import 'product_service.dart';
@@ -408,7 +409,7 @@ class AdminService {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
-        throw Exception('Image file nahi mili');
+        throw Exception('Image file not found');
       }
 
       final filename = filePath.replaceAll('\\', '/').split('/').last;
@@ -422,14 +423,14 @@ class AdminService {
 
       final data = _extractMap(
         await _api.postMultipart(ApiAdminPaths.uploadImage, formData),
-        'Image upload fail hua',
+        'Image upload failed',
       );
 
       final url = (data['url'] ?? data['path'] ?? '').toString().trim();
       if (url.isEmpty) {
-        throw Exception('Upload response mein URL nahi mila');
+        throw Exception('Upload response did not include a URL');
       }
-      return url;
+      return MediaUrlResolver.resolve(url) ?? url;
     } on DioException catch (e) {
       throw Exception(
         'Image upload fail: ${e.response?.data?['message'] ?? e.message}',
@@ -813,7 +814,10 @@ class AdminService {
       'mrp': mrp,
       'discountPercent': discountPercent,
       'stockQty': _asInt(stock),
-      'imageUrl': (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
+      'imageUrl': MediaUrlResolver.resolve(
+            (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
+          ) ??
+          '',
       'description': (raw['description'] ?? '').toString(),
       'unit': (raw['unit'] ?? 'kg').toString(),
       'isActive': raw['isActive'] == true ||
@@ -968,7 +972,10 @@ class AdminService {
     return {
       'id': (raw['id'] ?? '').toString(),
       'name': raw['name'] ?? '',
-      'imageUrl': (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
+      'imageUrl': MediaUrlResolver.resolve(
+            (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
+          ) ??
+          '',
       'isActive': raw['isActive'] == true ||
           raw['active'] == true ||
           raw['is_active'] == true,
@@ -1069,7 +1076,10 @@ class AdminService {
   Map<String, dynamic> normalizeAdminBanner(Map<String, dynamic> raw) {
     return {
       'id': (raw['id'] ?? '').toString(),
-      'imageUrl': (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
+      'imageUrl': MediaUrlResolver.resolve(
+            (raw['imageUrl'] ?? raw['image_url'] ?? '').toString(),
+          ) ??
+          '',
       'title': (raw['title'] ?? '').toString(),
       'subtitle': (raw['subtitle'] ?? '').toString(),
       'linkUrl': (raw['linkUrl'] ?? raw['link_url'] ?? '').toString(),

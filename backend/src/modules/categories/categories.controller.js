@@ -4,7 +4,8 @@ const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 const { signStoredImageUrl } = require('../../utils/uploadSigning');
 
-const requestBaseUrl = (req) => `${req.protocol}://${req.get('host')}`;
+const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
+const requestBaseUrl = (req) => getPublicBaseUrl(req);
 
 const formatCategory = (category, baseUrl) => ({
   ...category,

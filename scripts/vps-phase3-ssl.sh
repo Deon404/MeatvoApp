@@ -10,8 +10,9 @@ set -euo pipefail
 
 MEATVO_DOMAIN="${MEATVO_DOMAIN:-}"
 MEATVO_API_DOMAIN="${MEATVO_API_DOMAIN:-}"
+APP_DIR="${APP_DIR:-/opt/meatvo}"
 NGINX_SITE="/etc/nginx/sites-available/meatvo"
-BACKEND_ENV="/opt/meatvo/backend/.env"
+BACKEND_ENV="${APP_DIR}/backend/.env"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -109,10 +110,21 @@ update_backend_env() {
   fi
 }
 
+install_landing_nginx() {
+  local install_script="${APP_DIR:-/opt/meatvo}/scripts/vps-install-nginx.sh"
+  if [[ -x "${install_script}" ]]; then
+    log "Installing landing + API nginx routing"
+    MEATVO_DOMAIN="${MEATVO_DOMAIN}" MEATVO_API_DOMAIN="${MEATVO_API_DOMAIN}" bash "${install_script}"
+  else
+    log "WARN: ${install_script} not found — configure nginx manually (see scripts/nginx-meatvo.conf)"
+  fi
+}
+
 verify_ssl() {
   log "Verifying SSL"
   certbot renew --dry-run
-  curl -sI "https://${MEATVO_DOMAIN}/health" | head -5 || true
+  curl -sI "https://${MEATVO_DOMAIN}/" | head -5 || true
+  curl -sI "https://${MEATVO_DOMAIN}/api/store/status" | head -5 || true
 }
 
 main() {
@@ -122,8 +134,10 @@ main() {
   prepare_nginx_acme
   obtain_certificate
   update_backend_env
+  install_landing_nginx
   verify_ssl
   log "Phase 3 SSL setup complete."
+  log "Landing: https://${MEATVO_DOMAIN}/  |  API: https://${MEATVO_DOMAIN}/api/"
 }
 
 main "$@"

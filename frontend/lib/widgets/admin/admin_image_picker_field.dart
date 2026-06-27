@@ -5,9 +5,10 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
+import '../../utils/media_url_resolver.dart';
 import '../../utils/responsive_helper.dart';
 
-/// Admin form field — gallery se image pick karo, server par upload karo, URL milega.
+/// Admin form field — pick an image from gallery/camera, upload to server, receive URL.
 class AdminImagePickerField extends StatefulWidget {
   const AdminImagePickerField({
     super.key,
@@ -86,7 +87,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('Gallery se chunein'),
+              title: const Text('Choose from gallery'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickAndUpload(ImageSource.gallery);
@@ -94,7 +95,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
             ),
             ListTile(
               leading: const Icon(Icons.photo_camera_outlined),
-              title: const Text('Camera se lein'),
+              title: const Text('Take a photo'),
               onTap: () {
                 Navigator.pop(ctx);
                 _pickAndUpload(ImageSource.camera);
@@ -103,7 +104,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
             if ((widget.imageUrl ?? '').isNotEmpty || _localPreviewPath != null)
               ListTile(
                 leading: const Icon(Icons.delete_outline, color: AppColors.primary),
-                title: const Text('Image hata dein'),
+                title: const Text('Remove image'),
                 onTap: () {
                   Navigator.pop(ctx);
                   setState(() {
@@ -129,7 +130,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
       );
     }
 
-    final url = widget.imageUrl?.trim() ?? '';
+    final url = MediaUrlResolver.resolve(widget.imageUrl?.trim()) ?? '';
     if (url.isNotEmpty) {
       return Image.network(
         url,
@@ -185,7 +186,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
                         CircularProgressIndicator(color: Colors.white),
                         SizedBox(height: 8),
                         Text(
-                          'Upload ho rahi hai...',
+                          'Uploading...',
                           style: TextStyle(color: Colors.white, fontSize: 13),
                         ),
                       ],
@@ -199,7 +200,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
         OutlinedButton.icon(
           onPressed: _isUploading ? null : _showSourceSheet,
           icon: Icon(hasImage ? Icons.swap_horiz : Icons.upload_outlined),
-          label: Text(hasImage ? 'Image badlein' : 'Image upload karein'),
+          label: Text(hasImage ? 'Change image' : 'Upload image'),
         ),
         if (_error != null) ...[
           const SizedBox(height: 6),
@@ -211,7 +212,7 @@ class _AdminImagePickerFieldState extends State<AdminImagePickerField> {
         if (widget.required && !hasImage && !_isUploading) ...[
           const SizedBox(height: 4),
           const Text(
-            'Image upload karna zaroori hai',
+            'Image upload is required',
             style: TextStyle(color: AppColors.primary, fontSize: 12),
           ),
         ],

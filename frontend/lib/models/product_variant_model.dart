@@ -1,4 +1,5 @@
 import 'product_model.dart';
+import '../utils/product_unit_helper.dart';
 
 /// Product Variant Model - Different weight/price options for products
 class ProductVariantModel {
@@ -126,6 +127,9 @@ class ProductWithVariants {
 
   /// Get display unit for product (variant weight or product unit)
   String getDisplayUnit() {
+    if (ProductUnitHelper.isPieceUnit(product.unit)) {
+      return ProductUnitHelper.normalizeDisplayUnit(product.unit);
+    }
     if (variants.isNotEmpty) {
       final available = availableVariants;
       if (available.isNotEmpty) {

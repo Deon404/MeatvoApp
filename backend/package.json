@@ -8,6 +8,7 @@
     "dev": "nodemon dev.js",
     "otp:e2e": "node otp-e2e-check.js",
     "test": "node backend-smoke-check.js",
+    "test:ci": "node scripts/ci-smoke.js",
     "smoke": "node backend-smoke-check.js",
     "smoke:customer": "node scripts/customer-flow-smoke.js",
     "production:check": "node scripts/production-check.js"

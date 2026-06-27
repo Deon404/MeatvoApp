@@ -19,6 +19,10 @@ const ensureSchema = async () => {
       run: repairAppSettingsSchema,
     },
     {
+      name: 'app_settings.id',
+      sql: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS id SERIAL`,
+    },
+    {
       name: 'store_settings',
       sql: `
         CREATE TABLE IF NOT EXISTS store_settings (
@@ -32,6 +36,10 @@ const ensureSchema = async () => {
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )
       `,
+    },
+    {
+      name: 'store_settings.id',
+      sql: `ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS id SERIAL`,
     },
     {
       name: 'store_settings.seed_defaults',
