@@ -5,7 +5,6 @@ import '../../models/address_model.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../services/store_status_service.dart';
 import '../store/store_closed_banner.dart';
-import 'checkout_section_header.dart';
 
 class CheckoutDeliverySection extends StatelessWidget {
   const CheckoutDeliverySection({
@@ -25,6 +24,9 @@ class CheckoutDeliverySection extends StatelessWidget {
   final bool isStoreOpen;
   final String? storeClosedMessage;
 
+  static const _addressHighlight = Color(0xFFFFF4E6);
+  static const _addressBorder = Color(0xFFFFE8B3);
+
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
@@ -43,127 +45,59 @@ class CheckoutDeliverySection extends StatelessWidget {
           ),
           SizedBox(height: mv.spacing.sm),
         ],
-        CheckoutSectionHeader(
-          title: 'Deliver to',
-          trailing: !isEmptyAddress
-              ? TextButton(
-                  onPressed: () {
-                    HapticFeedback.lightImpact();
-                    onChangeAddress();
-                  },
-                  style: TextButton.styleFrom(
-                    foregroundColor: mv.brandPrimary,
-                    padding: EdgeInsets.symmetric(horizontal: mv.spacing.sm),
-                    minimumSize: Size.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  child: const Text('Change'),
-                )
-              : null,
-        ),
         if (isEmptyAddress)
           _EmptyAddressPrompt(onAddTap: onAddAddress)
         else
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    _iconForLabel(selectedAddress!.label),
-                    color: mv.brandPrimary,
-                    size: 18,
-                  ),
-                  SizedBox(width: mv.spacing.xs),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              selectedAddress!.label.displayName,
-                              style: textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            if (selectedAddress!.isDefault) ...[
-                              SizedBox(width: mv.spacing.xs),
-                              Text(
-                                '· Default',
-                                style: textTheme.bodySmall?.copyWith(
-                                  color: mv.freshBadge,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ],
-                          ],
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: _addressHighlight,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _addressBorder, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Delivering to ${selectedAddress!.label.displayName}',
+                        style: textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: mv.textPrimary,
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          selectedAddress!.displayAddress,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: textTheme.bodySmall?.copyWith(
-                            color: mv.textSecondary,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                  if (isStoreOpen) ...[
-                    SizedBox(width: mv.spacing.xs),
-                    _ExpressDeliveryChip(),
+                    GestureDetector(
+                      onTap: () {
+                        HapticFeedback.lightImpact();
+                        onChangeAddress();
+                      },
+                      child: Text(
+                        'Change',
+                        style: textTheme.labelLarge?.copyWith(
+                          color: mv.brandPrimary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
                   ],
-                ],
-              ),
-            ],
-          ),
-      ],
-    );
-  }
-
-  IconData _iconForLabel(AddressLabel label) {
-    return switch (label) {
-      AddressLabel.home => Icons.home_rounded,
-      AddressLabel.work => Icons.work_rounded,
-      AddressLabel.other => Icons.location_on_rounded,
-    };
-  }
-}
-
-class _ExpressDeliveryChip extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final mv = context.meatvo;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: mv.spacing.xs,
-        vertical: 3,
-      ),
-      decoration: BoxDecoration(
-        color: mv.freshBadge.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(mv.radii.pill),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.bolt_rounded, color: mv.freshBadge, size: 12),
-          const SizedBox(width: 3),
-          Text(
-            '~45–60 min',
-            style: textTheme.labelSmall?.copyWith(
-              color: mv.freshBadge,
-              fontWeight: FontWeight.w600,
-              fontSize: 10,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  selectedAddress!.displayAddress,
+                  style: textTheme.bodySmall?.copyWith(
+                    color: mv.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 }
@@ -181,8 +115,14 @@ class _EmptyAddressPrompt extends StatelessWidget {
     return InkWell(
       onTap: onAddTap,
       borderRadius: BorderRadius.circular(mv.radii.md),
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: mv.spacing.xs),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: CheckoutDeliverySection._addressHighlight,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: CheckoutDeliverySection._addressBorder),
+        ),
         child: Row(
           children: [
             Icon(Icons.add_location_alt_rounded, color: mv.brandPrimary, size: 20),

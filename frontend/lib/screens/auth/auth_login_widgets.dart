@@ -1,167 +1,157 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class PhoneInputField extends StatelessWidget {
-  const PhoneInputField({
+import '../../core/constants/app_constants.dart';
+import '../../design_system/tokens/meatvo_colors.dart';
+import '../../design_system/theme/meatvo_theme_extensions.dart';
+import '../settings/privacy_policy_screen.dart';
+import '../settings/refunds_policy_screen.dart';
+import '../settings/terms_of_service_screen.dart';
+
+/// Gray-filled phone input with +91 prefix for auth screens.
+class AuthPhoneField extends StatelessWidget {
+  const AuthPhoneField({
     super.key,
     required this.controller,
+    required this.focusNode,
     required this.onChanged,
     required this.onSubmitted,
+    this.enabled = true,
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final ValueChanged<String> onChanged;
   final ValueChanged<String> onSubmitted;
-
-  OutlineInputBorder _border(Color color, [double width = 1]) => OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: color, width: width),
-      );
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final theme = Theme.of(context);
+
     return TextField(
       controller: controller,
+      focusNode: focusNode,
+      enabled: enabled,
       keyboardType: TextInputType.phone,
       textInputAction: TextInputAction.done,
-      style: theme.textTheme.titleMedium?.copyWith(
-        fontWeight: FontWeight.w400,
-        color: const Color(0xFF1F2933),
-      ),
       inputFormatters: [
         FilteringTextInputFormatter.digitsOnly,
         LengthLimitingTextInputFormatter(10),
       ],
+      onChanged: onChanged,
+      onSubmitted: onSubmitted,
+      style: theme.textTheme.bodyLarge?.copyWith(
+        color: mv.textPrimary,
+        fontWeight: FontWeight.w500,
+      ),
       decoration: InputDecoration(
         hintText: 'Enter mobile number',
+        hintStyle: theme.textTheme.bodyLarge?.copyWith(
+          color: mv.textMuted,
+        ),
         filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(vertical: 18),
-        enabledBorder: _border(const Color(0xFFE4E4E7)),
-        focusedBorder: _border(const Color(0xFFE53935), 1.4),
-        prefixIconConstraints: const BoxConstraints(minWidth: 118),
+        fillColor: MeatvoColors.surfaceMuted,
+        contentPadding: EdgeInsets.symmetric(
+          vertical: AppSpacing.md + 2,
+          horizontal: AppSpacing.md,
+        ),
         prefixIcon: Padding(
-          padding: const EdgeInsets.only(left: 14, right: 8),
-          child: Center(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF4F4F5),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'IN +91',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: const Color(0xFF52525B),
+          padding: EdgeInsets.only(left: mv.spacing.md),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '+91',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: mv.textPrimary,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
+              SizedBox(width: mv.spacing.sm),
+              Container(width: 1, height: 22, color: mv.border),
+              SizedBox(width: mv.spacing.sm),
+            ],
           ),
+        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: BorderSide(color: mv.brandPrimary, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: BorderSide(color: mv.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: BorderSide(color: mv.error, width: 2),
         ),
       ),
-      onChanged: onChanged,
-      onSubmitted: onSubmitted,
     );
   }
 }
 
-class LoginBrandHeader extends StatelessWidget {
-  const LoginBrandHeader({super.key, required this.compact, required this.showTagline});
-
-  final bool compact;
-  final bool showTagline;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final size = compact ? 64.0 : 76.0;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Image.asset(
-          'assets/icons/logo.png',
-          height: size,
-          width: size,
-          errorBuilder: (_, __, ___) => Container(
-            height: size,
-            width: size,
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFEBEE),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Icon(Icons.shopping_bag_rounded, color: Color(0xFFE53935)),
-          ),
-        ),
-        if (showTagline) ...[
-          const SizedBox(height: 12),
-          Text(
-            'Fresh meat, delivered fast',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontSize: 14,
-              color: const Color(0xFF7A7A7A),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}
-
-class GradientPrimaryButton extends StatelessWidget {
-  const GradientPrimaryButton({
+/// Full-width primary CTA for auth screens.
+class AuthPrimaryButton extends StatelessWidget {
+  const AuthPrimaryButton({
     super.key,
     required this.label,
     required this.isLoading,
+    required this.enabled,
     required this.onPressed,
   });
 
   final String label;
   final bool isLoading;
+  final bool enabled;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final theme = Theme.of(context);
-    return Container(
+
+    return SizedBox(
+      width: double.infinity,
       height: 56,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFE53935), Color(0xFFC62828)],
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x29E53935),
-            blurRadius: 18,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
       child: ElevatedButton(
-        onPressed: onPressed,
+        onPressed: enabled && !isLoading ? onPressed : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          foregroundColor: Colors.white,
-          shadowColor: Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          backgroundColor: mv.brandPrimary,
+          foregroundColor: MeatvoColors.white,
+          disabledBackgroundColor: MeatvoColors.surfaceMuted,
+          disabledForegroundColor: mv.textMuted,
+          elevation: enabled ? 0 : 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.button),
+          ),
         ),
         child: isLoading
             ? const SizedBox(
-                height: 20,
                 width: 20,
+                height: 20,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  color: MeatvoColors.white,
                 ),
               )
             : Text(
                 label,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  color: Colors.white,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: enabled ? MeatvoColors.white : mv.textMuted,
                   fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
                 ),
               ),
       ),
@@ -169,62 +159,67 @@ class GradientPrimaryButton extends StatelessWidget {
   }
 }
 
-class TermsConsentRow extends StatelessWidget {
-  const TermsConsentRow({
-    super.key,
-    required this.value,
-    required this.enabled,
-    required this.onChanged,
-  });
+/// Order-updates opt-in toggle persisted via SharedPreferences.
+class AuthOrderUpdatesToggle extends StatefulWidget {
+  const AuthOrderUpdatesToggle({super.key});
 
-  final bool value;
-  final bool enabled;
-  final ValueChanged<bool?> onChanged;
+  @override
+  State<AuthOrderUpdatesToggle> createState() => _AuthOrderUpdatesToggleState();
+}
+
+class _AuthOrderUpdatesToggleState extends State<AuthOrderUpdatesToggle> {
+  bool _enabled = true;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPreference();
+  }
+
+  Future<void> _loadPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _enabled = prefs.getBool('order_updates') ?? true;
+      _loaded = true;
+    });
+  }
+
+  Future<void> _onChanged(bool value) async {
+    setState(() => _enabled = value);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('order_updates', value);
+    await prefs.setBool('sms_notifications', value);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final mv = context.meatvo;
     final theme = Theme.of(context);
+
+    if (!_loaded) {
+      return SizedBox(height: mv.spacing.xl);
+    }
+
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Transform.scale(
-          scale: 0.9,
-          child: Checkbox(
-            value: value,
-            activeColor: const Color(0xFFE53935),
-            visualDensity: VisualDensity.compact,
-            onChanged: enabled ? onChanged : null,
-          ),
+        Switch(
+          value: _enabled,
+          onChanged: _onChanged,
+          activeThumbColor: MeatvoColors.white,
+          activeTrackColor: mv.brandPrimary,
+          inactiveTrackColor: MeatvoColors.surfaceMuted,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
+        SizedBox(width: mv.spacing.xs),
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text.rich(
-              TextSpan(
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontSize: 12,
-                  height: 1.4,
-                  color: const Color(0xFF7A7A7A),
-                ),
-                children: const [
-                  TextSpan(text: 'I agree to the '),
-                  TextSpan(
-                    text: 'Terms',
-                    style: TextStyle(
-                      color: Color(0xFFE53935),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  TextSpan(text: ' and '),
-                  TextSpan(
-                    text: 'Privacy Policy',
-                    style: TextStyle(
-                      color: Color(0xFFE53935),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+          child: Text(
+            'Get order updates via messages and calls',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: mv.textSecondary,
+              height: 1.35,
             ),
           ),
         ),
@@ -233,18 +228,71 @@ class TermsConsentRow extends StatelessWidget {
   }
 }
 
-class AuthFooterNote extends StatelessWidget {
-  const AuthFooterNote({super.key});
+/// Bottom legal footer with T&C, Refunds Policy, and Privacy Policy links.
+class AuthLegalFooter extends StatelessWidget {
+  const AuthLegalFooter({super.key});
+
+  void _openLegalScreen(BuildContext context, Widget screen) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      'New here? We\'ll create your account automatically',
-      textAlign: TextAlign.center,
-      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            fontSize: 12,
-            color: const Color(0xFFB0B0B0),
+    final mv = context.meatvo;
+    final theme = Theme.of(context);
+
+    TextStyle linkStyle = theme.textTheme.labelSmall!.copyWith(
+      color: mv.brandPrimary,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: mv.brandPrimary,
+      height: 1.4,
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'By continuing, you agree to our',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: mv.textMuted,
+            height: 1.4,
           ),
+        ),
+        SizedBox(height: mv.spacing.xxs),
+        Wrap(
+          alignment: WrapAlignment.center,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: mv.spacing.sm,
+          runSpacing: mv.spacing.xxs,
+          children: [
+            GestureDetector(
+              onTap: () => _openLegalScreen(
+                context,
+                const TermsOfServiceScreen(),
+              ),
+              child: Text('T&C', style: linkStyle),
+            ),
+            GestureDetector(
+              onTap: () => _openLegalScreen(
+                context,
+                const RefundsPolicyScreen(),
+              ),
+              child: Text('Refunds Policy', style: linkStyle),
+            ),
+            GestureDetector(
+              onTap: () => _openLegalScreen(
+                context,
+                const PrivacyPolicyScreen(),
+              ),
+              child: Text('Privacy Policy', style: linkStyle),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

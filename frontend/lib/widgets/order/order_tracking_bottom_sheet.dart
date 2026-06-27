@@ -18,6 +18,7 @@ class OrderTrackingBottomSheet extends StatelessWidget {
     this.partnerSection,
     this.trustStrip,
     this.reorderButton,
+    this.statusChipLabel,
     this.initialSize = 0.42,
     this.minSize = 0.36,
     this.maxSize = 0.88,
@@ -32,6 +33,7 @@ class OrderTrackingBottomSheet extends StatelessWidget {
   final Widget? partnerSection;
   final Widget? trustStrip;
   final Widget? reorderButton;
+  final String? statusChipLabel;
   final double initialSize;
   final double minSize;
   final double maxSize;
@@ -91,7 +93,8 @@ class OrderTrackingBottomSheet extends StatelessWidget {
                             ),
                             const Spacer(),
                             _StatusChip(
-                              label: orderTrackingChipLabelForStatus(status),
+                              label: statusChipLabel ??
+                                  orderTrackingChipLabelForStatus(status),
                             ),
                           ],
                         ),

@@ -14,6 +14,7 @@ import '../../utils/app_transitions.dart';
 import '../../utils/eta_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/order_status_util.dart';
+import '../../utils/order_payment_util.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
@@ -365,8 +366,9 @@ class _OrdersScreenState extends State<OrdersScreen>
   }
 
   Widget _buildOrderCard(OrderModel order, MeatvoThemeData mv) {
+    final awaitingPayment = isOrderAwaitingPayment(order);
     final isActive = isOrderActive(order.status);
-    final showTrack = isActive;
+    final showTrack = isActive && !awaitingPayment;
 
     return Container(
       margin: EdgeInsets.symmetric(vertical: mv.spacing.xxs + 2),
@@ -400,8 +402,8 @@ class _OrdersScreenState extends State<OrdersScreen>
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      _buildStatusBadge(order.status, mv),
-                      if (isActive) ...[
+                      _buildStatusBadge(order, mv),
+                      if (isActive && !awaitingPayment) ...[
                         SizedBox(height: mv.spacing.xxs),
                         _buildActiveEtaLabel(order, mv),
                       ],
@@ -435,7 +437,7 @@ class _OrdersScreenState extends State<OrdersScreen>
                   ),
                 ],
               ),
-              if (isActive) ...[
+              if (isActive && !awaitingPayment) ...[
                 SizedBox(height: mv.spacing.sm),
                 _buildProgressBar(order.status, mv),
               ],
@@ -451,7 +453,10 @@ class _OrdersScreenState extends State<OrdersScreen>
                     ),
                   ),
                   const Spacer(),
-                  if (showTrack) _buildTrackButton(order.id, mv),
+                  if (awaitingPayment)
+                    _buildPayNowButton(order.id, mv)
+                  else if (showTrack)
+                    _buildTrackButton(order.id, mv),
                 ],
               ),
             ],
@@ -502,6 +507,35 @@ class _OrdersScreenState extends State<OrdersScreen>
     );
   }
 
+  Widget _buildPayNowButton(String orderId, MeatvoThemeData mv) {
+    return SizedBox(
+      height: 32,
+      child: FilledButton(
+        onPressed: () {
+          HapticFeedback.lightImpact();
+          _openOrderDetail(orderId);
+        },
+        style: FilledButton.styleFrom(
+          padding: EdgeInsets.symmetric(horizontal: mv.spacing.sm),
+          backgroundColor: mv.brandPrimary,
+          foregroundColor: MeatvoColors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(mv.radii.sm),
+          ),
+          minimumSize: const Size(0, 32),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        child: const Text(
+          'Pay now',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildTrackButton(String orderId, MeatvoThemeData mv) {
     return SizedBox(
       height: 32,
@@ -531,12 +565,30 @@ class _OrdersScreenState extends State<OrdersScreen>
     );
   }
 
-  Widget _buildStatusBadge(String status, MeatvoThemeData mv) {
+  Widget _buildStatusBadge(OrderModel order, MeatvoThemeData mv) {
+    if (isPaymentFailed(order)) {
+      return _statusBadgeChip(
+        label: 'Payment failed',
+        backgroundColor: mv.error.withValues(alpha: 0.12),
+        textColor: mv.error,
+        mv: mv,
+      );
+    }
+
+    if (isOrderAwaitingPayment(order)) {
+      return _statusBadgeChip(
+        label: 'Payment pending',
+        backgroundColor: MeatvoColors.warning.withValues(alpha: 0.15),
+        textColor: MeatvoColors.warning,
+        mv: mv,
+      );
+    }
+
     late final Color backgroundColor;
     late final Color textColor;
     late final String label;
 
-    switch (normalizeOrderStatus(status)) {
+    switch (normalizeOrderStatus(order.status)) {
       case 'delivered':
         backgroundColor = mv.freshBadge.withValues(alpha: 0.15);
         textColor = mv.freshBadge;
@@ -559,6 +611,20 @@ class _OrdersScreenState extends State<OrdersScreen>
         label = 'Active';
     }
 
+    return _statusBadgeChip(
+      label: label,
+      backgroundColor: backgroundColor,
+      textColor: textColor,
+      mv: mv,
+    );
+  }
+
+  Widget _statusBadgeChip({
+    required String label,
+    required Color backgroundColor,
+    required Color textColor,
+    required MeatvoThemeData mv,
+  }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(

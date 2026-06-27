@@ -324,7 +324,7 @@ class _CartScreenState extends State<CartScreen> {
           mv.spacing.lg +
               (widget.inTabShell
                   ? MeatvoLayout.tabScrollBottomPadding(context)
-                  : MediaQuery.paddingOf(context).bottom),
+                  : MeatvoLayout.systemBottomInset(context)),
         ),
         children: [
           ...items.map(_buildDismissibleItem),

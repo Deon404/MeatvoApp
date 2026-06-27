@@ -19,6 +19,7 @@ class OrderTrackingHeader extends StatelessWidget {
     this.distanceText,
     this.deliveredAt,
     this.isRefreshing = false,
+    this.awaitingPayment = false,
   });
 
   final String status;
@@ -29,8 +30,12 @@ class OrderTrackingHeader extends StatelessWidget {
   final VoidCallback onBack;
   final VoidCallback onRefresh;
   final bool isRefreshing;
+  final bool awaitingPayment;
 
   String get _subtitle {
+    if (awaitingPayment) {
+      return 'Complete payment to confirm your order';
+    }
     final s = normalizeOrderStatus(status);
     if (s == 'delivered') {
       if (deliveredAt != null) {
@@ -55,7 +60,9 @@ class OrderTrackingHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final headline = orderTrackingHeadlineForStatus(status, riderName: riderName);
+    final headline = awaitingPayment
+        ? 'Payment pending'
+        : orderTrackingHeadlineForStatus(status, riderName: riderName);
     final subtitle = _subtitle;
     final imagePath = orderTrackingImageForStatus(status);
     final fallbackIcon = orderTrackingIconForStatus(status);

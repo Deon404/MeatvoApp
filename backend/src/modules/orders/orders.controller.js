@@ -435,7 +435,8 @@ const listOrders = asyncHandler(async (req, res) => {
   const isDelivery = req.user.role === ROLES.DELIVERY;
 
   let sql = `
-    SELECT o.id, o.customer_id, o.status, o.total_amount, o.coupon_id, o.address, o.payment_mode, o.created_at
+    SELECT o.id, o.customer_id, o.status, o.total_amount, o.coupon_id, o.address,
+           o.payment_mode, o.payment_status, o.created_at
     FROM orders o
   `;
   const binder = createParamBinder();
@@ -466,7 +467,7 @@ const getOrder = asyncHandler(async (req, res) => {
 
   const { rows: orderRows } = await query(
     `SELECT o.id, o.customer_id, o.status, o.total_amount, o.coupon_id, o.address, o.payment_mode, o.created_at,
-            o.estimated_delivery_time, o.eta_minutes, o.delivery_slot_id,
+            o.payment_status, o.estimated_delivery_time, o.eta_minutes, o.delivery_slot_id,
             ds.name AS slot_name, ds.start_time AS slot_start_time, ds.end_time AS slot_end_time
      FROM orders o
      LEFT JOIN delivery_slots ds ON ds.id = o.delivery_slot_id

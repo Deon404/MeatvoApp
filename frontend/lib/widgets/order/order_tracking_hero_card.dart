@@ -15,6 +15,7 @@ class OrderTrackingHeroCard extends StatelessWidget {
     this.estimatedDeliveryTime,
     this.deliverySlotLabel,
     this.progressFraction,
+    this.awaitingPayment = false,
   });
 
   final String status;
@@ -23,11 +24,16 @@ class OrderTrackingHeroCard extends StatelessWidget {
   final DateTime? estimatedDeliveryTime;
   final String? deliverySlotLabel;
   final double? progressFraction;
+  final bool awaitingPayment;
 
   @override
   Widget build(BuildContext context) {
     final s = normalizeOrderStatus(status);
     final isTerminal = s == 'delivered' || isOrderCancelled(status);
+    final showEta = !awaitingPayment &&
+        !isTerminal &&
+        (formatArrivingInLabel(etaMinutes).isNotEmpty ||
+            estimatedDeliveryTime != null);
     final fraction = progressFraction ?? trackingProgressFraction(status);
     final arrivingLabel = formatArrivingInLabel(etaMinutes);
     final byTime = estimatedDeliveryTime != null
@@ -53,7 +59,41 @@ class OrderTrackingHeroCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (!isTerminal && (arrivingLabel.isNotEmpty || byTime != null)) ...[
+            if (awaitingPayment) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.payment_rounded,
+                    size: 22,
+                    color: AppColors.warning,
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Payment not completed',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Your order is saved. Complete payment to start preparation.',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            if (showEta) ...[
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -119,7 +159,7 @@ class OrderTrackingHeroCard extends StatelessWidget {
                 ),
               ],
             ),
-            if (!isTerminal) ...[
+            if (!isTerminal && !awaitingPayment) ...[
               const SizedBox(height: 14),
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),

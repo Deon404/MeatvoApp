@@ -149,14 +149,8 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
   }
 
   Future<void> _addNewAddress() async {
-    if (_isPicker) {
-      await _run(() => _coordinator.openMapPin());
-      return;
-    }
-    await _runVoid(() async {
-      await _coordinator.openMapPin();
-      if (mounted) Navigator.of(context).pop();
-    });
+    await _coordinator.openMapPin();
+    if (!_isPicker && mounted) Navigator.of(context).pop();
   }
 
   Future<void> _editAddress(AddressModel address) async {
@@ -304,7 +298,15 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
               label: 'Add new address',
               filled: false,
               loading: _busy,
-              onTap: _busy ? null : () => _runVoid(_addNewAddress),
+              onTap: _busy
+                  ? null
+                  : () {
+                      if (_isPicker) {
+                        _run(() => _coordinator.openMapPin());
+                      } else {
+                        _runVoid(_addNewAddress);
+                      }
+                    },
             ),
           ),
           if (_loading)

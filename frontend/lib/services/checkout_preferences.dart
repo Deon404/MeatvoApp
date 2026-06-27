@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../widgets/checkout/checkout_payment_methods.dart';
+import '../widgets/checkout/checkout_payment_types.dart';
 
 /// Persists the user's last checkout payment selection.
 class CheckoutPreferences {

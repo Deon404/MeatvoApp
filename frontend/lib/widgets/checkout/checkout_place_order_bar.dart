@@ -3,59 +3,39 @@ import 'package:flutter/services.dart';
 
 import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
+import 'checkout_payment_types.dart';
 
 class CheckoutBillBreakdown {
   const CheckoutBillBreakdown({
-    required this.subtotal,
-    required this.discount,
-    required this.deliveryCharge,
     required this.total,
-    required this.itemCount,
   });
 
-  final double subtotal;
-  final double discount;
-  final double deliveryCharge;
   final double total;
-  final int itemCount;
 }
 
-class CheckoutPlaceOrderBar extends StatefulWidget {
+class CheckoutPlaceOrderBar extends StatelessWidget {
   const CheckoutPlaceOrderBar({
     super.key,
     required this.bill,
     required this.isEnabled,
     required this.isLoading,
     required this.onPlaceOrder,
-    this.label = 'Place Order',
-    this.showBreakdownSpinner = false,
+    required this.onPayViaTap,
+    this.selectedPayment,
   });
 
   final CheckoutBillBreakdown bill;
   final bool isEnabled;
   final bool isLoading;
   final VoidCallback? onPlaceOrder;
-  final String label;
-  final bool showBreakdownSpinner;
-
-  @override
-  State<CheckoutPlaceOrderBar> createState() => _CheckoutPlaceOrderBarState();
-}
-
-class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
-  bool _expanded = false;
-
-  void _toggleBreakdown() {
-    HapticFeedback.lightImpact();
-    setState(() => _expanded = !_expanded);
-  }
+  final VoidCallback? onPayViaTap;
+  final CheckoutPaymentOption? selectedPayment;
 
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
-    final bill = widget.bill;
-    final isFreeDelivery = bill.deliveryCharge == 0;
+    final canInteract = isEnabled && !isLoading;
 
     return Container(
       decoration: BoxDecoration(
@@ -63,147 +43,142 @@ class _CheckoutPlaceOrderBarState extends State<CheckoutPlaceOrderBar> {
         border: Border(
           top: BorderSide(color: mv.border.withValues(alpha: 0.6)),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, -2),
+          ),
+        ],
       ),
       child: SafeArea(
         top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AnimatedCrossFade(
-              duration: const Duration(milliseconds: 220),
-              crossFadeState: _expanded
-                  ? CrossFadeState.showFirst
-                  : CrossFadeState.showSecond,
-              firstChild: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  mv.spacing.md,
-                  mv.spacing.sm,
-                  mv.spacing.md,
-                  0,
-                ),
-                child: Column(
-                  children: [
-                    _BillRow(
-                      label: 'Item total (${bill.itemCount})',
-                      value: '₹${bill.subtotal.toStringAsFixed(0)}',
-                    ),
-                    if (bill.discount > 0) ...[
-                      const SizedBox(height: 4),
-                      _BillRow(
-                        label: 'Discount',
-                        value: '-₹${bill.discount.toStringAsFixed(0)}',
-                        valueColor: mv.freshBadge,
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    _BillRow(
-                      label: 'Delivery fee',
-                      value: isFreeDelivery
-                          ? 'FREE'
-                          : '₹${bill.deliveryCharge.toStringAsFixed(0)}',
-                      valueColor: isFreeDelivery ? mv.freshBadge : null,
-                    ),
-                    SizedBox(height: mv.spacing.xs),
-                    Divider(height: 1, color: mv.border),
-                  ],
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            mv.spacing.md,
+            mv.spacing.sm,
+            mv.spacing.md,
+            mv.spacing.md,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 32,
+                child: _PayViaPill(
+                  selectedPayment: selectedPayment,
+                  onTap: canInteract ? onPayViaTap : null,
                 ),
               ),
-              secondChild: const SizedBox.shrink(),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                mv.spacing.md,
-                mv.spacing.sm,
-                mv.spacing.md,
-                mv.spacing.md,
+              SizedBox(width: mv.spacing.sm),
+              Expanded(
+                flex: 68,
+                child: _PlaceOrderCta(
+                  total: bill.total,
+                  isEnabled: canInteract,
+                  isLoading: isLoading,
+                  onTap: onPlaceOrder,
+                  textTheme: textTheme,
+                  isOnlinePayment:
+                      selectedPayment == CheckoutPaymentOption.online,
+                ),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: InkWell(
-                      onTap: _toggleBreakdown,
-                      borderRadius: BorderRadius.circular(mv.radii.md),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  'Total',
-                                  style: textTheme.bodySmall?.copyWith(
-                                    color: mv.textMuted,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Icon(
-                                  _expanded
-                                      ? Icons.keyboard_arrow_down_rounded
-                                      : Icons.keyboard_arrow_up_rounded,
-                                  size: 16,
-                                  color: mv.textMuted,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '₹${bill.total.toStringAsFixed(0)}',
-                              style: textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                                color: mv.textPrimary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: mv.spacing.md),
-                  Expanded(
-                    flex: 2,
-                    child: _PlaceOrderButton(
-                      label: widget.label,
-                      isEnabled: widget.isEnabled,
-                      isLoading:
-                          widget.isLoading && widget.showBreakdownSpinner,
-                      onTap: widget.onPlaceOrder,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _PlaceOrderButton extends StatelessWidget {
-  const _PlaceOrderButton({
-    required this.label,
-    required this.isEnabled,
-    required this.isLoading,
+class _PayViaPill extends StatelessWidget {
+  const _PayViaPill({
+    required this.selectedPayment,
     required this.onTap,
   });
 
-  final String label;
-  final bool isEnabled;
-  final bool isLoading;
+  final CheckoutPaymentOption? selectedPayment;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
+    final methodLabel = selectedPayment?.footerLabel ?? '—';
+
+    return Material(
+      color: MeatvoColors.surfaceMuted,
+      borderRadius: BorderRadius.circular(mv.radii.md),
+      child: InkWell(
+        onTap: onTap == null
+            ? null
+            : () {
+                HapticFeedback.lightImpact();
+                onTap!();
+              },
+        borderRadius: BorderRadius.circular(mv.radii.md),
+        child: Container(
+          height: 52,
+          padding: EdgeInsets.symmetric(horizontal: mv.spacing.sm),
+          alignment: Alignment.centerLeft,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'PAY VIA',
+                style: textTheme.labelSmall?.copyWith(
+                  color: mv.textMuted,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.4,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                methodLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: textTheme.bodySmall?.copyWith(
+                  color: mv.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlaceOrderCta extends StatelessWidget {
+  const _PlaceOrderCta({
+    required this.total,
+    required this.isEnabled,
+    required this.isLoading,
+    required this.onTap,
+    required this.textTheme,
+    required this.isOnlinePayment,
+  });
+
+  final double total;
+  final bool isEnabled;
+  final bool isLoading;
+  final VoidCallback? onTap;
+  final TextTheme textTheme;
+  final bool isOnlinePayment;
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final bgColor = isEnabled && !isLoading ? mv.brandPrimary : mv.textMuted;
 
     return SizedBox(
-      height: 48,
+      height: 52,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(mv.radii.pill),
-          color: isEnabled && !isLoading ? mv.brandPrimary : mv.textMuted,
+          borderRadius: BorderRadius.circular(mv.radii.md),
+          color: bgColor,
         ),
         child: Material(
           color: Colors.transparent,
@@ -214,63 +189,70 @@ class _PlaceOrderButton extends StatelessWidget {
                     onTap!();
                   }
                 : null,
-            borderRadius: BorderRadius.circular(mv.radii.pill),
-            child: Center(
+            borderRadius: BorderRadius.circular(mv.radii.md),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: isLoading
-                  ? SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.2,
-                        color: MeatvoColors.white,
+                  ? Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          color: MeatvoColors.white,
+                        ),
                       ),
                     )
-                  : Text(
-                      label,
-                      style: textTheme.titleSmall?.copyWith(
-                        color: MeatvoColors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  : Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '₹${total.toStringAsFixed(total.truncateToDouble() == total ? 0 : 1)}',
+                                style: textTheme.titleSmall?.copyWith(
+                                  color: MeatvoColors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              Text(
+                                'TOTAL',
+                                style: textTheme.labelSmall?.copyWith(
+                                  color: MeatvoColors.white.withValues(alpha: 0.85),
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              isOnlinePayment ? 'Pay' : 'Place Order',
+                              style: textTheme.titleSmall?.copyWith(
+                                color: MeatvoColors.white,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.arrow_forward_rounded,
+                              color: MeatvoColors.white,
+                              size: 18,
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
             ),
           ),
         ),
       ),
-    );
-  }
-}
-
-class _BillRow extends StatelessWidget {
-  const _BillRow({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final mv = context.meatvo;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: textTheme.bodySmall?.copyWith(color: mv.textSecondary),
-        ),
-        Text(
-          value,
-          style: textTheme.bodySmall?.copyWith(
-            color: valueColor ?? mv.textPrimary,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
     );
   }
 }

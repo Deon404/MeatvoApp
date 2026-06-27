@@ -41,7 +41,7 @@ class HomeAllProductsGrid extends StatelessWidget {
     R.init(context);
     final mv = context.meatvo;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final cardHeight = ProductCardAdapter.gridCardHeight(screenWidth);
+    final cardHeight = ProductCardAdapter.gridCardHeight(screenWidth, context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

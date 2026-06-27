@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 /// Shared layout metrics for bottom nav + floating cart.
 abstract final class MeatvoLayout {
-  static const double navBarHeight = 72;
+  static const double navBarHeight = 76;
   /// Horizontal inset for [MeatvoFloatingNavBar] left/right.
   static const double navBarMargin = 16;
   /// Vertical gap above safe area; matches nav `Positioned` bottom offset.
@@ -11,8 +11,17 @@ abstract final class MeatvoLayout {
 
   static const double _tabScrollBottomGap = 12;
 
+  /// System nav / home-indicator inset. Uses [viewPadding] so MIUI and
+  /// legacy 3-button Android nav bars are respected even when [padding] is 0.
+  static double systemBottomInset(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return mq.viewPadding.bottom > mq.padding.bottom
+        ? mq.viewPadding.bottom
+        : mq.padding.bottom;
+  }
+
   static bool isCompactHeight(BuildContext context) {
-    return MediaQuery.sizeOf(context).height < 720;
+    return MediaQuery.sizeOf(context).height < 740;
   }
 
   /// Extra scroll padding inside tab bodies (nav handled by shell parent padding).
@@ -22,9 +31,7 @@ abstract final class MeatvoLayout {
 
   /// Bottom inset for tab content inside [MyHomePage] shell (nav overlay).
   static double tabShellBottomInset(BuildContext context) {
-    return MediaQuery.paddingOf(context).bottom +
-        navBarBottomGap +
-        navBarHeight;
+    return systemBottomInset(context) + navBarBottomGap + navBarHeight;
   }
 
   /// Total vertical space occupied by the floating nav from screen bottom.
@@ -44,8 +51,10 @@ abstract final class MeatvoLayout {
 
   /// Scroll padding for pushed catalog screens (cart bar + safe area, no tab nav).
   static double catalogScrollBottomInset(BuildContext context) {
-    return cartBarHeight + floatingCartBottomGap + 8 +
-        MediaQuery.paddingOf(context).bottom;
+    return cartBarHeight +
+        floatingCartBottomGap +
+        8 +
+        systemBottomInset(context);
   }
 
   /// Fixed add-to-cart bar on product detail (padding + 48px CTA).

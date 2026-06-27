@@ -7,7 +7,11 @@ import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/order_model.dart';
 import '../../services/order_service.dart';
 import '../../services/payment_service.dart';
+import '../../utils/order_payment_util.dart';
+import '../../widgets/checkout/checkout_exit_payment_sheet.dart';
+import '../../widgets/checkout/payment_canceled_dialog.dart';
 import '../orders/order_confirmation_screen.dart';
+import '../orders/order_detail_screen.dart';
 import 'payment_result_screen.dart';
 
 /// Warm processing screen shown while Cashfree SDK runs + backend confirms payment.
@@ -72,7 +76,10 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
 
   Future<void> _pollPaymentStatus() async {
     if (_navigated || !mounted) return;
-    if (_pollAttempts >= _maxPollAttempts) return;
+    if (_pollAttempts >= _maxPollAttempts) {
+      await _handlePollExhausted();
+      return;
+    }
 
     _pollAttempts++;
 
@@ -82,11 +89,23 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
       final status = (statusData['status'] ?? statusData['paymentStatus'])
           ?.toString()
           .toUpperCase();
-      if (status != 'SUCCESS' && status != 'PAID') return;
-
       final orderStatus = (statusData['orderStatus'] ?? statusData['order_status'])
           ?.toString()
           .toUpperCase();
+
+      if (status == 'FAILED' || orderStatus == 'CANCELLED') {
+        _goToFailure(
+          PaymentResult(
+            success: false,
+            orderId: widget.order.id,
+            errorCode: 'PAYMENT_DECLINED',
+            errorMessage: 'Payment could not be completed.',
+          ),
+        );
+        return;
+      }
+
+      if (status != 'SUCCESS' && status != 'PAID') return;
 
       if (orderStatus == 'CONFIRMED') {
         await _completeSuccess(
@@ -105,6 +124,30 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
       }
     } catch (_) {
       // Keep polling until SDK completes or max attempts.
+    }
+  }
+
+  Future<void> _handlePollExhausted() async {
+    if (_navigated || !mounted) return;
+
+    try {
+      final order = await _orderService.getOrderById(widget.order.id);
+      if (order.status.toUpperCase() == 'CONFIRMED' || isOrderPaid(order)) {
+        await _completeSuccess();
+        return;
+      }
+      if (isPaymentFailed(order)) {
+        _goToFailure(
+          PaymentResult(
+            success: false,
+            orderId: widget.order.id,
+            errorCode: 'PAYMENT_DECLINED',
+            errorMessage: 'Payment could not be completed.',
+          ),
+        );
+      }
+    } catch (_) {
+      // Stay on screen — user can use back to exit.
     }
   }
 
@@ -140,6 +183,17 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
 
     final orderStatus = confirmedOrder.status.toUpperCase();
     final paymentStatus = confirmedOrder.paymentStatus?.toUpperCase() ?? '';
+    if (orderStatus == 'CANCELLED' || paymentStatus == 'FAILED') {
+      _goToFailure(
+        PaymentResult(
+          success: false,
+          orderId: widget.order.id,
+          errorCode: 'PAYMENT_DECLINED',
+          errorMessage: 'Payment could not be completed.',
+        ),
+      );
+      return;
+    }
     if (orderStatus != 'CONFIRMED' && paymentStatus != 'PAID') {
       // Payment row may show SUCCESS before order confirm finishes — keep waiting.
       return;
@@ -163,32 +217,55 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
     );
   }
 
-  void _goToFailure(PaymentResult result) {
+  void _goToFailure(PaymentResult result) async {
     if (_navigated || !mounted) return;
     _navigated = true;
     _pollTimer?.cancel();
 
+    OrderModel order = widget.order;
+    try {
+      order = await _orderService.getOrderById(widget.order.id);
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    if (result.errorCode == 'PAYMENT_CANCELLED' &&
+        !isPaymentFailed(order)) {
+      final navigator = Navigator.of(context);
+      PaymentCanceledDialog.show(context).then((_) {
+        if (!mounted) return;
+        navigator.pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => OrderDetailScreen(orderId: widget.order.id),
+          ),
+        );
+      });
+      return;
+    }
+
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => PaymentResultScreen(
-          order: widget.order,
+          order: order,
           deliveryAddress: widget.deliveryAddress,
           errorMessage: result.errorMessage,
           errorCode: result.errorCode,
-          onRetry: () async {
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                builder: (_) => PaymentProcessingScreen(
-                  order: widget.order,
-                  deliveryAddress: widget.deliveryAddress,
-                  paymentService: widget.paymentService,
-                  amount: widget.amount,
-                  checkoutMode: widget.checkoutMode,
-                  upiPackageId: widget.upiPackageId,
-                ),
-              ),
-            );
-          },
+          onRetry: isPaymentFailed(order)
+              ? null
+              : () async {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(
+                      builder: (_) => PaymentProcessingScreen(
+                        order: widget.order,
+                        deliveryAddress: widget.deliveryAddress,
+                        paymentService: widget.paymentService,
+                        amount: widget.amount,
+                        checkoutMode: widget.checkoutMode,
+                        upiPackageId: widget.upiPackageId,
+                      ),
+                    ),
+                  );
+                },
         ),
       ),
     );
@@ -201,6 +278,14 @@ class _PaymentProcessingScreenState extends State<PaymentProcessingScreen>
 
     return PopScope(
       canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop || _navigated) return;
+        final navigator = Navigator.of(context);
+        final shouldExit = await CheckoutExitPaymentSheet.show(context);
+        if (shouldExit == true && mounted && !_navigated) {
+          navigator.pop();
+        }
+      },
       child: Scaffold(
         backgroundColor: mv.surfaceWarm,
         body: SafeArea(

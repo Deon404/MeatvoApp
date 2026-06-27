@@ -87,6 +87,43 @@ const applyPaymentFailure = async (client, { paymentId, orderId, customerId, io 
   });
 };
 
+/** User cancelled SDK checkout — keep order retryable, mark payment as failed. */
+const applyPaymentAbandon = async (
+  client,
+  { paymentId, orderId, customerId, io, reason = 'user_abandoned' }
+) => {
+  if (paymentId) {
+    await client.query(
+      `UPDATE payment_transactions
+       SET status = 'FAILED', updated_at = NOW()
+       WHERE id = $1 AND status IN ('INITIATED', 'PENDING')`,
+      [paymentId]
+    );
+  }
+
+  await client.query(
+    `UPDATE orders
+     SET payment_status = 'FAILED', updated_at = NOW()
+     WHERE id = $1
+       AND status IN ('PLACED', 'PAYMENT_PENDING')
+       AND payment_mode = 'ONLINE'`,
+    [orderId]
+  );
+
+  emitOrderLifecycleEvent(io, {
+    orderId,
+    customerId,
+    payload: {
+      orderId,
+      status: 'PLACED',
+      paymentStatus: 'FAILED',
+      message: 'Payment was not completed',
+      reason,
+      updatedAt: new Date().toISOString(),
+    },
+  });
+};
+
 /**
  * @route POST /api/payments/cashfree/initiate
  */
@@ -117,7 +154,7 @@ const initiatePayment = async (req, res) => {
 
     const order = orderResult.rows[0];
 
-    if (order.status !== 'PLACED') {
+    if (!UNCONFIRMED_ORDER_STATUSES.has(order.status)) {
       await client.query('ROLLBACK');
       return fail(res, 400, `Order cannot be paid for. Current status: ${order.status}`);
     }
@@ -567,9 +604,166 @@ const verifyPayment = async (req, res) => {
   }
 };
 
+/**
+ * @route POST /api/payments/cashfree/abandon
+ * User dismissed Cashfree checkout — order stays PLACED for retry.
+ */
+const abandonPayment = async (req, res) => {
+  const orderId = Number(req.body?.orderId);
+  const reasonRaw = String(req.body?.reason || 'user_abandoned').trim();
+  const reason = reasonRaw.slice(0, 64) || 'user_abandoned';
+
+  if (!Number.isInteger(orderId) || orderId <= 0) {
+    return fail(res, 400, 'Order ID is required');
+  }
+
+  const client = await getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    const orderResult = await client.query(
+      `SELECT id, customer_id, status, payment_mode, payment_status
+       FROM orders
+       WHERE id = $1 AND customer_id = $2
+       FOR UPDATE`,
+      [orderId, req.user.id]
+    );
+
+    if (orderResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return fail(res, 404, 'Order not found or access denied');
+    }
+
+    const order = orderResult.rows[0];
+
+    if (order.payment_mode !== 'ONLINE') {
+      await client.query('ROLLBACK');
+      return fail(res, 400, 'Order is not configured for online payment');
+    }
+
+    if (!UNCONFIRMED_ORDER_STATUSES.has(order.status)) {
+      await client.query('ROLLBACK');
+      return fail(
+        res,
+        400,
+        `Order payment cannot be abandoned. Current status: ${order.status}`
+      );
+    }
+
+    const paymentResult = await client.query(
+      `SELECT id, status
+       FROM payment_transactions
+       WHERE order_id = $1 AND gateway = 'CASHFREE'
+       ORDER BY created_at DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [orderId]
+    );
+
+    const payment = paymentResult.rows[0];
+    const io = req.app.get('io');
+
+    if (payment?.status === 'SUCCESS') {
+      await client.query('ROLLBACK');
+      return ok(
+        res,
+        { orderId, paymentStatus: 'PAID', alreadyPaid: true },
+        'Payment already completed'
+      );
+    }
+
+    const definitiveFailureReasons = new Set([
+      'payment_failed',
+      'payment_declined',
+      'sdk_error',
+      'network_error',
+    ]);
+    const isDefinitiveFailure = definitiveFailureReasons.has(reason);
+
+    if (payment?.status === 'FAILED' && !isDefinitiveFailure) {
+      await client.query(
+        `UPDATE orders
+         SET payment_status = 'FAILED', updated_at = NOW()
+         WHERE id = $1`,
+        [orderId]
+      );
+      await client.query('COMMIT');
+      return ok(
+        res,
+        {
+          orderId,
+          paymentStatus: 'FAILED',
+          orderStatus: order.status,
+        },
+        'Payment already abandoned'
+      );
+    }
+
+    if (isDefinitiveFailure) {
+      if (payment?.id) {
+        await applyPaymentFailure(client, {
+          paymentId: payment.id,
+          orderId,
+          customerId: order.customer_id,
+          io,
+        });
+      } else {
+        await client.query(
+          `UPDATE orders
+           SET status = 'CANCELLED', payment_status = 'FAILED', updated_at = NOW()
+           WHERE id = $1`,
+          [orderId]
+        );
+      }
+      await client.query('COMMIT');
+      return ok(
+        res,
+        {
+          orderId,
+          paymentStatus: 'FAILED',
+          orderStatus: 'CANCELLED',
+        },
+        'Payment failed — order cancelled'
+      );
+    }
+
+    await applyPaymentAbandon(client, {
+      paymentId: payment?.id ?? null,
+      orderId,
+      customerId: order.customer_id,
+      io,
+      reason,
+    });
+
+    await client.query('COMMIT');
+
+    return ok(
+      res,
+      {
+        orderId,
+        paymentStatus: 'FAILED',
+        orderStatus: order.status,
+      },
+      'Payment abandoned'
+    );
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (_) {
+      /* ignore rollback errors */
+    }
+    logger.error('cashfree_abandon_failed', { orderId, error: error.message });
+    return fail(res, 500, 'Failed to record payment abandonment');
+  } finally {
+    client.release();
+  }
+};
+
 module.exports = {
   initiatePayment,
   handleWebhook,
   getPaymentStatus,
   verifyPayment,
+  abandonPayment,
 };

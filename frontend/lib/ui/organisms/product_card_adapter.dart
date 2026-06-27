@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 import '../../models/product_variant_model.dart';
 import '../../services/store_status_service.dart';
 import '../../utils/product_unit_helper.dart';
@@ -66,6 +68,6 @@ abstract final class ProductCardAdapter {
   static double carouselHeight(double screenWidth) =>
       MeatvoProductCard.carouselCardHeight(carouselWidth(screenWidth));
 
-  static double gridCardHeight(double screenWidth) =>
-      MeatvoProductCard.gridCardHeight(screenWidth);
+  static double gridCardHeight(double screenWidth, [BuildContext? context]) =>
+      MeatvoProductCard.gridCardHeight(screenWidth, context);
 }

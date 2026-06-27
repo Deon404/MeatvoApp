@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../design_system/tokens/meatvo_colors.dart';
+import '../models/order_model.dart';
+import '../utils/order_payment_util.dart';
 import '../utils/order_status_util.dart';
 
 const _stepRed = MeatvoColors.brandPrimary;
@@ -296,6 +298,8 @@ String orderTrackingHeadlineForStatus(String status, {String? riderName}) {
       return 'Preparing your order';
     case 'confirmed':
       return 'Order confirmed';
+    case 'payment_pending':
+      return 'Payment pending';
     case 'placed':
     case 'pending':
       return 'Order placed';
@@ -309,7 +313,14 @@ String orderTrackingChipLabelForStatus(String status) {
   final s = normalizeOrderStatus(status);
   if (s == 'delivered') return 'Delivered';
   if (s == 'cancelled' || s == 'failed_delivery') return 'Cancelled';
+  if (s == 'payment_pending') return 'Payment pending';
   return 'Active';
+}
+
+/// Payment-aware chip label for order detail / list surfaces.
+String orderTrackingChipLabelForOrder(OrderModel order) {
+  if (isOrderAwaitingPayment(order)) return 'Payment pending';
+  return orderTrackingChipLabelForStatus(order.status);
 }
 
 const _trackingSteps = [

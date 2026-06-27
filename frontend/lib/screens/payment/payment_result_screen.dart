@@ -4,6 +4,7 @@ import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/order_model.dart';
 import '../../utils/order_display_util.dart';
+import '../../utils/order_payment_util.dart';
 import '../orders/order_detail_screen.dart';
 
 /// Payment failure screen — calm recovery, single primary action.
@@ -84,9 +85,12 @@ class PaymentResultScreen extends StatelessWidget {
               if (order != null) ...[
                 SizedBox(height: mv.spacing.sm),
                 Text(
-                  'Order #${formatOrderDisplayId(order!.id)} · '
-                  '₹${order!.finalAmount.toStringAsFixed(0)} — '
-                  'saved, payment pending',
+                  isPaymentFailed(order!)
+                      ? 'Order #${formatOrderDisplayId(order!.id)} was cancelled — '
+                          'no payment was charged.'
+                      : 'Order #${formatOrderDisplayId(order!.id)} · '
+                          '₹${order!.finalAmount.toStringAsFixed(0)} — '
+                          'payment pending, you can retry',
                   style: textTheme.bodySmall?.copyWith(
                     color: mv.textMuted,
                   ),

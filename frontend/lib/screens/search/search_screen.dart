@@ -223,13 +223,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           // crashed with "Null check operator used on a null value".
           autofocus: (widget.initialQuery ?? '').isEmpty,
           style: TextStyle(
-            color: Colors.white,
+            color: AppColors.textPrimary,
             fontSize: R.fontSize(16, context),
           ),
           decoration: InputDecoration(
             hintText: 'Search products...',
             hintStyle: TextStyle(
-              color: Colors.white70,
+              color: AppColors.textMuted,
               fontSize: R.fontSize(16, context),
             ),
             border: InputBorder.none,
@@ -574,7 +574,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final busyProductIds = homeState.busyProductIds;
     final changeQty = ref.read(homeViewModelProvider.notifier).changeCartQuantity;
     final cardHeight =
-        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
+        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width, context);
 
     return GridView.builder(
       padding: EdgeInsets.all(R.sw(4, context)),

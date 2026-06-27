@@ -162,6 +162,38 @@ class PaymentService {
     return Map<String, dynamic>.from(res.data['data'] as Map);
   }
 
+  Future<void> _abandonPaymentRequest({
+    required String orderId,
+    String reason = 'user_abandoned',
+  }) async {
+    try {
+      await _api.post('/payments/cashfree/abandon', data: {
+        'orderId': int.tryParse(orderId) ?? orderId,
+        'reason': reason,
+      });
+    } catch (e, st) {
+      debugPrint('Payment abandon notify failed: $e');
+      await ErrorTrackingService.captureException(
+        e,
+        stackTrace: st,
+        tag: 'cashfree_abandon',
+      );
+    }
+  }
+
+  String _abandonReasonForCode(String? code) {
+    switch (code) {
+      case 'PAYMENT_CANCELLED':
+        return 'user_cancelled';
+      case 'PAYMENT_DECLINED':
+        return 'payment_declined';
+      case 'NETWORK_ERROR':
+        return 'network_error';
+      default:
+        return 'sdk_error';
+    }
+  }
+
   ({String code, String message}) _mapCashfreeError(CFErrorResponse error) {
     final message = error.getMessage()?.trim() ?? '';
     final lower = message.toLowerCase();
@@ -259,6 +291,24 @@ class PaymentService {
           final verified = verification['verified'] == true ||
               verification['status']?.toString().toUpperCase() == 'SUCCESS';
           if (!verified) {
+            final verifyStatus =
+                verification['status']?.toString().toUpperCase();
+            if (verifyStatus == 'FAILED') {
+              await _abandonPaymentRequest(
+                orderId: orderId,
+                reason: 'payment_failed',
+              );
+              completer.complete(
+                PaymentResult(
+                  success: false,
+                  orderId: orderId,
+                  status: verifyStatus,
+                  errorCode: 'PAYMENT_DECLINED',
+                  errorMessage: 'Payment could not be completed.',
+                ),
+              );
+              return;
+            }
             completer.complete(
               PaymentResult(
                 success: false,
@@ -295,6 +345,10 @@ class PaymentService {
         if (completer.isCompleted) return;
         await _logCashfreeError(error, orderId);
         final mapped = _mapCashfreeError(error);
+        await _abandonPaymentRequest(
+          orderId: orderId,
+          reason: _abandonReasonForCode(mapped.code),
+        );
         completer.complete(
           PaymentResult(
             success: false,

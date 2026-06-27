@@ -129,21 +129,33 @@ class MeatvoProductCard extends StatefulWidget {
   // we fall back to this finite width instead of crashing.
   static const double _kFallbackWidth = 172;
 
-  /// Fixed body height below the 1:1 image: name + unit + price + CTA + padding.
-  static const double _kBodyHeight = 124;
+  /// Fixed body height below the 1:1 image: 2-line name + unit + price + CTA + padding.
+  static const double _kBodyHeight = 138;
 
   static double gridCellWidth(double screenWidth) {
     return (screenWidth - MeatvoSpacing.md * 2 - MeatvoSpacing.sm) / 2;
   }
 
-  static double gridCardHeight(double screenWidth) {
+  /// Body height scaled for accessibility text size (capped to avoid runaway grids).
+  static double gridBodyHeight(BuildContext context) {
+    final scale =
+        MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.2);
+    return _kBodyHeight * scale;
+  }
+
+  static double gridCardHeight(double screenWidth, [BuildContext? context]) {
     final cellWidth = gridCellWidth(screenWidth);
-    return cellWidth + _kBodyHeight;
+    final bodyHeight =
+        context != null ? gridBodyHeight(context) : _kBodyHeight;
+    return cellWidth + bodyHeight;
   }
 
   /// Height for fixed-width carousel rails (e.g. home horizontal sections).
-  static double carouselCardHeight(double cardWidth) =>
-      cardWidth + _kBodyHeight;
+  static double carouselCardHeight(double cardWidth, [BuildContext? context]) {
+    final bodyHeight =
+        context != null ? gridBodyHeight(context) : _kBodyHeight;
+    return cardWidth + bodyHeight;
+  }
 
   @override
   State<MeatvoProductCard> createState() => _MeatvoProductCardState();
@@ -248,68 +260,82 @@ class _MeatvoProductCardState extends State<MeatvoProductCard> {
                         ),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            widget.product.name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: true,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(
-                                  color: mv.textPrimary,
-                                  fontWeight: FontWeight.w700,
-                                  height: 1.25,
-                                  letterSpacing: -0.2,
-                                ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            widget.displayUnit,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            softWrap: false,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(
-                                  color: mv.textMuted,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                          ),
-                          const SizedBox(height: 6),
-                          PriceRow(
-                            price: widget.displayPrice,
-                            originalPrice: widget.originalPrice,
-                            discountPercent: resolvedDiscount,
-                            compact: true,
-                            showDiscountText: !showDiscountBadge,
-                          ),
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: SizedBox(
-                              width: MeatvoProductCard._kCtaWidth,
-                              height: MeatvoProductCard.ctaHeight,
-                              child: _CartCta(
-                                inStock: widget.inStock,
-                                orderingPaused: widget.orderingPaused,
-                                quantity: widget.quantity,
-                                isBusy: widget.isBusy,
-                                onAdd: widget.onAdd == null ? null : _handleAdd,
-                                onIncrement:
-                                    widget.onIncrement == null ? null : _handleIncrement,
-                                onDecrement: widget.onDecrement,
+                    SizedBox(
+                      height: MeatvoProductCard.gridBodyHeight(context),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Flexible(
+                                    fit: FlexFit.loose,
+                                    child: Text(
+                                      widget.product.name,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      softWrap: true,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            color: mv.textPrimary,
+                                            fontWeight: FontWeight.w700,
+                                            height: 1.25,
+                                            letterSpacing: -0.2,
+                                          ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    widget.displayUnit,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    softWrap: false,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(
+                                          color: mv.textMuted,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  PriceRow(
+                                    price: widget.displayPrice,
+                                    originalPrice: widget.originalPrice,
+                                    discountPercent: resolvedDiscount,
+                                    compact: true,
+                                    showDiscountText: !showDiscountBadge,
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: SizedBox(
+                                width: MeatvoProductCard._kCtaWidth,
+                                height: MeatvoProductCard.ctaHeight,
+                                child: _CartCta(
+                                  inStock: widget.inStock,
+                                  orderingPaused: widget.orderingPaused,
+                                  quantity: widget.quantity,
+                                  isBusy: widget.isBusy,
+                                  onAdd:
+                                      widget.onAdd == null ? null : _handleAdd,
+                                  onIncrement: widget.onIncrement == null
+                                      ? null
+                                      : _handleIncrement,
+                                  onDecrement: widget.onDecrement,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],

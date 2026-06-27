@@ -46,7 +46,8 @@ class HomeProductSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final error = errorMessage;
-    final railHeight = MeatvoProductCard.carouselCardHeight(_kRailCardWidth);
+    final railHeight =
+        MeatvoProductCard.carouselCardHeight(_kRailCardWidth, context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -54,6 +54,7 @@ router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit,
 router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
 
 router.post('/cashfree/initiate', protect, paymentRateLimit, cashfreeController.initiatePayment);
+router.post('/cashfree/abandon', protect, paymentRateLimit, cashfreeController.abandonPayment);
 router.post('/cashfree/webhook', webhookRateLimit, cashfreeController.handleWebhook);
 router.get('/cashfree/:orderId/status', protect, cashfreeController.getPaymentStatus);
 router.post('/cashfree/verify', protect, paymentRateLimit, cashfreeController.verifyPayment);

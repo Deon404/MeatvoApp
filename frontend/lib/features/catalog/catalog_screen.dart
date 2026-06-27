@@ -190,7 +190,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
     final notifier = ref.read(provider.notifier);
     final mv = context.meatvo;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final cardHeight = MeatvoProductCard.gridCardHeight(screenWidth);
+    final cardHeight = MeatvoProductCard.gridCardHeight(screenWidth, context);
     final tabBottomPad = widget.showBackButton
         ? MeatvoLayout.catalogScrollBottomInset(context)
         : MeatvoLayout.browsingScrollBottomInset(context);
@@ -272,7 +272,7 @@ class _CatalogScreenState extends ConsumerState<CatalogScreen>
             Positioned(
               left: 0,
               right: 0,
-              bottom: MediaQuery.paddingOf(context).bottom +
+              bottom: MeatvoLayout.systemBottomInset(context) +
                   MeatvoLayout.floatingCartBottomGap,
               child: FloatingCartBar(
                 onViewCartTapped: _openCart,

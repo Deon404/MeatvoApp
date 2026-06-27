@@ -104,7 +104,7 @@ class _WishlistLoadingGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final cardHeight =
-        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
+        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width, context);
 
     return GridView.builder(
       padding: EdgeInsets.fromLTRB(
@@ -157,7 +157,7 @@ class _WishlistGrid extends ConsumerWidget {
     final busyProductIds = homeState.busyProductIds;
     final changeQty = ref.read(homeViewModelProvider.notifier).changeCartQuantity;
     final cardHeight =
-        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width);
+        MeatvoProductCard.gridCardHeight(MediaQuery.sizeOf(context).width, context);
 
     return Column(
       children: [

@@ -16,20 +16,20 @@ import '../../theme/app_theme.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
 import '../../widgets/common/shimmer_loader.dart';
+import '../../widgets/checkout/checkout_cancellation_policy.dart';
 import '../../widgets/checkout/checkout_delivery_sections.dart';
 import '../../widgets/checkout/checkout_order_summary.dart';
-import '../../widgets/checkout/checkout_cart_preview.dart';
-import '../../widgets/checkout/checkout_payment_methods.dart';
+import '../../widgets/checkout/checkout_payment_method_sheet.dart';
+import '../../widgets/checkout/checkout_payment_types.dart';
 import '../../widgets/checkout/checkout_place_order_bar.dart';
-import '../../widgets/checkout/checkout_progress_header.dart';
-import '../../widgets/checkout/checkout_section_header.dart';
+import '../../widgets/checkout/checkout_quick_pay_sheet.dart';
 import '../../widgets/checkout/checkout_success_overlay.dart';
 import '../../widgets/location/delivery_location_sheet.dart';
 import '../../widgets/store/store_closed_sheet.dart';
 import '../orders/order_confirmation_screen.dart';
 import '../payment/payment_processing_screen.dart';
 
-/// Premium checkout — address, express delivery, payment, place order.
+/// Review & Pay — bill summary, policy, address, payment sheets, place order.
 class CheckoutScreen extends StatefulWidget {
   final CartModel cart;
   final AddressModel? selectedAddress;
@@ -69,11 +69,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _errorMessage;
   String? _placeOrderError;
 
-  CheckoutPaymentOption _paymentOption = CheckoutPaymentOption.cod;
+  CheckoutPaymentOption? _paymentOption;
   CheckoutUpiSelection _upiSelection = CheckoutUpiSelection.nativePicker;
   String? _selectedUpiPackageId;
 
-  String get _paymentMethod => _paymentOption.backendValue;
+  String get _paymentMethod =>
+      (_paymentOption ?? CheckoutPaymentOption.cod).backendValue;
 
   bool get _isOnlinePayment => _paymentMethod == 'ONLINE';
 
@@ -87,18 +88,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   CartModel get _activeCart => _cart ?? widget.cart;
 
+  double get _productDiscount => _activeCart.totalDiscount;
+
   OrderPricingBreakdown get _pricing => OrderPricingCalculator.calculate(
         subtotal: _activeCart.subtotal,
-        discount: _activeCart.totalDiscount + widget.couponDiscount,
+        discount: _productDiscount + widget.couponDiscount,
         deliveryChargeAmount: _deliveryFeeAmount,
       );
 
   double get _subtotal => _pricing.subtotal;
-  double get _discount => _pricing.discount;
   double get _calculatedDeliveryCharge => _pricing.deliveryCharge;
   double get _total => _pricing.grandTotal;
-
-  int get _itemCount => _activeCart.items.length;
 
   @override
   void initState() {
@@ -151,9 +151,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     try {
       final cart = await _cartService.getCart();
       if (mounted) setState(() => _cart = cart);
-    } catch (_) {
-      // Keep passed-in cart as fallback display.
-    }
+    } catch (_) {}
   }
 
   Future<void> _loadAddresses() async {
@@ -219,11 +217,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  String get _placeOrderLabel =>
-      _isOnlinePayment ? 'Pay & Place Order' : 'Place Order';
-
   String get _loadingMessage => _isOnlinePayment
-      ? 'Creating your order…'
+      ? 'Opening secure payment…'
       : 'Placing your order…';
 
   String _friendlyError(Object error) {
@@ -269,6 +264,56 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       _isPlacingOrder = false;
       _placeOrderError = null;
     });
+  }
+
+  Future<CheckoutQuickPayResult?> _showQuickPay() {
+    return CheckoutQuickPaySheet.show(
+      context,
+      total: _total,
+      upiSelection: _upiSelection,
+      upiPackageId: _selectedUpiPackageId,
+      paymentService: _paymentService,
+    );
+  }
+
+  void _applyUpiSelection(CheckoutQuickPayResult result) {
+    setState(() {
+      _upiSelection = result.upiSelection;
+      _selectedUpiPackageId = result.upiPackageId;
+    });
+  }
+
+  Future<void> _onPayViaTap() async {
+    final option = await CheckoutPaymentMethodSheet.show(context);
+    if (option == null || !mounted) return;
+
+    setState(() => _paymentOption = option);
+    await _savePaymentOption(option);
+
+    if (option == CheckoutPaymentOption.online) {
+      final result = await _showQuickPay();
+      if (result?.confirmed != true || !mounted) return;
+      _applyUpiSelection(result!);
+      await _placeOrder();
+    }
+  }
+
+  Future<void> _onPlaceOrderTap() async {
+    if (_paymentOption == null) {
+      final option = await CheckoutPaymentMethodSheet.show(context);
+      if (option == null || !mounted) return;
+
+      setState(() => _paymentOption = option);
+      await _savePaymentOption(option);
+    }
+
+    if (_paymentOption == CheckoutPaymentOption.online) {
+      final result = await _showQuickPay();
+      if (result?.confirmed != true || !mounted) return;
+      _applyUpiSelection(result!);
+    }
+
+    await _placeOrder();
   }
 
   Future<void> _completeOrderFlow(
@@ -495,125 +540,89 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         PopScope(
           canPop: !_isPlacingOrder || _placeOrderError != null,
           child: Scaffold(
-          resizeToAvoidBottomInset: true,
-          backgroundColor: mv.surfaceWarm,
-          appBar: AppBar(
+            resizeToAvoidBottomInset: true,
             backgroundColor: mv.surfaceWarm,
-            elevation: 0,
-            scrolledUnderElevation: 0,
-            leading: IconButton(
-              icon: Icon(Icons.arrow_back_rounded, color: mv.textPrimary),
-              onPressed: _isPlacingOrder ? null : () => Navigator.pop(context),
-            ),
-            title: Column(
-              children: [
-                Text(
-                  'Checkout',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: mv.textPrimary,
-                      ),
-                ),
-                if (_itemCount > 0)
-                  Text(
-                    '$_itemCount ${_itemCount == 1 ? 'item' : 'items'} · ₹${_total.toStringAsFixed(0)}',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: mv.textMuted,
-                          fontWeight: FontWeight.w500,
-                        ),
-                  ),
-              ],
-            ),
-            centerTitle: true,
-          ),
-          body: _isLoading
-              ? const ShimmerLoader.listTile(count: 4)
-              : _errorMessage != null
-                  ? ErrorStateWidget(
-                      title: 'Checkout unavailable',
-                      message: _errorMessage,
-                      onRetry: _loadAddresses,
-                    )
-                  : SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(
-                        mv.spacing.md,
-                        mv.spacing.xs,
-                        mv.spacing.md,
-                        150,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const CheckoutProgressHeader(activeStep: 2),
-                          if (_addresses.isEmpty)
-                            EmptyStateWidget(
-                              title: 'No saved address',
-                              message:
-                                  'Add a delivery address to continue checkout.',
-                              buttonLabel: 'Add address',
-                              onAction: _openAddAddress,
-                              fullScreen: false,
-                            )
-                          else ...[
-                            CheckoutDeliverySection(
-                              selectedAddress: _selectedAddress,
-                              isEmptyAddress: _selectedAddress == null,
-                              onChangeAddress: _selectAddress,
-                              onAddAddress: _openAddAddress,
-                              isStoreOpen: _isStoreOpen,
-                              storeClosedMessage: _isStoreOpen
-                                  ? null
-                                  : (_storeStatus?.displayClosedMessage ??
-                                      'Store is closed — orders resume when we open.'),
-                            ),
-                            const CheckoutSectionDivider(),
-                            CheckoutCartPreview(items: _activeCart.items),
-                            const CheckoutSectionDivider(),
-                            CheckoutPaymentMethods(
-                              selected: _paymentOption,
-                              onSelected: (option) {
-                                setState(() => _paymentOption = option);
-                                _savePaymentOption(option);
-                              },
-                              upiSelection: _upiSelection,
-                              selectedUpiPackageId: _selectedUpiPackageId,
-                              paymentService: _paymentService,
-                              onUpiSelectionChanged: (selection, packageId) {
-                                setState(() {
-                                  _upiSelection = selection;
-                                  _selectedUpiPackageId = packageId;
-                                });
-                              },
-                            ),
-                            const CheckoutSectionDivider(),
-                            CheckoutOrderSummary(
-                              subtotal: _subtotal,
-                              discount: _discount,
-                              deliveryCharge: _calculatedDeliveryCharge,
-                              total: _total,
-                              itemCount: _itemCount,
-                              couponCode: widget.couponCode,
-                            ),
-                          ],
-                        ],
-                      ),
+            appBar: AppBar(
+              backgroundColor: mv.surfaceWarm,
+              elevation: 0,
+              scrolledUnderElevation: 0,
+              leading: IconButton(
+                icon: Icon(Icons.arrow_back_rounded, color: mv.textPrimary),
+                onPressed: _isPlacingOrder ? null : () => Navigator.pop(context),
+              ),
+              title: Text(
+                'Review & Pay',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: mv.textPrimary,
                     ),
-          bottomNavigationBar: _addresses.isEmpty || _isLoading
-              ? null
-              : CheckoutPlaceOrderBar(
-                  bill: CheckoutBillBreakdown(
-                    subtotal: _subtotal,
-                    discount: _discount,
-                    deliveryCharge: _calculatedDeliveryCharge,
-                    total: _total,
-                    itemCount: _itemCount,
+              ),
+              centerTitle: false,
+            ),
+            body: _isLoading
+                ? const ShimmerLoader.listTile(count: 4)
+                : _errorMessage != null
+                    ? ErrorStateWidget(
+                        title: 'Checkout unavailable',
+                        message: _errorMessage,
+                        onRetry: _loadAddresses,
+                      )
+                    : SingleChildScrollView(
+                        padding: const EdgeInsets.only(bottom: 150),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (_addresses.isEmpty)
+                                EmptyStateWidget(
+                                  title: 'No saved address',
+                                  message:
+                                      'Add a delivery address to continue checkout.',
+                                  buttonLabel: 'Add address',
+                                  onAction: _openAddAddress,
+                                  fullScreen: false,
+                                )
+                              else ...[
+                                CheckoutOrderSummary(
+                                  subtotal: _subtotal,
+                                  productDiscount: _productDiscount,
+                                  couponDiscount: widget.couponDiscount,
+                                  deliveryCharge: _calculatedDeliveryCharge,
+                                  total: _total,
+                                ),
+                                const SizedBox(height: 20),
+                                const CheckoutCancellationPolicy(),
+                                const SizedBox(height: 20),
+                                CheckoutDeliverySection(
+                                  selectedAddress: _selectedAddress,
+                                  isEmptyAddress: _selectedAddress == null,
+                                  onChangeAddress: _selectAddress,
+                                  onAddAddress: _openAddAddress,
+                                  isStoreOpen: _isStoreOpen,
+                                  storeClosedMessage: _isStoreOpen
+                                      ? null
+                                      : (_storeStatus?.displayClosedMessage ??
+                                          'Store is closed — orders resume when we open.'),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+            bottomNavigationBar: _addresses.isEmpty || _isLoading
+                ? null
+                : CheckoutPlaceOrderBar(
+                    bill: CheckoutBillBreakdown(total: _total),
+                    isEnabled: canPlaceOrder,
+                    isLoading: _isPlacingOrder,
+                    selectedPayment: _paymentOption,
+                    onPayViaTap: _onPayViaTap,
+                    onPlaceOrder: _onPlaceOrderTap,
                   ),
-                  isEnabled: canPlaceOrder,
-                  isLoading: _isPlacingOrder,
-                  showBreakdownSpinner: false,
-                  label: _placeOrderLabel,
-                  onPlaceOrder: _placeOrder,
-                ),
           ),
         ),
         if (_isPlacingOrder && !_showSuccessOverlay)
@@ -622,7 +631,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             child: CheckoutLoadingOverlay(
               message: _loadingMessage,
               subtitle: _isOnlinePayment
-                  ? 'You will be redirected to secure payment'
+                  ? 'Complete payment in Cashfree — order confirms only after payment'
                   : 'Confirming availability & creating order',
               errorMessage: _placeOrderError,
               onCancel:
@@ -639,4 +648,3 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 }
-

@@ -12,6 +12,7 @@ import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_eta_util.dart';
 import '../../utils/order_status_util.dart';
+import '../../utils/order_payment_util.dart';
 import '../../utils/eta_display_util.dart';
 import '../../services/maps_service.dart';
 import '../../widgets/maps/delivery_tracking_map.dart';
@@ -21,6 +22,7 @@ import '../../widgets/order/order_tracking_bottom_sheet.dart';
 import '../../widgets/order/order_tracking_header.dart';
 import '../../widgets/order/order_tracking_hero_card.dart';
 import '../../widgets/order/order_tracking_illustration.dart';
+import '../../widgets/order_status_live_indicator.dart';
 import '../../widgets/delivery/delivery_partner_contact_card.dart';
 import '../payment/payment_processing_screen.dart';
 import '../cart/cart_screen.dart';
@@ -500,6 +502,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   bool _shouldShowRiderSection() {
     if (_order == null) return false;
+    if (!isOrderLiveForTracking(_order!)) return false;
     return shouldShowPartnerSection(_order!.status);
   }
 
@@ -524,6 +527,39 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         normalized != 'on_way' &&
         normalized != 'rider_nearby' &&
         normalized != 'picked_up';
+  }
+
+  Widget _buildPaymentPendingBanner() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: SizedBox(
+        width: double.infinity,
+        height: 48,
+        child: FilledButton(
+          onPressed: _isRetryingPayment ? null : _retryPayment,
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            foregroundColor: AppColors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+          child: _isRetryingPayment
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppColors.white,
+                  ),
+                )
+              : const Text(
+                  'Complete payment',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+        ),
+      ),
+    );
   }
 
   Widget _buildRiderAssignedBanner() {
@@ -559,8 +595,8 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         (_liveRiderLng ?? _order!.riderLongitude) != null;
     final hasDeliveryCoords =
         _resolvedDeliveryLat != null && _resolvedDeliveryLng != null;
-    return shouldShowLiveMap(
-      _order!.status,
+    return shouldShowLiveMapForOrder(
+      _order!,
       hasRiderGps: hasRiderGps,
       hasDeliveryCoords: hasDeliveryCoords,
     );
@@ -606,9 +642,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   Widget _buildTrackingLayout() {
     final order = _order!;
+    final awaitingPayment = isOrderAwaitingPayment(order);
     final hasDeliveryCoords =
         _resolvedDeliveryLat != null && _resolvedDeliveryLng != null;
     final isDelivered = isOrderCompleted(order.status);
+    final illustrationStatus =
+        awaitingPayment ? 'payment_pending' : order.status;
 
     return Scaffold(
       resizeToAvoidBottomInset: false,
@@ -628,7 +667,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     riderName: order.riderName,
                     orderStatus: order.status,
                   )
-                : OrderTrackingIllustration(status: order.status),
+                : OrderTrackingIllustration(status: illustrationStatus),
           ),
           if (_showLiveMap)
             Positioned(
@@ -642,9 +681,10 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             right: 0,
             child: OrderTrackingHeader(
               status: order.status,
+              awaitingPayment: awaitingPayment,
               riderName: order.riderName,
-              etaMinutes: _headerEtaMinutes,
-              distanceText: _headerDistanceText,
+              etaMinutes: awaitingPayment ? null : _headerEtaMinutes,
+              distanceText: awaitingPayment ? null : _headerDistanceText,
               deliveredAt: order.deliveredAt,
               isRefreshing: _isRefreshing,
               onBack: () => Navigator.of(context).pop(),
@@ -685,27 +725,35 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           OrderTrackingBottomSheet(
             orderId: widget.orderId,
             status: order.status,
+            statusChipLabel: orderTrackingChipLabelForOrder(order),
             heroCard: OrderTrackingHeroCard(
               status: order.status,
+              awaitingPayment: awaitingPayment,
               deliveryAddress: order.deliveryAddress,
-              etaMinutes: _headerEtaMinutes,
-              estimatedDeliveryTime: _displayEstimatedAt,
+              etaMinutes: awaitingPayment ? null : _headerEtaMinutes,
+              estimatedDeliveryTime:
+                  awaitingPayment ? null : _displayEstimatedAt,
               deliverySlotLabel: order.deliverySlotLabel,
-              progressFraction: trackingProgressFraction(order.status),
+              progressFraction: awaitingPayment
+                  ? 0
+                  : trackingProgressFraction(order.status),
             ),
-            graceBanner: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                OrderCancelGraceBanner(
-                  createdAt: order.createdAt,
-                  status: order.status,
-                  isCancelling: _isCancelling,
-                  onCancel: _cancelOrder,
-                ),
-                if (_shouldShowRiderAssignedBanner()) _buildRiderAssignedBanner(),
-              ],
-            ),
+            graceBanner: awaitingPayment
+                ? _buildPaymentPendingBanner()
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      OrderCancelGraceBanner(
+                        createdAt: order.createdAt,
+                        status: order.status,
+                        isCancelling: _isCancelling,
+                        onCancel: _cancelOrder,
+                      ),
+                      if (_shouldShowRiderAssignedBanner())
+                        _buildRiderAssignedBanner(),
+                    ],
+                  ),
             otpCard: isDeliveryOtpVisible(order.status)
                 ? OrderDeliveryOtpCard(
                     otp: _deliveryOtp,
@@ -1100,8 +1148,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               ),
             ],
             // Retry Payment Button (if failed)
-            if (_order!.paymentStatus == 'failed' &&
-                _order!.paymentMethod == 'online') ...[
+            if (isOrderAwaitingPayment(_order!)) ...[
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,

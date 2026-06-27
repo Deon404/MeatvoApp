@@ -9,7 +9,7 @@ String normalizeOrderStatus(String? status) {
 
   switch (raw) {
     case 'payment_pending':
-      return 'placed';
+      return 'payment_pending';
     case 'payment_verified':
       return 'confirmed';
     case 'packing_started':
@@ -57,6 +57,7 @@ bool isOrderCancelled(String status) {
 /// Whether the customer can track a live delivery for this order.
 bool isOrderTrackable(String status) {
   final s = normalizeOrderStatus(status);
+  if (s == 'payment_pending') return false;
   return s == 'placed' ||
       s == 'pending' ||
       s == 'confirmed' ||
@@ -73,7 +74,7 @@ bool isOrderTrackable(String status) {
 /// Map index 0..5 for the 6-step horizontal stepper.
 int resolveTrackingStepIndex(String status) {
   final s = normalizeOrderStatus(status);
-  if (s == 'pending' || s == 'placed') return 0;
+  if (s == 'pending' || s == 'placed' || s == 'payment_pending') return 0;
   if (s == 'confirmed') return 1;
   if (s == 'preparing' || s == 'packed') return 2;
   if (s == 'assigned' || s == 'picked_up') return 3;
@@ -98,7 +99,10 @@ bool shouldShowLiveMap(
   bool hasDeliveryCoords = false,
 }) {
   final s = normalizeOrderStatus(status);
-  if (s == 'delivered' || s == 'cancelled' || s == 'failed_delivery') {
+  if (s == 'delivered' ||
+      s == 'cancelled' ||
+      s == 'failed_delivery' ||
+      s == 'payment_pending') {
     return false;
   }
   // Map-first UX: store → customer route for any active order with an address pin.
@@ -151,6 +155,8 @@ bool shouldShowPartnerSection(String status) {
 String trackingNotificationLabel(String status) {
   final s = normalizeOrderStatus(status);
   switch (s) {
+    case 'payment_pending':
+      return 'Payment pending';
     case 'placed':
     case 'pending':
       return 'Order placed';

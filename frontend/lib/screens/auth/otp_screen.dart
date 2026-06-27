@@ -5,10 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:sms_autofill/sms_autofill.dart';
 
 import '../../config/backend_resolver.dart';
-import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../navigation/app_destinations.dart';
 import '../../services/auth_service.dart';
+import 'auth_login_widgets.dart';
 import 'auth_screen_shell.dart';
 
 class OtpScreen extends StatefulWidget {
@@ -55,7 +55,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     final digits = widget.phone.replaceAll(RegExp(r'\D'), '');
     if (digits.length >= 10) {
       final local = digits.substring(digits.length - 10);
-      return '+91 ${local.substring(0, 2)}****${local.substring(6)}';
+      return 'XX ${local.substring(6)}';
     }
     return widget.phone;
   }
@@ -302,207 +302,161 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     final mv = context.meatvo;
     final theme = Theme.of(context);
 
+    final linkStyle = theme.textTheme.bodySmall?.copyWith(
+      color: mv.brandPrimary,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: mv.brandPrimary,
+    );
+
     return AuthScreenShell(
+      bottomFooter: const AuthLegalFooter(),
       children: [
-        const AuthBrandHeader(compact: true),
-        SizedBox(height: mv.spacing.lg),
-        AuthFormCard(
-          compact: true,
+        const AuthLogoHeader(compact: true),
+        SizedBox(height: mv.spacing.xl),
+        Text(
+          '4 digit OTP verification sent on $_maskedPhone',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: mv.textSecondary,
+            height: 1.4,
+          ),
+        ),
+        if (widget.otpAlreadySent) ...[
+          SizedBox(height: mv.spacing.md),
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.symmetric(
+              horizontal: mv.spacing.sm,
+              vertical: mv.spacing.sm,
+            ),
+            decoration: BoxDecoration(
+              color: mv.freshBadge.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(mv.radii.md),
+              border: Border.all(
+                color: mv.freshBadge.withValues(alpha: 0.35),
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 18,
+                  color: mv.freshBadge,
+                ),
+                SizedBox(width: mv.spacing.xs),
+                Expanded(
+                  child: Text(
+                    'An OTP was already sent to this number. '
+                    'Please use the code from your previous SMS.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: mv.textPrimary,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        SizedBox(height: mv.spacing.xl),
+        AutofillGroup(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Text(
-                'Verify OTP',
-                style: theme.textTheme.titleLarge?.copyWith(
-                  color: mv.textPrimary,
-                  fontWeight: FontWeight.w600,
+              SizedBox(
+                height: 0,
+                width: 0,
+                child: Opacity(
+                  opacity: 0,
+                  child: TextField(
+                    controller: _autofillController,
+                    autofillHints: const [AutofillHints.oneTimeCode],
+                    keyboardType: TextInputType.number,
+                    maxLength: _otpLength,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                    ],
+                    decoration: const InputDecoration(
+                      counterText: '',
+                      border: InputBorder.none,
+                    ),
+                  ),
                 ),
               ),
-              SizedBox(height: mv.spacing.xs),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    'Sent to $_maskedPhone',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: mv.textSecondary,
+                children: List.generate(_otpLength, (index) {
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      right: index < _otpLength - 1 ? mv.spacing.xs : 0,
                     ),
-                  ),
-                  TextButton(
-                    onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
-                    style: TextButton.styleFrom(
-                      padding: EdgeInsets.symmetric(horizontal: mv.spacing.xxs),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    child: _OtpBox(
+                      controller: _controllers[index],
+                      focusNode: _focusNodes[index],
+                      onChanged: (value) => _onOtpChanged(index, value),
+                      onKeyEvent: (_, event) => _onKeyEvent(index, event),
+                      enabled: !_isLoading,
+                      hasError: _errorText != null,
                     ),
-                    child: Text(
-                      'Change',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: mv.brandPrimary,
-                        fontWeight: FontWeight.w600,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
-                  ),
-                ],
+                  );
+                }),
               ),
-              if (widget.otpAlreadySent) ...[
-                SizedBox(height: mv.spacing.md),
-                Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: mv.spacing.sm,
-                    vertical: mv.spacing.sm,
-                  ),
-                  decoration: BoxDecoration(
-                    color: mv.freshBadge.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(mv.radii.md),
-                    border: Border.all(
-                      color: mv.freshBadge.withValues(alpha: 0.35),
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.info_outline_rounded,
-                        size: 18,
-                        color: mv.freshBadge,
-                      ),
-                      SizedBox(width: mv.spacing.xs),
-                      Expanded(
-                        child: Text(
-                          'An OTP was already sent to this number. '
-                          'Please use the code from your previous SMS.',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: mv.textPrimary,
-                            height: 1.4,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              SizedBox(height: mv.spacing.xl),
-              AutofillGroup(
-                child: Column(
-                  children: [
-                    SizedBox(
-                      height: 0,
-                      width: 0,
-                      child: Opacity(
-                        opacity: 0,
-                        child: TextField(
-                          controller: _autofillController,
-                          autofillHints: const [AutofillHints.oneTimeCode],
-                          keyboardType: TextInputType.number,
-                          maxLength: _otpLength,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                          ],
-                          decoration: const InputDecoration(
-                            counterText: '',
-                            border: InputBorder.none,
-                          ),
-                        ),
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(_otpLength, (index) {
-                        return Padding(
-                          padding: EdgeInsets.only(
-                            right: index < _otpLength - 1 ? mv.spacing.xs : 0,
-                          ),
-                          child: _OtpBox(
-                            controller: _controllers[index],
-                            focusNode: _focusNodes[index],
-                            onChanged: (value) => _onOtpChanged(index, value),
-                            onKeyEvent: (_, event) => _onKeyEvent(index, event),
-                            enabled: !_isLoading,
-                            hasError: _errorText != null,
-                          ),
-                        );
-                      }),
-                    ),
-                  ],
-                ),
-              ),
-              if (_errorText != null) ...[
-                SizedBox(height: mv.spacing.md),
-                Text(
-                  _errorText!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: mv.error,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
             ],
           ),
         ),
-        SizedBox(height: mv.spacing.lg),
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: ElevatedButton(
-            onPressed: _isLoading || !_isOtpComplete ? null : _verifyOtp,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: mv.brandPrimary,
-              foregroundColor: MeatvoColors.white,
-              disabledBackgroundColor: MeatvoColors.surfaceMuted,
-              disabledForegroundColor: mv.textMuted,
-              elevation: _isOtpComplete ? 4 : 0,
-              shadowColor: mv.brandPrimary.withValues(alpha: 0.35),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(mv.radii.lg),
-              ),
+        if (_errorText != null) ...[
+          SizedBox(height: mv.spacing.md),
+          Text(
+            _errorText!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: mv.error,
+              fontWeight: FontWeight.w500,
             ),
-            child: _isLoading
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: MeatvoColors.white,
-                    ),
-                  )
-                : Text(
-                    'Verify & Continue',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: _isOtpComplete ? MeatvoColors.white : mv.textMuted,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.5,
-                    ),
-                  ),
+            textAlign: TextAlign.center,
           ),
+        ],
+        SizedBox(height: mv.spacing.xl),
+        AuthPrimaryButton(
+          label: 'Continue',
+          isLoading: _isLoading,
+          enabled: _isOtpComplete,
+          onPressed: _verifyOtp,
         ),
         SizedBox(height: mv.spacing.md),
-        _canResend
-            ? TextButton(
-                onPressed: _isLoading ? null : _resendOtp,
-                style: TextButton.styleFrom(
-                  padding: EdgeInsets.zero,
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(
-                  'Resend OTP',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: mv.brandPrimary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              )
-            : Text(
-                _timerLabel,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: mv.textMuted,
-                  fontWeight: FontWeight.w500,
-                ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            TextButton(
+              onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
+              child: Text('Change number', style: linkStyle),
+            ),
+            _canResend
+                ? TextButton(
+                    onPressed: _isLoading ? null : _resendOtp,
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text('Resend OTP', style: linkStyle),
+                  )
+                : Text(
+                    _timerLabel,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: mv.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+          ],
+        ),
+        SizedBox(height: mv.spacing.lg),
+        const AuthOrderUpdatesToggle(),
       ],
     );
   }
