@@ -17,6 +17,18 @@ const otpPhoneKey = (raw) => normalizePhone(raw);
 const OTP_TTL_SECONDS = Number(process.env.OTP_TTL_SECONDS || 600);
 const OTP_MAX_ATTEMPTS = Number(process.env.OTP_MAX_ATTEMPTS || 3);
 const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+// Mobile carriers rotate IPs; default 15 in prod. Set OTP_MAX_UNIQUE_IPS=0 to disable.
+const OTP_MAX_UNIQUE_IPS = Number(
+  process.env.OTP_MAX_UNIQUE_IPS ?? (isProd ? 15 : 0),
+);
+const OTP_IP_TRACK_TTL_SECONDS = Number(process.env.OTP_IP_TRACK_TTL_SECONDS || 86400);
+
+const normalizeClientIp = (raw) => {
+  const value = String(raw || '').trim();
+  if (!value) return 'unknown';
+  if (value.startsWith('::ffff:')) return value.slice(7);
+  return value;
+};
 const logOtpToConsole =
   process.env.OTP_LOG_TO_CONSOLE === 'true' && process.env.NODE_ENV !== 'production';
 
@@ -122,20 +134,23 @@ const sendOtp = asyncHandler(async (req, res) => {
       return fail(res, 403, 'This phone number is not allowed.');
     }
 
-    // Track IPs per phone number (suspicious activity detection)
-    const ipTrackKey = `ips:${phone}`;
-    const currentIp = req.ip || req.connection.remoteAddress;
-    await redis.sadd(ipTrackKey, currentIp);
-    await redis.expire(ipTrackKey, 86400); // 24 hours
-    
-    const uniqueIps = await redis.scard(ipTrackKey);
-    if (uniqueIps > 5) {
-      logger.warn('suspicious_activity_multiple_ips', { 
-        phone: maskedPhone,
-        uniqueIpCount: uniqueIps,
-        currentIp 
-      });
-      return fail(res, 429, 'Suspicious activity detected. Contact support.');
+    // Track IPs per phone (abuse signal). Disabled in dev; threshold configurable in prod.
+    if (OTP_MAX_UNIQUE_IPS > 0) {
+      const ipTrackKey = `ips:${phone}`;
+      const currentIp = normalizeClientIp(req.ip || req.connection?.remoteAddress);
+      await redis.sadd(ipTrackKey, currentIp);
+      await redis.expire(ipTrackKey, OTP_IP_TRACK_TTL_SECONDS);
+
+      const uniqueIps = await redis.scard(ipTrackKey);
+      if (uniqueIps > OTP_MAX_UNIQUE_IPS) {
+        logger.warn('suspicious_activity_multiple_ips', {
+          phone: maskedPhone,
+          uniqueIpCount: uniqueIps,
+          maxAllowed: OTP_MAX_UNIQUE_IPS,
+          currentIp,
+        });
+        return fail(res, 429, 'Suspicious activity detected. Contact support.');
+      }
     }
 
     // Check account lockout
