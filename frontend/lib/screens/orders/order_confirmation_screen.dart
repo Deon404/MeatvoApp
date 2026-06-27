@@ -4,10 +4,8 @@ import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../design_system/tokens/meatvo_colors.dart';
 import '../../models/order_model.dart';
 import '../../utils/address_display_util.dart';
-import '../../utils/eta_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/responsive_helper.dart';
-import '../../widgets/order/order_freshness_trust_strip.dart';
 import 'order_detail_screen.dart';
 
 /// Merged success screen after COD or online (Cashfree) payment — warm Zappfresh-style UX.
@@ -29,17 +27,6 @@ class OrderConfirmationScreen extends StatelessWidget {
 
   bool get _isOnline =>
       isOnlinePaymentSuccess || order.paymentMethod.toLowerCase() == 'online';
-
-  String _formatExpectedDelivery() {
-    if (order.estimatedDeliveryTime != null) {
-      return formatDeliveryByTime(order.estimatedDeliveryTime!);
-    }
-    final etaMinutes = order.etaMinutes;
-    if (etaMinutes != null && etaMinutes > 0) {
-      return formatArrivingInLabel(etaMinutes);
-    }
-    return 'Within 1 hour';
-  }
 
   String _getOrderNumber() => formatOrderDisplayId(order.id);
 
@@ -101,38 +88,6 @@ class OrderConfirmationScreen extends StatelessWidget {
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    SizedBox(height: mv.spacing.md),
-                    Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: mv.spacing.md,
-                        vertical: mv.spacing.sm,
-                      ),
-                      decoration: BoxDecoration(
-                        color: mv.brandPrimary.withValues(alpha: 0.08),
-                        borderRadius: BorderRadius.circular(mv.radii.pill),
-                        border: Border.all(
-                          color: mv.brandPrimary.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.schedule_rounded,
-                            size: 18,
-                            color: mv.brandPrimary,
-                          ),
-                          SizedBox(width: mv.spacing.xs),
-                          Text(
-                            _formatExpectedDelivery(),
-                            style: textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: mv.brandPrimary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
                     if (_isOnline && paymentId != null && paymentId!.isNotEmpty) ...[
                       SizedBox(height: mv.spacing.sm),
                       Text(
@@ -142,8 +97,6 @@ class OrderConfirmationScreen extends StatelessWidget {
                         ),
                       ),
                     ],
-                    SizedBox(height: mv.spacing.md),
-                    const OrderFreshnessTrustStrip(),
                     SizedBox(height: mv.spacing.lg),
                     _InfoCard(
                       child: Column(
@@ -278,12 +231,6 @@ class OrderConfirmationScreen extends StatelessWidget {
                           _DetailRow(
                             icon: Icons.home_rounded,
                             title: formatAddressForDisplay(deliveryAddress),
-                          ),
-                          SizedBox(height: mv.spacing.sm),
-                          _DetailRow(
-                            icon: Icons.schedule_rounded,
-                            label: 'Expected Delivery',
-                            title: _formatExpectedDelivery(),
                           ),
                           SizedBox(height: mv.spacing.sm),
                           _DetailRow(

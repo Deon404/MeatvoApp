@@ -6,6 +6,7 @@ import '../../models/address_model.dart';
 import '../../models/cart_model.dart';
 import '../../services/address_service.dart';
 import '../../services/cart_service.dart';
+import '../../services/coupon_service.dart';
 import '../../services/delivery_service.dart';
 import '../../services/store_status_service.dart';
 import '../../services/order_service.dart';
@@ -62,7 +63,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _isStoreOpen = true;
   StoreStatus? _storeStatus;
   bool _storeClosedSheetShown = false;
+  bool _storeStatusError = false;
   double _deliveryFeeAmount = OrderPricingCalculator.defaultDeliveryChargeAmount;
+  double _freeDeliveryThreshold = 500;
   bool _isLoading = true;
   bool _isPlacingOrder = false;
   bool _showSuccessOverlay = false;
@@ -94,6 +97,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         subtotal: _activeCart.subtotal,
         discount: _productDiscount + widget.couponDiscount,
         deliveryChargeAmount: _deliveryFeeAmount,
+        freeDeliveryThreshold: _freeDeliveryThreshold,
       );
 
   double get _subtotal => _pricing.subtotal;
@@ -118,14 +122,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       setState(() {
         _storeStatus = status;
         _isStoreOpen = status.isOpen;
+        _storeStatusError = false;
         _deliveryFeeAmount = status.deliveryFee;
+        _freeDeliveryThreshold = status.freeDeliveryThreshold;
       });
       if (showClosedSheet && !status.isOpen) {
         await _showStoreClosedSheet();
       }
     } catch (_) {
       if (!mounted) return;
-      setState(() => _isStoreOpen = true);
+      setState(() {
+        _isStoreOpen = false;
+        _storeStatusError = true;
+      });
     }
   }
 
@@ -432,6 +441,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
       if (context.mounted) setState(() => _cart = cart);
 
+      // Re-validate coupon if one was applied
+      double effectiveCouponDiscount = widget.couponDiscount;
+      if (widget.couponCode != null && widget.couponCode!.isNotEmpty) {
+        final couponResult = await CouponService().validateCoupon(
+          widget.couponCode!,
+          cart.subtotal,
+        );
+        if (!mounted) return;
+        if (!couponResult.isValid) {
+          setState(() => _isPlacingOrder = false);
+          _showMessage(
+            'Your coupon "${widget.couponCode}" is no longer valid: '
+            '${couponResult.errorMessage ?? "Please remove it and try again."}',
+          );
+          return;
+        }
+        effectiveCouponDiscount = couponResult.discountAmount;
+      }
+
       final validation = await _deliveryService.validateDeliveryAddress(
         latitude: _selectedAddress!.latitude!,
         longitude: _selectedAddress!.longitude!,
@@ -530,7 +558,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
-    final canPlaceOrder = _isStoreOpen &&
+    final canPlaceOrder = !_storeStatusError &&
+        _isStoreOpen &&
         _selectedAddress != null &&
         _selectedAddress!.latitude != null &&
         _selectedAddress!.longitude != null;
@@ -597,6 +626,42 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 const SizedBox(height: 20),
                                 const CheckoutCancellationPolicy(),
                                 const SizedBox(height: 20),
+                                if (_storeStatusError) ...[
+                                  Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: AppTheme.warning.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: AppTheme.warning.withValues(alpha: 0.35),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.warning_amber_rounded,
+                                          color: AppTheme.warning,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            'Unable to verify store status. Please try again.',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall
+                                                ?.copyWith(
+                                                  color: mv.textPrimary,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 20),
+                                ],
                                 CheckoutDeliverySection(
                                   selectedAddress: _selectedAddress,
                                   isEmptyAddress: _selectedAddress == null,

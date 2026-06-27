@@ -465,18 +465,6 @@ class OrderService {
     }
   }
 
-  // ── Coupon helpers (local calculation — no dedicated backend endpoint) ─────
-
-  Future<Map<String, dynamic>> applyCoupon(String code, double amount) async {
-    // Coupon validation will be done server-side on order creation.
-    // Return a placeholder so existing UI doesn't break.
-    return {
-      'code': code,
-      'discount': 0.0,
-      'description': 'Coupon applied (validated on checkout)',
-    };
-  }
-
   // ── Review / rating stubs ─────────────────────────────────────────────────
 
   Future<Map<String, dynamic>?> getOrderReview(String orderId) async {

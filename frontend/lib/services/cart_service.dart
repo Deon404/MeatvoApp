@@ -329,8 +329,8 @@ class CartService {
     required String unit,
   }) {
     final currentItems = [...current.items];
-    final existingIndex =
-        currentItems.indexWhere((item) => item.productId == productId);
+    final existingIndex = currentItems.indexWhere((item) =>
+        item.productId == productId && item.variantId == variantId);
 
     if (existingIndex == -1 && nextQuantity > 0) {
       currentItems.add(

@@ -26,7 +26,7 @@ class _LocationSetupScreenState extends ConsumerState<LocationSetupScreen> {
   void initState() {
     super.initState();
     _coordinator = DeliveryLocationCoordinator(
-      context: context,
+      contextOf: () => context,
       ref: ref,
       navigateHomeOnComplete: true,
     );

@@ -47,6 +47,8 @@ class _CartScreenState extends State<CartScreen> {
   double _couponDiscount = 0;
   String? _couponErrorMessage;
   double _deliveryFeeAmount = OrderPricingCalculator.defaultDeliveryChargeAmount;
+  double _minOrderAmount = 0;
+  double _freeDeliveryThreshold = 500;
 
   @override
   void initState() {
@@ -60,7 +62,11 @@ class _CartScreenState extends State<CartScreen> {
     try {
       final status = await _storeStatusService.fetchStatus();
       if (!mounted) return;
-      setState(() => _deliveryFeeAmount = status.deliveryFee);
+      setState(() {
+        _deliveryFeeAmount = status.deliveryFee;
+        _minOrderAmount = status.minOrderAmount;
+        _freeDeliveryThreshold = status.freeDeliveryThreshold;
+      });
     } catch (_) {
       // Keep default delivery fee when store settings are unavailable.
     }
@@ -210,6 +216,7 @@ class _CartScreenState extends State<CartScreen> {
         subtotal: _subtotal,
         discount: _productDiscount + _couponDiscount,
         deliveryChargeAmount: _deliveryFeeAmount,
+        freeDeliveryThreshold: _freeDeliveryThreshold,
       );
 
   double get _deliveryFee => _pricing.deliveryCharge;
@@ -245,17 +252,29 @@ class _CartScreenState extends State<CartScreen> {
   }
 
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: context.meatvo.brandPrimaryDark,
+      ),
+    );
+  }
+
   Future<void> _handlePlaceOrder() async {
     if (_isCheckingOut) return;
 
-    final messenger = ScaffoldMessenger.of(context);
     final currentCart = _cart;
     if (currentCart == null || currentCart.isEmpty) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Cart is empty'),
-          backgroundColor: context.meatvo.brandPrimaryDark,
-        ),
+      _showMessage('Your cart is empty');
+      return;
+    }
+
+    final subtotal = currentCart.subtotal;
+    if (_minOrderAmount > 0 && subtotal < _minOrderAmount) {
+      _showMessage(
+        'Minimum order amount is ₹${_minOrderAmount.toStringAsFixed(0)}. '
+        'Add ₹${(_minOrderAmount - subtotal).toStringAsFixed(0)} more.',
       );
       return;
     }

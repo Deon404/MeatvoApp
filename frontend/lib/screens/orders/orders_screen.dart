@@ -169,7 +169,7 @@ class _OrdersScreenState extends State<OrdersScreen>
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = 'Failed to load orders: $e';
+          _errorMessage = 'Could not load your orders. Please try again.';
           _isLoading = false;
         });
       }

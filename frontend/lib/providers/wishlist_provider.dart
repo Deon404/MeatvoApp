@@ -4,13 +4,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/product_variant_model.dart';
 import '../services/api_service.dart';
 import '../config/api_config.dart';
+import '../services/auth_service.dart';
 import '../services/product_service.dart';
 
 const _wishlistStorageKey = 'wishlist_product_ids';
 
 final wishlistProvider =
     StateNotifierProvider<WishlistNotifier, List<String>>((ref) {
-  return WishlistNotifier(ref.read(apiServiceProvider))..load();
+  return WishlistNotifier(ref.read(apiServiceProvider));
 });
 
 final wishlistProductsProvider =
@@ -27,7 +28,12 @@ final wishlistProductsProvider =
 });
 
 class WishlistNotifier extends StateNotifier<List<String>> {
-  WishlistNotifier(this._api) : super(const []);
+  WishlistNotifier(this._api) : super(const []) {
+    AuthService.registerLogoutCallback(() {
+      state = const [];
+    });
+    load();
+  }
 
   final ApiService _api;
 

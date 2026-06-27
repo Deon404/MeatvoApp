@@ -90,6 +90,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   @override
   void dispose() {
+    SocketService().offOrderConfirmed();
     _tracking.dispose();
     _paymentService.dispose();
     super.dispose();
@@ -383,7 +384,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           item.productId,
           item.quantity.round(),
           unit: item.unit,
-          variantId: null, // Variant ID not available in OrderItem
+          variantId: item.variantId,
         );
       }
 
@@ -1250,22 +1251,29 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         paymentMethod?.toLowerCase() == 'cod') {
       return 'Pay on delivery';
     }
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'completed':
+      case 'paid':
         return 'Paid';
+      case 'collected':
+        return 'Collected (COD)';
       case 'pending':
         return 'Pending';
       case 'failed':
         return 'Failed';
+      case 'refunded':
+        return 'Refunded';
       default:
         return status?.isNotEmpty == true ? status! : 'Pending';
     }
   }
 
   Color _getPaymentStatusColor(String? status) {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'completed':
-        return MeatvoColors.success;
+      case 'paid':
+      case 'collected':
+        return AppColors.success;
       case 'pending':
         return MeatvoColors.warning;
       case 'failed':
@@ -1276,9 +1284,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   IconData _getPaymentStatusIcon(String? status) {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'completed':
-        return Icons.check_circle;
+      case 'paid':
+      case 'collected':
+        return Icons.check_circle_outline;
       case 'pending':
         return Icons.pending;
       case 'failed':
@@ -1401,7 +1411,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   Widget _buildActionButtons() {
     if (_order == null) return const SizedBox.shrink();
 
-    final canCancel = ['placed', 'confirmed'].contains(_order!.status);
+    final normalizedStatus = normalizeOrderStatus(_order!.status);
+    final canCancel = ['placed', 'confirmed', 'pending',
+                       'payment_pending'].contains(normalizedStatus);
     final isDelivered = _order!.status == 'delivered';
 
     return Column(

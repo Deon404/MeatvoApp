@@ -1,49 +1,99 @@
+import 'package:dio/dio.dart';
+
 import '../config/store_config.dart';
-import '../utils/address_display_util.dart';
-import '../services/maps_service.dart';
+import 'api_service.dart';
 
 /// Delivery Service
 /// Handles delivery radius validation and distance calculations
 class DeliveryService {
-  final MapsService _mapsService = MapsService();
+  final ApiService _api = ApiService();
 
-  /// Validate if delivery address is within 8km radius
-  /// Returns validation result with detailed information
+  /// Validate if delivery address is within store delivery zone (backend).
+  /// Falls back to [StoreConfig] on network errors.
   Future<DeliveryValidationResult> validateDeliveryAddress({
     required double latitude,
     required double longitude,
     bool skipGeocoding = false,
   }) async {
-    // Calculate distance from store
-    final distance = StoreConfig.getDistanceFromStore(latitude, longitude);
-    final isWithinRadius = StoreConfig.isWithinDeliveryRadius(latitude, longitude);
-    
-    // Geocoding is optional — skip during checkout to avoid blocking on Maps API.
-    String? addressString;
-    if (!skipGeocoding) {
-      try {
-        final address = await _mapsService.getAddressFromCoordinates(
-          latitude: latitude,
-          longitude: longitude,
+    try {
+      final res = await _api.post(
+        '/store/check-delivery',
+        data: {'lat': latitude, 'lng': longitude},
+      );
+      final data = res.data;
+      if (data is Map && (data['success'] == true || data['ok'] == true)) {
+        final payload = data['data'];
+        final distanceKm = payload is Map
+            ? (payload['distanceKm'] as num?)?.toDouble()
+            : null;
+        return DeliveryValidationResult(
+          isValid: true,
+          distance: distanceKm ?? 0,
+          distanceFormatted: distanceKm != null
+              ? '${distanceKm.toStringAsFixed(1)} km'
+              : '',
+          message: 'Delivery available',
         );
-        if (address != null) {
-          addressString = _buildAddressString(address);
-        }
-      } catch (e) {
-        // Address fetch failed, but we can still validate distance
       }
-    }
 
-    return DeliveryValidationResult(
-      isValid: isWithinRadius,
-      distance: distance,
-      distanceFormatted: StoreConfig.getFormattedDistance(latitude, longitude),
-      address: addressString,
-      message: isWithinRadius
-          ? 'Delivery available at this location'
-          : 'Delivery not available. This location is ${distance.toStringAsFixed(1)}km away from our store. We deliver within ${StoreConfig.deliveryRadiusKm}km radius only. Please select a different address.',
-      errorType: isWithinRadius ? null : DeliveryErrorType.outOfRadius,
-    );
+      final body =
+          data is Map ? data.cast<String, dynamic>() : <String, dynamic>{};
+      final distanceKm = (body['distanceKm'] as num?)?.toDouble() ?? 0;
+      return DeliveryValidationResult(
+        isValid: false,
+        distance: distanceKm,
+        distanceFormatted: distanceKm > 0
+            ? '${distanceKm.toStringAsFixed(1)} km'
+            : '',
+        message: body['message']?.toString() ??
+            'Delivery not available in your area',
+        errorType: DeliveryErrorType.outOfRadius,
+      );
+    } on DioException catch (e) {
+      final body = e.response?.data;
+      if (body is Map && body['success'] != true) {
+        final map = body.cast<String, dynamic>();
+        final distanceKm = (map['distanceKm'] as num?)?.toDouble() ?? 0;
+        return DeliveryValidationResult(
+          isValid: false,
+          distance: distanceKm,
+          distanceFormatted: distanceKm > 0
+              ? '${distanceKm.toStringAsFixed(1)} km'
+              : '',
+          message: map['message']?.toString() ??
+              'Delivery not available in your area',
+          errorType: DeliveryErrorType.outOfRadius,
+        );
+      }
+
+      final distance = StoreConfig.getDistanceFromStore(latitude, longitude);
+      final isWithinRadius =
+          StoreConfig.isWithinDeliveryRadius(latitude, longitude);
+      return DeliveryValidationResult(
+        isValid: isWithinRadius,
+        distance: distance,
+        distanceFormatted:
+            StoreConfig.getFormattedDistance(latitude, longitude),
+        message: isWithinRadius
+            ? 'Delivery available'
+            : 'Outside delivery zone',
+        errorType: isWithinRadius ? null : DeliveryErrorType.outOfRadius,
+      );
+    } catch (e) {
+      final distance = StoreConfig.getDistanceFromStore(latitude, longitude);
+      final isWithinRadius =
+          StoreConfig.isWithinDeliveryRadius(latitude, longitude);
+      return DeliveryValidationResult(
+        isValid: isWithinRadius,
+        distance: distance,
+        distanceFormatted:
+            StoreConfig.getFormattedDistance(latitude, longitude),
+        message: isWithinRadius
+            ? 'Delivery available'
+            : 'Outside delivery zone',
+        errorType: isWithinRadius ? null : DeliveryErrorType.outOfRadius,
+      );
+    }
   }
 
   /// Validate delivery address from address model
@@ -113,10 +163,6 @@ class DeliveryService {
     
     final charge = baseCharge + (distanceKm * perKmCharge);
     return charge > maxCharge ? maxCharge : charge;
-  }
-
-  String _buildAddressString(Map<String, dynamic> address) {
-    return buildAddressStringFromMap(address);
   }
 }
 

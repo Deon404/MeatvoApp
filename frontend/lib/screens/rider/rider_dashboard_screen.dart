@@ -38,6 +38,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   List<Map<String, dynamic>> _activeOrders = [];
   bool _isLoading = true;
   bool _isLoadingEarnings = true;
+  String? _loadError;
   String? _earningsError;
   int _currentIndex = 0;
   final List<GlobalKey<NavigatorState>> _tabNavigatorKeys =
@@ -53,12 +54,24 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   }
 
   Future<void> _initializeDashboard() async {
-    final allowed = await ensureDeliveryPartnerAccess(context);
-    if (!allowed || !mounted) return;
+    try {
+      final allowed = await ensureDeliveryPartnerAccess(context);
+      if (!mounted) return;
+      if (!allowed) {
+        setState(() => _isLoading = false);
+        return;
+      }
 
-    await _loadDashboardData();
-    await _subscribeToOrderAssignments();
-    await _subscribeToAssignmentSocketEvents();
+      await _loadDashboardData();
+      await _subscribeToOrderAssignments();
+      await _subscribeToAssignmentSocketEvents();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = e.toString();
+      });
+    }
   }
 
   @override
@@ -137,6 +150,22 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     );
   }
 
+  String _extractAddressText(dynamic addr) {
+    if (addr == null) return 'Address not available';
+    if (addr is String) return addr.isNotEmpty ? addr : 'Address not available';
+    if (addr is Map) {
+      final formatted = addr['formatted'] ?? addr['formatted_address'];
+      if (formatted != null && formatted.toString().isNotEmpty) {
+        return formatted.toString();
+      }
+      final text = addr['text'] ?? addr['raw'] ?? addr['address'];
+      if (text != null && text.toString().isNotEmpty) {
+        return text.toString();
+      }
+    }
+    return 'Address not available';
+  }
+
   Map<String, dynamic> _assignmentToAlertData(Map<String, dynamic> assignment) {
     final order = assignment['order'] as Map<String, dynamic>? ?? {};
     return {
@@ -144,9 +173,12 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       'totalAmount': order['total_amount'] ?? order['totalAmount'] ?? order['total_price'],
       'total_amount': order['total_amount'] ?? order['totalAmount'],
       'total_price': order['total_price'] ?? order['total_amount'],
-      'customerAddress': order['delivery_address'] ?? order['address'],
-      'address': order['delivery_address'] ?? order['address'],
-      'delivery_address': order['delivery_address'] ?? order['address'],
+      'customerAddress': _extractAddressText(
+          order['delivery_address'] ?? order['address']),
+      'address': _extractAddressText(
+          order['delivery_address'] ?? order['address']),
+      'delivery_address': _extractAddressText(
+          order['delivery_address'] ?? order['address']),
     };
   }
 
@@ -425,6 +457,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     setState(() {
       _isLoading = true;
       _isLoadingEarnings = true;
+      _loadError = null;
       _earningsError = null;
     });
     try {
@@ -434,6 +467,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       if (mounted) {
         setState(() {
           _riderProfile = profile;
+          _loadError = null;
           _activeOrders = orders
               .where((assignment) {
                 final status =
@@ -468,7 +502,10 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _loadError = e.toString();
+        });
         if (e.toString().contains('429') || e.toString().contains('Too many requests')) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -626,7 +663,9 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                   color: Color(0xFFC8102E),
                 ),
               )
-            : Column(
+            : _loadError != null && _riderProfile == null
+                ? _buildLoadErrorState()
+                : Column(
                 children: [
                   Expanded(
                     child: RefreshIndicator(
@@ -664,6 +703,60 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                   _buildSwipeToggleBottom(isOnline),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildLoadErrorState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.cloud_off,
+              size: 64,
+              color: Color(0xFF9E9E9E),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Could not load rider dashboard',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1A1A1A),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _loadError!,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF6B6B6B),
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 4,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _loadDashboardData,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFC8102E),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Retry',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1443,7 +1536,11 @@ class NewOrderAlertSheet extends StatelessWidget {
           orderData['delivery_address'] ??
           orderData['address'],
     );
-    final distance = orderData['distance']?.toString() ?? '2.5';
+    final rawDistance = orderData['distance'];
+    final distance = (rawDistance != null &&
+            double.tryParse(rawDistance.toString()) != null)
+        ? '${double.parse(rawDistance.toString()).toStringAsFixed(1)} km'
+        : '—';
     final timeoutMs = (orderData['timeout'] as num?)?.toInt() ??
         (((orderData['expiresIn'] as num?)?.toInt() ?? _defaultTimeoutSeconds) *
             1000);
@@ -1704,7 +1801,7 @@ class NewOrderAlertSheet extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      '$distance km',
+                      distance,
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.bold,

@@ -29,27 +29,61 @@ class BackendResolver {
     return EnvConfig.apiBaseUrl;
   }
 
+  /// HTTPS domains (e.g. meatvo.com) must not be health-probed — nginx often returns 403.
+  static bool _isTrustedRemoteBackend(String? url) {
+    if (url == null || url.isEmpty) return false;
+    final uri = Uri.tryParse(url);
+    return uri != null &&
+        uri.host.isNotEmpty &&
+        uri.scheme.toLowerCase() == 'https';
+  }
+
+  static Future<void> _useConfiguredBackend(
+    SharedPreferences prefs,
+    String configured,
+  ) async {
+    _resolvedRoot = configured;
+    _hasReachableBackend = true;
+    await prefs.setString(_prefKey, configured);
+    debugPrint('✅ Backend: $configured');
+  }
+
   static Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_prefKey)?.trim();
+    final configured = EnvConfig.configuredBackendRoot;
 
-    // Production release APK: trust configured HTTPS domain (health probe may be nginx-restricted).
+    // Release / production: always trust dart-define URL (health probe may be nginx-restricted).
     if (EnvConfig.isProduction) {
-      final configured = EnvConfig.configuredBackendRoot;
       if (configured != null) {
-        _resolvedRoot = configured;
-        _hasReachableBackend = true;
-        await prefs.setString(_prefKey, configured);
-        debugPrint('✅ Production backend: $configured');
+        await _useConfiguredBackend(prefs, configured);
         return;
       }
+    }
+
+    // Explicit HTTPS (or public HTTP) in env — never fall back to stale LAN cache from dev sessions.
+    if (_isTrustedRemoteBackend(configured)) {
+      await _useConfiguredBackend(prefs, configured!);
+      return;
+    }
+
+    // Drop cached dev LAN IP when build config points at a different host.
+    if (configured != null &&
+        saved != null &&
+        saved.isNotEmpty &&
+        saved != configured) {
+      await prefs.remove(_prefKey);
     }
 
     final candidates = <String>[];
     void add(String? url) {
       final normalized = EnvConfig.normalizeBackendRoot(url);
-      if (normalized != null) candidates.add(normalized);
+      if (normalized != null && !candidates.contains(normalized)) {
+        candidates.add(normalized);
+      }
     }
+
+    add(configured);
 
     if (EnvConfig.isDevelopment && !kIsWeb && Platform.isAndroid) {
       // USB debugging (adb reverse tcp:8080 tcp:8080) — try before LAN IP.
@@ -57,8 +91,12 @@ class BackendResolver {
       add('http://10.0.2.2:8080');
     }
 
-    add(EnvConfig.configuredBackendRoot);
-    add(saved);
+    // Only reuse saved probe result when it matches the configured host (same dev machine).
+    if (saved != null &&
+        saved.isNotEmpty &&
+        (configured == null || saved == configured)) {
+      add(saved);
+    }
 
     if (EnvConfig.isDevelopment) {
       add(EnvConfig.apiBaseUrl);

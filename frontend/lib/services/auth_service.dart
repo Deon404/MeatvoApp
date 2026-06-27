@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/cart_model.dart';
 import '../models/user_model.dart';
 import '../config/api_config.dart';
 import '../config/backend_resolver.dart';
 import '../config/env_config.dart';
 import 'api_service.dart';
+import 'cart_service.dart';
 import 'error_tracking_service.dart';
 import 'push_notification_service.dart';
 import 'storage_service.dart';
@@ -41,6 +44,12 @@ class SendOtpResult {
 class AuthService {
   final ApiService _api = ApiService();
   final StorageService _storage = StorageService();
+
+  static VoidCallback? _onLogoutCallback;
+
+  static void registerLogoutCallback(VoidCallback callback) {
+    _onLogoutCallback = callback;
+  }
 
   // ── Auth state ──────────────────────────────────────────────────────────
 
@@ -289,6 +298,19 @@ class AuthService {
     } finally {
       await ErrorTrackingService.clearUser();
       await _storage.clear();
+
+      // Clear cart notifiers
+      CartService.cartNotifier.value = CartModel();
+      CartService.cartItemCountNotifier.value = 0;
+
+      // Clear checkout preferences
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('meatvo_checkout_payment_option');
+
+      // Clear wishlist cache
+      await prefs.remove('wishlist_product_ids');
+
+      _onLogoutCallback?.call();
     }
   }
 

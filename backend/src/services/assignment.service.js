@@ -790,6 +790,18 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
         });
       }
 
+      const target = await getDeliveryTarget(order);
+      const store = await getStoreLocation();
+      const distanceKm =
+        Number.isFinite(target.lat) &&
+        Number.isFinite(target.lng) &&
+        Number.isFinite(store.lat) &&
+        Number.isFinite(store.lng) &&
+        store.lat !== 0 &&
+        store.lng !== 0
+          ? Number(haversineDistanceKm(store.lat, store.lng, target.lat, target.lng).toFixed(1))
+          : null;
+
       const broadcastPayload = {
         orderId: Number(order.id),
         totalAmount: order.total_amount ? Number(order.total_amount) : undefined,
@@ -800,6 +812,7 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
         customerAddress: addressToText(order.address),
         delivery_address: addressToText(order.address),
         paymentMode: order.payment_mode,
+        distance: distanceKm ?? null,
         broadcast: true,
         timestamp: new Date().toISOString(),
       };

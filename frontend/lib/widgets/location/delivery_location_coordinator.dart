@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../../app_navigator_key.dart';
 import '../../main.dart' show MyHomePage;
 import '../../models/address_model.dart';
 import '../../screens/address/map_pin_screen.dart';
@@ -38,14 +39,14 @@ class DeliveryLocationSession {
 /// Shared delivery-location logic for setup screen and home sheet.
 class DeliveryLocationCoordinator {
   DeliveryLocationCoordinator({
-    required this.context,
+    required BuildContext Function() contextOf,
     required this.ref,
     this.mode = DeliveryLocationFlowMode.homeGate,
     this.useRootNavigator = false,
     this.navigateHomeOnComplete = true,
-  });
+  }) : _contextOf = contextOf;
 
-  final BuildContext context;
+  final BuildContext Function() _contextOf;
   final WidgetRef ref;
   final DeliveryLocationFlowMode mode;
   final bool useRootNavigator;
@@ -54,9 +55,16 @@ class DeliveryLocationCoordinator {
   final AddressService _addressService = AddressService();
   final MapsService _mapsService = MapsService();
 
-  NavigatorState get _navigator => useRootNavigator
-      ? Navigator.of(context, rootNavigator: true)
-      : Navigator.of(context);
+  BuildContext get context => _contextOf();
+
+  NavigatorState get _navigator {
+    if (useRootNavigator) {
+      final root = appNavigatorKey.currentState;
+      if (root != null) return root;
+      return Navigator.of(context, rootNavigator: true);
+    }
+    return Navigator.of(context);
+  }
 
   Future<List<AddressModel>> loadSavedAddresses() {
     return _addressService.getUserAddresses();

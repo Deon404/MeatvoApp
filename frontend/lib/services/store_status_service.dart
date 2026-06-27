@@ -31,6 +31,8 @@ class StoreStatus {
 
     this.deliveryFee = 30,
 
+    this.freeDeliveryThreshold = 500,
+
   });
 
 
@@ -56,6 +58,8 @@ class StoreStatus {
   final double minOrderAmount;
 
   final double deliveryFee;
+
+  final double freeDeliveryThreshold;
 
 
 
@@ -123,6 +127,9 @@ class StoreStatus {
       minOrderAmount: _toDouble(json['minOrderAmount'] ?? json['min_order_amount']) ?? 150,
 
       deliveryFee: _toDouble(json['deliveryFee'] ?? json['delivery_fee']) ?? 30,
+
+      freeDeliveryThreshold: (json['freeDeliveryThreshold'] as num?)
+          ?.toDouble() ?? 500,
 
     );
 

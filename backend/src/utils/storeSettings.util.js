@@ -8,6 +8,7 @@ const DEFAULT_STORE_SETTINGS = {
   center_lng: 86.1764,
   min_order_amount: 150.0,
   delivery_fee: 30.0,
+  free_delivery_above: 500.0,
   is_open: true,
   manual_open: true,
   within_hours: true,
@@ -80,6 +81,9 @@ const buildMergedSettings = (operational = {}, storeRow = null) => {
         storeRow?.delivery_fee ??
         DEFAULT_STORE_SETTINGS.delivery_fee
     ),
+    free_delivery_above: Number(
+      operational.free_delivery_above ?? DEFAULT_STORE_SETTINGS.free_delivery_above
+    ),
     manual_open: availability.manual_open,
     within_hours: availability.within_hours,
     store_open_time: availability.store_open_time,
@@ -89,6 +93,37 @@ const buildMergedSettings = (operational = {}, storeRow = null) => {
     closed_message: availability.closed_message,
     next_open_display: availability.next_open_display,
   };
+};
+
+const parseNumericSettingValue = (raw) => {
+  if (raw == null) return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const text = String(raw).trim().replace(/^"|"$/g, '');
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+/** Reads free_delivery_above from app_settings (key-value row or JSONB blob). */
+const readFreeDeliveryAbove = async () => {
+  try {
+    const { rows } = await queryWithTimeout(
+      `SELECT value FROM app_settings WHERE key = 'free_delivery_above' LIMIT 1`
+    );
+    const fromKeyRow = parseNumericSettingValue(rows[0]?.value);
+    if (fromKeyRow != null) return fromKeyRow;
+
+    const { rows: blobRows } = await queryWithTimeout(
+      `SELECT value->'free_delivery_above' AS value
+       FROM app_settings
+       ORDER BY updated_at DESC NULLS LAST
+       LIMIT 1`
+    );
+    return parseNumericSettingValue(blobRows[0]?.value);
+  } catch (err) {
+    if (err?.code === '42P01' || err?.code === '42703' || err?.code === 'ETIMEOUT') return null;
+    throw err;
+  }
 };
 
 const readOperationalSettings = async () => {
@@ -185,15 +220,25 @@ const getMergedStoreSettings = async ({ forceRefresh = false } = {}) => {
   }
 
   try {
-    const reads = Promise.all([readOperationalSettings(), readStoreSettingsRow()]);
+    const reads = Promise.all([
+      readOperationalSettings(),
+      readStoreSettingsRow(),
+      readFreeDeliveryAbove(),
+    ]);
     const timeout = new Promise((_, reject) =>
       setTimeout(
         () => reject(Object.assign(new Error('Store settings read timeout'), { code: 'ETIMEOUT' })),
         DB_READ_TIMEOUT_MS
       )
     );
-    const [operational, storeRow] = await Promise.race([reads, timeout]);
-    const merged = buildMergedSettings(operational, storeRow);
+    const [operational, storeRow, freeDeliveryAbove] = await Promise.race([reads, timeout]);
+    const merged = buildMergedSettings(
+      {
+        ...operational,
+        ...(freeDeliveryAbove != null ? { free_delivery_above: freeDeliveryAbove } : {}),
+      },
+      storeRow
+    );
     cachedMergedSettings = merged;
     cachedMergedAt = now;
     return merged;

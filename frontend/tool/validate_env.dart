@@ -102,7 +102,17 @@ void _validateProduction(
   }
 
   if (data['APP_ENV']?.toString() != 'production') {
-    warnings.add('APP_ENV is not "production" in env.production.json');
+    errors.add(
+      'APP_ENV must be "production" in env.production.json — '
+      'otherwise the app probes localhost/LAN and may ignore meatvo.com',
+    );
+  }
+
+  final apiBase = data['API_BASE_URL']?.toString().trim() ?? '';
+  if (apiBase.contains('192.168.') ||
+      apiBase.contains('127.0.0.1') ||
+      apiBase.contains('10.0.2.2')) {
+    errors.add('env.production.json API_BASE_URL must be your public domain, not a LAN IP');
   }
 
   for (final forbidden in _neverInClient(manifest)) {

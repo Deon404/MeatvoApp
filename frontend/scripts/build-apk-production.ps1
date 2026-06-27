@@ -38,8 +38,29 @@ if ($mapsKey) {
     Write-Warning "GOOGLE_MAPS_API_KEY not found - maps/Places may not work in release APK."
 }
 
-Write-Host "Building production APK (API -> https://meatvo.com) ..."
-flutter build apk --release @defines
+# assets/env.local is bundled in pubspec — strip dev LAN URL so release cannot pick it up.
+$envLocal = Join-Path "assets" "env.local"
+$envLocalBackup = Join-Path "assets" "env.local.build-backup"
+$envLocalStripped = $false
+if (Test-Path $envLocal) {
+    Copy-Item $envLocal $envLocalBackup -Force
+    $envLocalStripped = $true
+    @(
+        "# Stripped for production build — API_BASE_URL comes from env.production.json only.",
+        "APP_ENV=production"
+    ) | Set-Content $envLocal -Encoding utf8
+    Write-Host "Stripped dev API_BASE_URL from assets/env.local for this build."
+}
+
+try {
+    Write-Host "Building production APK (API -> https://meatvo.com) ..."
+    flutter build apk --release @defines
+} finally {
+    if ($envLocalStripped -and (Test-Path $envLocalBackup)) {
+        Move-Item $envLocalBackup $envLocal -Force
+        Write-Host "Restored assets/env.local"
+    }
+}
 
 Write-Host ""
 Write-Host "Done: build/app/outputs/flutter-apk/app-release.apk"

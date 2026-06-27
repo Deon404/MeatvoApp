@@ -24,6 +24,7 @@ class DeliveryLocationSheet extends ConsumerStatefulWidget {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const DeliveryLocationSheet(),
     );
@@ -37,6 +38,7 @@ class DeliveryLocationSheet extends ConsumerStatefulWidget {
     return showModalBottomSheet<AddressModel>(
       context: context,
       isScrollControlled: true,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
       builder: (_) => DeliveryLocationSheet(
         mode: DeliveryLocationFlowMode.picker,
@@ -63,13 +65,41 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
   void initState() {
     super.initState();
     _coordinator = DeliveryLocationCoordinator(
-      context: context,
+      contextOf: () => context,
       ref: ref,
       mode: widget.mode,
       useRootNavigator: true,
       navigateHomeOnComplete: !_isPicker,
     );
     _load();
+  }
+
+  Future<void> _openMapPinFlow({
+    double? latitude,
+    double? longitude,
+    Map<String, dynamic>? geocodedAddress,
+  }) async {
+    if (_isPicker) {
+      await _run(() => _coordinator.openMapPin(
+            latitude: latitude,
+            longitude: longitude,
+            geocodedAddress: geocodedAddress,
+          ));
+      return;
+    }
+    await _runVoid(() async {
+      await _coordinator.openMapPin(
+        latitude: latitude,
+        longitude: longitude,
+        geocodedAddress: geocodedAddress,
+      );
+      if (mounted) Navigator.of(context).pop();
+    });
+  }
+
+  void _onAddNewAddressTap() {
+    if (_busy) return;
+    _openMapPinFlow();
   }
 
   Future<void> _load() async {
@@ -120,6 +150,7 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
   }
 
   Future<void> _openSearch() async {
+    if (_busy) return;
     final place = await Navigator.of(context, rootNavigator: true)
         .push<Map<String, dynamic>>(
       MaterialPageRoute(builder: (_) => const SearchLocalityScreen()),
@@ -130,27 +161,11 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
     final lng = (place['longitude'] as num?)?.toDouble();
     if (lat == null || lng == null) return;
 
-    if (_isPicker) {
-      await _run(() => _coordinator.openMapPin(
-            latitude: lat,
-            longitude: lng,
-            geocodedAddress: place,
-          ));
-    } else {
-      await _runVoid(() async {
-        await _coordinator.openMapPin(
-          latitude: lat,
-          longitude: lng,
-          geocodedAddress: place,
-        );
-        if (mounted) Navigator.of(context).pop();
-      });
-    }
-  }
-
-  Future<void> _addNewAddress() async {
-    await _coordinator.openMapPin();
-    if (!_isPicker && mounted) Navigator.of(context).pop();
+    await _openMapPinFlow(
+      latitude: lat,
+      longitude: lng,
+      geocodedAddress: place,
+    );
   }
 
   Future<void> _editAddress(AddressModel address) async {
@@ -298,15 +313,7 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
               label: 'Add new address',
               filled: false,
               loading: _busy,
-              onTap: _busy
-                  ? null
-                  : () {
-                      if (_isPicker) {
-                        _run(() => _coordinator.openMapPin());
-                      } else {
-                        _runVoid(_addNewAddress);
-                      }
-                    },
+              onTap: _busy ? null : _onAddNewAddressTap,
             ),
           ),
           if (_loading)

@@ -147,13 +147,29 @@ class HomeViewModel extends StateNotifier<HomeState> {
     );
 
     try {
-      final products = await _productService.getAllActiveProducts(
-        useCache: !forceRefresh,
-        swallowErrors: false,
-      );
-      final bestSellers = products.take(10).toList(growable: false);
-      final featured = products.length > 10
-          ? products.skip(10).take(10).toList(growable: false)
+      final results = await Future.wait([
+        _productService.getAllActiveProducts(
+          useCache: !forceRefresh,
+          swallowErrors: true,
+        ),
+        _productService.getFeaturedProducts(
+          limit: 10,
+          useCache: !forceRefresh,
+          swallowErrors: true,
+        ),
+        _productService.getBestSellingProducts(
+          limit: 10,
+          useCache: !forceRefresh,
+          swallowErrors: true,
+        ),
+      ]);
+
+      final products = results[0];
+      final featured = results[1].isNotEmpty
+          ? results[1]
+          : products.take(10).toList(growable: false);
+      final bestSellers = results[2].isNotEmpty
+          ? results[2]
           : products.take(10).toList(growable: false);
 
       state = state.copyWith(

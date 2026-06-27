@@ -10,6 +10,7 @@ import '../../models/user_model.dart';
 import '../../screens/address/address_list_screen.dart';
 import '../../screens/auth/phone_screen.dart';
 import '../../screens/notifications/notifications_screen.dart';
+import '../../screens/orders/orders_screen.dart';
 import '../../screens/profile/profile_edit_screen.dart';
 import '../../screens/settings/privacy_policy_screen.dart';
 import '../../screens/settings/terms_of_service_screen.dart';
@@ -438,7 +439,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
               final user = snapshot.data;
               final userName = user?.name?.trim().isNotEmpty == true
                   ? user!.name!.trim()
-                  : 'Guest';
+                  : (user?.phoneNumber?.trim().isNotEmpty == true
+                      ? user!.phoneNumber!.trim()
+                      : 'Meatvo User');
               final phone = _formatPhone(user?.phoneNumber);
 
               return SingleChildScrollView(
@@ -545,11 +548,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           _menuTile(
                             icon: Icons.receipt_long,
                             title: 'My Orders',
-                            onTap: () {
-                              final openOrders = widget.onOpenOrderHistory;
-                              if (openOrders != null) {
-                                openOrders();
-                              }
+                            onTap: widget.onOpenOrderHistory ?? () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const OrdersScreen(),
+                                ),
+                              );
                             },
                           ),
                           _menuTile(

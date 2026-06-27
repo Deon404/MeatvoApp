@@ -11,6 +11,7 @@ const {
   queryWithTimeout,
   scheduleSchemaRepair,
 } = require('../../utils/storeSettings.util');
+const { DEFAULT_FREE_DELIVERY_THRESHOLD } = require('../../utils/orderPricing.util');
 
 const DEFAULT_THEME = {
   colors: {
@@ -219,6 +220,11 @@ const getStoreStatus = asyncHandler(async (req, res) => {
     centerLng: Number(settings.center_lng || 0),
     minOrderAmount: Number(settings.min_order_amount || DEFAULT_STORE_SETTINGS.min_order_amount),
     deliveryFee: Number(settings.delivery_fee || DEFAULT_STORE_SETTINGS.delivery_fee),
+    freeDeliveryThreshold: Number(
+      settings.free_delivery_above ??
+        DEFAULT_FREE_DELIVERY_THRESHOLD ??
+        500
+    ),
   }, 'Store status');
 });
 
