@@ -16,7 +16,9 @@
     "test:ci": "node scripts/ci-smoke.js",
     "smoke": "node backend-smoke-check.js",
     "smoke:customer": "node scripts/customer-flow-smoke.js",
-    "production:check": "node scripts/production-check.js"
+    "production:check": "node scripts/production-check.js",
+    "promote:admin": "node scripts/promote-admin.js",
+    "promote:rider": "node scripts/promote-rider.js"
   },
   "keywords": [],
   "author": "",
