@@ -206,7 +206,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ListTile(
                 leading: Icon(Icons.call_outlined, color: mv.brandAccent),
                 title: const Text('Call us'),
-                subtitle: Text(SupportConfig.phone),
+                subtitle: Text(SupportConfig.phoneDisplay),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _launchUrl(Uri.parse('tel:${SupportConfig.phone}'));
