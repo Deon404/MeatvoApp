@@ -52,20 +52,9 @@ class OrderService {
 
   String? _normalizeAddress(dynamic address) {
     if (address == null) return null;
-    if (address is String) return address;
-    if (address is Map) {
-      final map = Map<String, dynamic>.from(address);
-      final parts = <String>[
-        (map['text'] ?? map['fullAddress'] ?? map['addressLine1'] ?? map['address_line1'] ?? '').toString(),
-        (map['addressLine2'] ?? map['address_line2'] ?? '').toString(),
-        (map['landmark'] ?? '').toString(),
-        (map['city'] ?? '').toString(),
-        (map['state'] ?? '').toString(),
-        (map['pincode'] ?? '').toString(),
-      ].where((part) => part.trim().isNotEmpty).toList();
-      return parts.isEmpty ? null : parts.join(', ');
-    }
-    return address.toString();
+    final formatted = formatAddressForDisplay(address);
+    if (formatted == 'Address not available') return null;
+    return formatted;
   }
 
   String _formatDeliveryAddress(Map<String, dynamic> address) {

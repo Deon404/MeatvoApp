@@ -11,13 +11,13 @@ void main() {
       expect(GoogleMapsSetup.requiredCloudApis, contains('Geocoding API'));
     });
 
-    test('hintForApiStatus returns enable message for REQUEST_DENIED', () {
+    test('hintForApiStatus returns customer-friendly message for REQUEST_DENIED', () {
       final hint = GoogleMapsSetup.hintForApiStatus(
         'REQUEST_DENIED',
         apiName: 'Places API',
       );
-      expect(hint, contains('Places API'));
-      expect(hint, contains('Google Cloud'));
+      expect(hint, contains('temporarily unavailable'));
+      expect(hint, isNot(contains('.env')));
     });
   });
 

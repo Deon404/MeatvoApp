@@ -171,7 +171,7 @@ class _SearchLocalityScreenState extends State<SearchLocalityScreen> {
             Padding(
               padding: const EdgeInsets.all(AppSpacing.md),
               child: Text(
-                'Maps key missing — set GOOGLE_MAPS_API_KEY in .env',
+                GoogleMapsSetup.customerLocationMapMessage,
                 style: AppTextStyles.caption,
               ),
             ),

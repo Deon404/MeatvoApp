@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import '../../models/order_model.dart';
 import '../../services/rider_service.dart';
 import '../../services/rider_location_service.dart';
@@ -15,9 +13,10 @@ import '../../utils/responsive_helper.dart';
 import '../../widgets/maps/rider_location_tracker.dart';
 import '../../widgets/maps/rider_navigation_map.dart';
 import 'batch_delivery_screen.dart';
+import 'widgets/delivery_otp_dialog.dart';
 
 /// Rider Order Detail Screen - Detailed view with actions for a single order assignment
-class RiderOrderDetailScreen extends ConsumerStatefulWidget {
+class RiderOrderDetailScreen extends StatefulWidget {
   final String assignmentId;
   final List<String>? batchOrderIds;
 
@@ -28,23 +27,20 @@ class RiderOrderDetailScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<RiderOrderDetailScreen> createState() =>
+  State<RiderOrderDetailScreen> createState() =>
       _RiderOrderDetailScreenState();
 }
 
-class _RiderOrderDetailScreenState
-    extends ConsumerState<RiderOrderDetailScreen> {
+class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
   final RiderService _riderService = RiderService();
   final SocketService _socketService = SocketService();
   final MapsService _mapsService = MapsService();
   final ContactActionService _contactService = ContactActionService();
+  final RiderLocationService _locationService = RiderLocationService();
   Map<String, dynamic>? _assignment;
   bool _isLoading = true;
   String? _errorMessage;
   bool _isProcessing = false;
-
-  RiderLocationService get _locationService =>
-      ref.read(riderLocationServiceProvider);
 
   @override
   void initState() {
@@ -728,7 +724,7 @@ class _RiderOrderDetailScreenState
           ],
         ),
       );
-      if (cashConfirmed != true) return;
+      if (!mounted || cashConfirmed != true) return;
     }
 
     final confirmed = await showDialog<bool>(
@@ -786,104 +782,90 @@ class _RiderOrderDetailScreenState
       ),
     );
 
-    if (confirmed != true) return;
+    if (!mounted || confirmed != true) return;
+
+    final otp = await showDeliveryOtpDialog(context);
+    if (!mounted || otp == null) return;
 
     setState(() => _isProcessing = true);
     try {
       final orderId = _getActualOrderId();
       debugPrint('[RiderOrderDetail] Marking delivered: $orderId');
 
-      String? proofUrl;
-      try {
-        final picker = ImagePicker();
-        final photo = await picker.pickImage(
-          source: ImageSource.camera,
-          maxWidth: 1280,
-          imageQuality: 80,
-        );
-        if (photo != null) {
-          proofUrl = await _riderService.uploadDeliveryProof(photo.path);
-        }
-      } catch (proofErr) {
-        debugPrint('[RiderOrderDetail] Proof capture skipped: $proofErr');
-      }
-
-      await _riderService.markOrderDelivered(
-        orderId,
-        proofUrl: proofUrl,
-      );
+      await _riderService.markOrderDelivered(orderId, otp: otp);
       _locationService.stopSendingLocation();
-      if (mounted) {
-        await showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    color: AppColors.success.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.check_circle,
-                    color: AppColors.success,
-                    size: 50,
-                  ),
-                ),
-                SizedBox(height: R.sh(2, context)),
-                Text(
-                  'Order Delivered!',
-                  style: TextStyle(
-                    fontSize: R.fontSize(20, context),
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.success,
-                  ),
-                ),
-                SizedBox(height: R.sh(1, context)),
-                Text(
-                  'Order has been marked as delivered successfully.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: R.fontSize(14, context),
-                    color: AppColors.textSecondary,
-                  ),
-                ),
-                SizedBox(height: R.sh(3, context)),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(context);
-                      Navigator.pop(context);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.success,
-                      foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(
-                          vertical: R.sh(1.5, context)),
-                    ),
-                    child: const Text('Done'),
-                  ),
-                ),
-              ],
-            ),
+      if (!mounted) return;
+
+      final done = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
           ),
-        );
-        await _loadOrderDetails();
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle,
+                  color: AppColors.success,
+                  size: 50,
+                ),
+              ),
+              SizedBox(height: R.sh(2, context)),
+              Text(
+                'Order Delivered!',
+                style: TextStyle(
+                  fontSize: R.fontSize(20, context),
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.success,
+                ),
+              ),
+              SizedBox(height: R.sh(1, context)),
+              Text(
+                'Order has been marked as delivered successfully.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: R.fontSize(14, context),
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              SizedBox(height: R.sh(3, context)),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: R.sh(1.5, context)),
+                  ),
+                  child: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      if (!mounted) return;
+      if (done == true) {
+        Navigator.pop(context, true);
       }
     } catch (e) {
       debugPrint('[RiderOrderDetail] Mark delivered error: $e');
       if (mounted) {
+        final message = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to mark as delivered: $e'),
+            content: Text(message.isEmpty ? 'Failed to mark as delivered' : message),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 4),
           ),

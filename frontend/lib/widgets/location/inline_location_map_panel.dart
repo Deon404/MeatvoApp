@@ -58,17 +58,19 @@ class _InlineLocationMapPanelState extends State<InlineLocationMapPanel> {
 
   Future<void> _checkMapsConfig() async {
     if (!EnvConfig.hasGoogleMapsApiKey) {
+      debugPrint(GoogleMapsSetup.setupChecklist);
       if (!mounted) return;
       setState(() {
-        _configError = 'Add GOOGLE_MAPS_API_KEY to .env and rebuild.';
+        _configError = GoogleMapsSetup.customerLocationMapMessage;
       });
       return;
     }
     final native = await MapsPlatformConfig.getNativeConfig();
     if (!mounted || native == null) return;
     if (!native.isReady) {
+      debugPrint(GoogleMapsSetup.devManifestKeyDiagnostic());
       setState(() {
-        _configError = GoogleMapsSetup.manifestKeyMissingError();
+        _configError = GoogleMapsSetup.customerLocationMapMessage;
       });
     }
   }
@@ -126,7 +128,7 @@ class _InlineLocationMapPanelState extends State<InlineLocationMapPanel> {
         alignment: Alignment.center,
         padding: const EdgeInsets.all(12),
         child: Text(
-          _configError ?? 'Maps API key required',
+          _configError ?? GoogleMapsSetup.customerMapUnavailableShort,
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontSize: 12,

@@ -757,7 +757,7 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
       return _placeholder(
         height: mapHeight,
         icon: Icons.map_outlined,
-        message: 'Map unavailable — API key required',
+        message: GoogleMapsSetup.customerTrackingMapMessage,
       );
     }
 
@@ -902,10 +902,10 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
     _mapError = null;
 
     if (!EnvConfig.hasGoogleMapsApiKey) {
+      debugPrint(GoogleMapsSetup.setupChecklist);
       if (mounted) {
         setState(() {
-          _mapError =
-              'Map unavailable — API key missing.\n\n${GoogleMapsSetup.setupChecklist}';
+          _mapError = GoogleMapsSetup.customerTrackingMapMessage;
         });
       }
       return;
@@ -913,9 +913,10 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
 
     final native = await MapsPlatformConfig.getNativeConfig();
     if (native != null && !native.isReady) {
+      debugPrint(GoogleMapsSetup.devManifestKeyDiagnostic());
       if (mounted) {
         setState(() {
-          _mapError = GoogleMapsSetup.manifestKeyMissingError();
+          _mapError = GoogleMapsSetup.customerTrackingMapMessage;
         });
       }
       return;
@@ -926,10 +927,13 @@ class _DeliveryTrackingMapState extends State<DeliveryTrackingMap>
     _mapTimeoutTimer = Timer(const Duration(seconds: 15), () async {
       if (!mounted || _isMapReady || _mapError != null) return;
       final nativeCfg = await MapsPlatformConfig.getNativeConfig();
-      setState(() {
-        _mapError = GoogleMapsSetup.tilesLoadError(
+      debugPrint(
+        GoogleMapsSetup.devTilesLoadDiagnostic(
           applicationId: nativeCfg?.applicationId,
-        );
+        ),
+      );
+      setState(() {
+        _mapError = GoogleMapsSetup.customerTrackingMapMessage;
       });
     });
   }

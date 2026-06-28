@@ -38,7 +38,9 @@ class MapsService {
     final hint = GoogleMapsSetup.hintForApiStatus(status, apiName: apiName);
     lastPlacesError = hint.isNotEmpty
         ? hint
-        : (status != null && status.isNotEmpty ? 'Location search unavailable ($status)' : null);
+        : (status != null && status.isNotEmpty
+            ? 'Location search is temporarily unavailable. Please try again.'
+            : null);
   }
   /// Check if location services are enabled
   Future<bool> isLocationServiceEnabled() async {
@@ -729,7 +731,7 @@ class MapsService {
     if (apiKey.isEmpty || query.trim().length < 3) {
       if (apiKey.isEmpty) {
         lastPlacesError =
-            'Maps API key missing. Run: dart run tool/sync_env.dart then restart the app';
+            GoogleMapsSetup.customerLocationMapMessage;
       }
       return [];
     }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +10,7 @@ import 'error_tracking_service.dart';
 import 'maps_service.dart';
 import 'rider_location_service.dart';
 import '../utils/role_access_exception.dart';
+import '../utils/address_display_util.dart';
 
 /// Rider / Delivery-partner service — custom Node.js backend
 /// Maps to /api/delivery/* endpoints
@@ -241,7 +241,7 @@ class RiderService {
 
     final addressRaw = normalized['address'];
     if (addressRaw is String && addressRaw.trim().isNotEmpty) {
-      final trimmed = addressRaw.trim();
+      final trimmed = formatAddressForDisplay(addressRaw);
       normalized['delivery_address'] = {
         'formatted': trimmed,
         'text': trimmed,
@@ -249,15 +249,10 @@ class RiderService {
       };
     } else if (addressRaw is Map) {
       final addressMap = Map<String, dynamic>.from(addressRaw);
-      final text = (addressMap['formatted'] ??
-              addressMap['text'] ??
-              addressMap['raw'] ??
-              addressMap['address'])
-          ?.toString()
-          .trim();
+      final text = formatAddressForDisplay(addressMap);
       normalized['delivery_address'] = {
         ...addressMap,
-        if (text != null && text.isNotEmpty) ...{
+        if (text != 'Address not available') ...{
           'formatted': text,
           'text': text,
         },
@@ -609,24 +604,27 @@ class RiderService {
   }
 
   Future<void> markOrderDelivered(
-    String assignmentId, {
-    Map<String, dynamic>? deliveryProof,
-    String? proofUrl,
+    String orderId, {
+    required String otp,
   }) async {
-    final url = proofUrl ?? deliveryProof?['proofUrl']?.toString();
-    if (url != null && url.isNotEmpty) {
+    final trimmedOtp = otp.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(trimmedOtp)) {
+      throw Exception('Please enter the 6-digit delivery OTP from the customer');
+    }
+
+    try {
       final res = await _api.patch(
-        ApiDeliveryPaths.orderStatus(assignmentId),
-        data: {'status': 'DELIVERED', 'proofUrl': url},
+        ApiDeliveryPaths.orderStatus(orderId),
+        data: {'status': 'DELIVERED', 'otp': trimmedOtp},
       );
       if (res.data['success'] != true) {
         throw Exception(res.data['message'] ?? 'Failed to mark delivered');
       }
-    } else {
-      await updateOrderStatus(assignmentId, 'DELIVERED');
+      _updateDeliveryState('DELIVERED');
+      _invalidateOrdersCache();
+    } on DioException catch (e) {
+      _throwDeliveryApiError(e, 'Failed to mark delivered');
     }
-    _updateDeliveryState('DELIVERED');
-    _invalidateOrdersCache();
   }
 
   Future<void> markFailedDelivery(
@@ -666,35 +664,6 @@ class RiderService {
     } on DioException catch (e) {
       throw Exception(
         _extractApiMessage(e, 'Failed to confirm return to store'),
-      );
-    }
-  }
-
-  Future<String> uploadDeliveryProof(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (!await file.exists()) {
-        throw Exception('Image file not found');
-      }
-      final filename = filePath.replaceAll('\\', '/').split('/').last;
-      final formData = FormData.fromMap({
-        'image': await MultipartFile.fromFile(
-          filePath,
-          filename: filename.isEmpty ? 'proof.jpg' : filename,
-        ),
-      });
-      final data = _extractMap(
-        await _api.postMultipart(ApiDeliveryPaths.uploadProof, formData),
-        'Proof upload failed',
-      );
-      final url = (data['url'] ?? data['path'] ?? data['storagePath'] ?? '')
-          .toString()
-          .trim();
-      if (url.isEmpty) throw Exception('Upload response missing URL');
-      return url;
-    } on DioException catch (e) {
-      throw Exception(
-        'Proof upload failed: ${e.response?.data?['message'] ?? e.message}',
       );
     }
   }

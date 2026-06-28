@@ -27,6 +27,8 @@ class RiderProfileScreen extends ConsumerStatefulWidget {
 
 class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
   final RiderService _riderService = RiderService();
+  final RiderLocationService _locationService = RiderLocationService();
+  late final RiderAssignmentAlerts _assignmentAlerts;
   Map<String, dynamic>? _riderProfile;
   EarningsData? _earnings;
   bool _isLoading = true;
@@ -35,6 +37,7 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
   @override
   void initState() {
     super.initState();
+    _assignmentAlerts = ref.read(riderAssignmentAlertsProvider.notifier);
     _loadProfile();
   }
 
@@ -789,9 +792,9 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
     if (confirmed != true || !mounted) return;
 
     try {
-      ref.read(riderServiceProvider).disposeRealtime();
-      ref.read(riderLocationServiceProvider).stopSendingLocation();
-      ref.read(riderAssignmentAlertsProvider.notifier).clear();
+      _riderService.disposeRealtime();
+      _locationService.stopSendingLocation();
+      _assignmentAlerts.clear();
       SocketService().disconnect();
       await AuthService().signOut();
       if (!mounted) return;

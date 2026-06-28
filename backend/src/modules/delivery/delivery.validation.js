@@ -33,11 +33,26 @@ const rejectOrderSchema = z.object({
 
 const updateDeliveryOrderStatusSchema = z.object({
   params: z.object({ id: idParam }),
-  body: z.object({
-    status: z.enum(['OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED']),
-    proofUrl: z.string().trim().min(1).optional(),
-    deliveryNotes: z.string().trim().max(500).optional(),
-  }),
+  body: z
+    .object({
+      status: z.enum(['OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY', 'DELIVERED']),
+      otp: z
+        .string()
+        .trim()
+        .regex(/^\d{6}$/, 'OTP must be 6 digits')
+        .optional(),
+      proofUrl: z.string().trim().min(1).optional(),
+      deliveryNotes: z.string().trim().max(500).optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (data.status === 'DELIVERED' && !data.otp) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Delivery OTP is required',
+          path: ['otp'],
+        });
+      }
+    }),
   query: z.object({}).optional(),
 });
 

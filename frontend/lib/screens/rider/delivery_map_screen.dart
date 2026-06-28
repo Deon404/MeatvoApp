@@ -7,6 +7,7 @@ import '../../services/navigation_service.dart';
 import '../../services/api_service.dart';
 import '../../services/contact_action_service.dart';
 import '../../core/constants/app_constants.dart';
+import '../../utils/address_display_util.dart';
 import '../../core/widgets/map_markers.dart';
 import '../../config/store_config.dart';
 import '../../widgets/skeletons/shimmer_base.dart';
@@ -97,7 +98,7 @@ class _DeliveryMapScreenState extends State<DeliveryMapScreen> {
           'orderId': stop['orderId']?.toString() ?? '',
           'customerName': stop['customerName']?.toString() ?? 'Customer',
           'customerPhone': stop['customerPhone']?.toString() ?? '',
-          'address': stop['address']?.toString() ?? 'Address',
+          'address': formatAddressForDisplay(stop['address']),
           'latitude': lat,
           'longitude': lng,
           'distanceFromPrev': stop['distanceFromPrevKm'] as num? ?? 0,

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../config/store_config.dart';
@@ -11,6 +10,7 @@ import '../../services/rider_location_service.dart';
 import '../../services/rider_service.dart';
 import '../../services/contact_action_service.dart';
 import '../../utils/address_display_util.dart';
+import 'widgets/delivery_otp_dialog.dart';
 
 class _BatchStop {
   final String orderId;
@@ -35,7 +35,7 @@ class _BatchStop {
 }
 
 /// Multi-stop batch delivery screen — Licious-style map + bottom sheet.
-class BatchDeliveryScreen extends ConsumerStatefulWidget {
+class BatchDeliveryScreen extends StatefulWidget {
   final List<String> orderIds;
 
   const BatchDeliveryScreen({
@@ -44,11 +44,11 @@ class BatchDeliveryScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<BatchDeliveryScreen> createState() =>
+  State<BatchDeliveryScreen> createState() =>
       _BatchDeliveryScreenState();
 }
 
-class _BatchDeliveryScreenState extends ConsumerState<BatchDeliveryScreen> {
+class _BatchDeliveryScreenState extends State<BatchDeliveryScreen> {
   static const Color _primary = Color(0xFFC8102E);
   static const Color _greyText = Color(0xFF6B6B6B);
   static const Color _darkText = Color(0xFF1A1A1A);
@@ -58,6 +58,7 @@ class _BatchDeliveryScreenState extends ConsumerState<BatchDeliveryScreen> {
   final NavigationService _navigationService = NavigationService();
   final ApiService _api = ApiService();
   final ContactActionService _contactService = ContactActionService();
+  final RiderLocationService _locationService = RiderLocationService();
 
   GoogleMapController? _mapController;
   bool _isLoading = true;
@@ -71,9 +72,6 @@ class _BatchDeliveryScreenState extends ConsumerState<BatchDeliveryScreen> {
   Set<Marker> _markers = {};
   Set<Polyline> _polylines = {};
   LatLng? _currentLocation;
-
-  RiderLocationService get _locationService =>
-      ref.read(riderLocationServiceProvider);
 
   @override
   void initState() {
@@ -431,9 +429,35 @@ class _BatchDeliveryScreenState extends ConsumerState<BatchDeliveryScreen> {
     final stop = _currentStop;
     if (stop == null || _isProcessing) return;
 
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Confirm Delivery'),
+        content: Text(
+          'Have you delivered order #${stop.orderId} to ${stop.customerName}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: _primary),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+
+    final otp = await showDeliveryOtpDialog(context);
+    if (!mounted || otp == null) return;
+
     setState(() => _isProcessing = true);
     try {
-      await _riderService.markOrderDelivered(stop.orderId);
+      await _riderService.markOrderDelivered(stop.orderId, otp: otp);
       if (!mounted) return;
 
       setState(() {
@@ -451,9 +475,10 @@ class _BatchDeliveryScreenState extends ConsumerState<BatchDeliveryScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final message = e.toString().replaceFirst('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to mark delivered: $e'),
+            content: Text(message.isEmpty ? 'Failed to mark delivered' : message),
             backgroundColor: Colors.red,
           ),
         );

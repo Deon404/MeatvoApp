@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../config/env_config.dart';
+import '../../config/google_maps_setup.dart';
 import '../../config/store_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../models/address_model.dart';
@@ -55,8 +56,9 @@ class _MapPinScreenState extends State<MapPinScreen> {
 
   Future<void> _resolveCenter() async {
     if (!EnvConfig.hasGoogleMapsApiKey) {
+      debugPrint(GoogleMapsSetup.setupChecklist);
       setState(() {
-        _mapError = 'Add GOOGLE_MAPS_API_KEY to .env and rebuild.';
+        _mapError = GoogleMapsSetup.customerLocationMapMessage;
       });
       return;
     }

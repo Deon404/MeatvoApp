@@ -64,25 +64,7 @@ class AddressModel {
     this.updatedAt,
   });
 
-  static String _cleanPart(String value) => cleanAddressPart(value);
-
-  static List<String> _dedupeParts(Iterable<String> parts) =>
-      dedupeAddressParts(parts);
-
-  /// Get full address as a formatted string
-  String get fullAddress {
-    final parts = <String>[
-      addressLine1,
-      if (addressLine2 != null && addressLine2!.isNotEmpty) addressLine2!,
-      if (landmark != null && landmark!.isNotEmpty) landmark!,
-      '$city, $state',
-      pincode,
-    ];
-    return _dedupeParts(parts).join(', ');
-  }
-
-  /// Clean 2-line address for checkout/cart display.
-  String get displayAddress => formatCheckoutAddress(
+  String get fullAddress => formatHyperlocalAddress(
         addressLine1: addressLine1,
         addressLine2: addressLine2,
         landmark: landmark,
@@ -91,11 +73,15 @@ class AddressModel {
         pincode: pincode,
       );
 
-  /// Get short address (first line + city)
+  /// Clean address for checkout/cart/list display.
+  String get displayAddress => fullAddress;
+
+  /// Short label — first locality segment (house/colony/area).
   String get shortAddress {
-    final line = _cleanPart(addressLine1);
-    if (line.isEmpty) return city;
-    return '$line, $city';
+    final local = fullAddress;
+    if (local.isEmpty || local == 'Delivery address') return local;
+    final first = local.split(',').first.trim();
+    return first.isNotEmpty ? first : local;
   }
 
   static DateTime? _parseDateTime(dynamic value) {

@@ -52,10 +52,21 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
   final List<GlobalKey<NavigatorState>> _tabNavigatorKeys =
       List.generate(3, (_) => GlobalKey<NavigatorState>());
   Future<void> Function()? _refreshOrdersTab;
+  /// Home tab lives inside a nested [Navigator] whose initial route is built
+  /// once — bump this to refresh dashboard UI after parent [setState].
+  final ValueNotifier<int> _dashboardUiTick = ValueNotifier(0);
+  late final RiderAssignmentAlerts _assignmentAlerts;
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _dashboardUiTick.value++;
+  }
 
   @override
   void initState() {
     super.initState();
+    _assignmentAlerts = ref.read(riderAssignmentAlertsProvider.notifier);
     WidgetsBinding.instance.addPostFrameCallback((_) => _initializeDashboard());
   }
 
@@ -87,12 +98,13 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
 
   @override
   void dispose() {
+    _dashboardUiTick.dispose();
     _socketService.offOrderAssigned();
     _socketService.offOrderAutoAccepted();
     _socketService.offRouteZoneAssigned();
     _socketService.offOrderAssignmentCancelled();
     _riderService.disposeRealtime();
-    ref.read(riderAssignmentAlertsProvider.notifier).clear();
+    _assignmentAlerts.clear();
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -162,21 +174,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
     );
   }
 
-  String _extractAddressText(dynamic addr) {
-    if (addr == null) return 'Address not available';
-    if (addr is String) return addr.isNotEmpty ? addr : 'Address not available';
-    if (addr is Map) {
-      final formatted = addr['formatted'] ?? addr['formatted_address'];
-      if (formatted != null && formatted.toString().isNotEmpty) {
-        return formatted.toString();
-      }
-      final text = addr['text'] ?? addr['raw'] ?? addr['address'];
-      if (text != null && text.toString().isNotEmpty) {
-        return text.toString();
-      }
-    }
-    return 'Address not available';
-  }
+  String _extractAddressText(dynamic addr) => formatAddressForDisplay(addr);
 
   Map<String, dynamic> _assignmentToAlertData(Map<String, dynamic> assignment) {
     final order = assignment['order'] as Map<String, dynamic>? ?? {};
@@ -195,6 +193,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
   }
 
   void _notifyNewAssignment(dynamic data) {
+    if (!mounted) return;
     final orderIds = _parseOrderIds(data);
     _loadDashboardData(force: true);
     _refreshOrdersTab?.call();
@@ -214,9 +213,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
     );
 
     final alertKey = _batchAlertKey(orderIds);
-    if (ref
-        .read(riderAssignmentAlertsProvider.notifier)
-        .containsAssignment(alertKey)) {
+    if (_assignmentAlerts.containsAssignment(alertKey)) {
       return;
     }
 
@@ -280,9 +277,8 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
 
     final primaryOrderId = orderIds.first;
     final alertKey = _batchAlertKey(orderIds);
-    final alerts = ref.read(riderAssignmentAlertsProvider.notifier);
-    alerts.addAssignment(alertKey);
-    alerts.addOrder(primaryOrderId.toString());
+    _assignmentAlerts.addAssignment(alertKey);
+    _assignmentAlerts.addOrder(primaryOrderId.toString());
 
     try {
       _audioPlayer.play(AssetSource('sounds/new_order.mp3'));
@@ -301,9 +297,8 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
         onTimeout: () => _handleAssignmentSheetTimeout(orderIds),
       ),
     ).whenComplete(() {
-      final alerts = ref.read(riderAssignmentAlertsProvider.notifier);
-      alerts.removeAssignment(alertKey);
-      alerts.removeOrder(primaryOrderId.toString());
+      _assignmentAlerts.removeAssignment(alertKey);
+      _assignmentAlerts.removeOrder(primaryOrderId.toString());
     });
   }
 
@@ -413,9 +408,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
         });
       });
       if (reason == 'timeout' || reason == 'auto_reassigned') {
-        ref
-            .read(riderAssignmentAlertsProvider.notifier)
-            .removeOrder(orderId.toString());
+        _assignmentAlerts.removeOrder(orderId.toString());
       }
     }
     _loadDashboardData(force: true);
@@ -709,7 +702,10 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
         children: [
           RiderTabNavigator(
             navigatorKey: _tabNavigatorKeys[0],
-            root: _buildDashboardTab(),
+            root: ValueListenableBuilder<int>(
+              valueListenable: _dashboardUiTick,
+              builder: (context, _, __) => _buildDashboardTab(),
+            ),
           ),
           RiderTabNavigator(
             navigatorKey: _tabNavigatorKeys[1],

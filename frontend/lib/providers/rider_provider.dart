@@ -347,6 +347,9 @@ class _AlertsState {
   }
 }
 
+/// Public alias — cache in [initState] when used from [dispose] or async callbacks.
+typedef RiderAssignmentAlerts = _AlertsNotifier;
+
 class _AlertsNotifier extends StateNotifier<_AlertsState> {
   _AlertsNotifier() : super(const _AlertsState());
 

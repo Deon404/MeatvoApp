@@ -98,7 +98,7 @@ const {
 } = require('../../services/earnings.service');
 const { DELIVERY_STATUS_TRANSITIONS, canTransition } = require('../../utils/orderStatus');
 const { assertWeightReconciliationForDispatch } = require('../../utils/weightReconciliationDispatch.util');
-const { ensureDeliveryOTP } = require('../../services/deliveryProof.service');
+const { ensureDeliveryOTP, verifyDeliveryOTP } = require('../../services/deliveryProof.service');
 
 // Enhanced tracking service
 const { updateRiderLocation: updateRiderLocationEnhanced } = require('../../services/tracking.service');
@@ -530,9 +530,16 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
   const status = req.validated.body.status;
   const proofUrl = req.validated.body.proofUrl;
   const deliveryNotes = req.validated.body.deliveryNotes;
+  const otp = req.validated.body.otp;
 
   const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
+
+  if (status === 'DELIVERED') {
+    if (!otp) return fail(res, 400, 'Delivery OTP is required');
+    const otpResult = await verifyDeliveryOTP(orderId, otp);
+    if (!otpResult.valid) return fail(res, 400, otpResult.reason);
+  }
 
   let proofStoragePath = null;
   if (status === 'DELIVERED' && proofUrl) {

@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'env_config.dart';
 
-/// Google Maps Platform setup — Meatvo needs all three products on one API key.
+/// Google Maps Platform setup — Meatvo needs all four products on one API key.
 abstract final class GoogleMapsSetup {
   static const requiredCloudApis = [
     'Maps SDK for Android',
@@ -10,6 +10,26 @@ abstract final class GoogleMapsSetup {
     'Geocoding API',
     'Directions API',
   ];
+
+  /// Android package name (must match Google Cloud API key restriction).
+  static const androidApplicationId = 'com.meatvo.app';
+
+  // ── Customer-facing copy (shown in-app — no .env / API key / Gradle text) ──
+
+  /// Order tracking screen when the live map cannot load.
+  static const customerTrackingMapMessage =
+      'Live map is temporarily unavailable.\n\n'
+      'You can still track your order using the details below. '
+      'Try refreshing or check your internet connection.';
+
+  /// Address / location picker when the map cannot load.
+  static const customerLocationMapMessage =
+      'Map couldn\'t be loaded right now.\n\n'
+      'Check your internet connection and try again, '
+      'or search for your area manually.';
+
+  static const customerMapUnavailableShort =
+      'Map unavailable right now. Please try again.';
 
   /// True when a non-placeholder key is present in `.env`.
   static bool get hasConfiguredApiKey {
@@ -20,13 +40,12 @@ abstract final class GoogleMapsSetup {
     return true;
   }
 
-  /// Android package name (must match Google Cloud API key restriction).
-  static const androidApplicationId = 'com.meatvo.app';
+  /// How to print the signing certificate SHA-1 for Google Cloud API restrictions.
+  static const androidSha1KeytoolHint =
+      'keytool -list -v -keystore %USERPROFILE%\\.android\\debug.keystore '
+      '-alias androiddebugkey -storepass android';
 
-  /// Debug keystore SHA-1 (`keytool -list -v -keystore ~/.android/debug.keystore`).
-  static const androidDebugSha1 =
-      '00:C1:5A:95:9B:BE:B0:45:2E:38:C3:0C:45:B1:72:B1:EE:18:44:87';
-
+  /// Developer setup checklist — log only, never show to customers.
   static String get setupChecklist => '''
 Google Maps setup for Meatvo (enable all on ONE key):
   1. Maps SDK for Android  → Pick on Map, delivery circle
@@ -41,30 +60,35 @@ Gradle also copies the key into AndroidManifest for native map tiles.
 
 Google Cloud → Credentials → your key → Application restrictions:
   Package: $androidApplicationId
-  SHA-1:   $androidDebugSha1
+  SHA-1:   debug + release signing cert (run keytool on each keystore)
+
+Debug SHA-1:
+  $androidSha1KeytoolHint
+
+Release APK: use your upload/release keystore with the same keytool command.
 
 Then: flutter clean && flutter run
 ''';
 
-  static String tilesLoadError({String? applicationId}) {
+  /// Developer diagnostic when map tiles time out — log only.
+  static String devTilesLoadDiagnostic({String? applicationId}) {
     final pkg = applicationId ?? androidApplicationId;
-    return 'Map tiles are taking too long to load.\n\n'
-        'Please check:\n'
-        '1. Internet connection\n'
-        '2. GOOGLE_MAPS_API_KEY in frontend/.env (then flutter clean && run)\n'
-        '3. Maps SDK for Android is enabled in Google Cloud Console\n'
-        '4. API key is restricted to this app:\n'
-        '   Package: $pkg\n'
-        '   SHA-1: $androidDebugSha1';
+    return 'Map tiles timeout. Check Google Cloud key restrictions for '
+        'package=$pkg. Run: $androidSha1KeytoolHint. '
+        'Then: dart run tool/sync_env.dart && flutter clean && flutter run';
   }
 
-  static String manifestKeyMissingError() =>
-      'Google Maps API key is in .env but NOT in the Android app.\n\n'
-      'The native map reads the key from AndroidManifest at build time.\n'
-      'Add GOOGLE_MAPS_API_KEY to frontend/.env and run:\n'
-      '  flutter clean\n'
-      '  flutter run\n\n'
-      'Optional: run dart run tool/sync_env.dart to write android/secrets.properties.';
+  /// Developer diagnostic when manifest key is missing — log only.
+  static String devManifestKeyDiagnostic() =>
+      'Dart has GOOGLE_MAPS_API_KEY but AndroidManifest key is empty. '
+      'Run: dart run tool/sync_env.dart && flutter clean && flutter run';
+
+  /// @deprecated Use [customerTrackingMapMessage] in UI; call [devTilesLoadDiagnostic] in logs.
+  static String tilesLoadError({String? applicationId}) =>
+      customerTrackingMapMessage;
+
+  /// @deprecated Use [customerLocationMapMessage] in UI; call [devManifestKeyDiagnostic] in logs.
+  static String manifestKeyMissingError() => customerLocationMapMessage;
 
   static void logDebugStatus() {
     if (!kDebugMode) return;
@@ -84,15 +108,15 @@ Then: flutter clean && flutter run
     }
   }
 
-  /// User-facing hint when a Google API returns REQUEST_DENIED.
+  /// User-facing hint when a Google API returns an error status.
   static String hintForApiStatus(String? status, {required String apiName}) {
     switch (status) {
       case 'REQUEST_DENIED':
-        return 'Enable $apiName in Google Cloud Console and add the key to .env';
+        return 'Location search is temporarily unavailable. Please try again.';
       case 'OVER_QUERY_LIMIT':
-        return 'Google Maps quota exceeded. Try again later.';
+        return 'Too many requests. Please try again in a few minutes.';
       case 'INVALID_REQUEST':
-        return 'Invalid location request. Try a different search.';
+        return 'We couldn\'t find that location. Try a different search.';
       default:
         return '';
     }

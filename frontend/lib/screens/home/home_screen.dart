@@ -56,6 +56,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) return;
     if (state == AppLifecycleState.resumed) {
       ref.invalidate(storeSettingsProvider);
       ref.read(homeViewModelProvider.notifier).handleResume();
@@ -252,10 +253,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   String _locationTitle(HomeState state) {
     final address = state.defaultAddress;
     if (address == null) return HomeStrings.selectLocation;
-
-    final city = address.city.trim();
-    if (city.isNotEmpty) return city;
-
     return _shortDeliveryAreaName(state);
   }
 
@@ -268,11 +265,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   String _shortDeliveryAreaName(HomeState state) {
-    // Capture everything to locals so the `address!.landmark!` bangs
-    // disappear. Instance fields cannot be smart-cast in Dart, so the
-    // old code was vulnerable to the websocket address-update event
-    // nulling the field between the guard and the read → classic
-    // "Null check operator used on a null value" crash on the header.
     final address = state.defaultAddress;
     if (address == null) return HomeStrings.selectLocation;
 
@@ -281,16 +273,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       return landmark.length <= 20 ? landmark : '${landmark.substring(0, 20)}...';
     }
 
-    final addr1 = address.addressLine1.trim();
-    if (addr1.isNotEmpty) {
-      final firstSeg = addr1.split(',').first.trim();
-      return firstSeg.length <= 20
-          ? firstSeg
-          : '${firstSeg.substring(0, 20)}...';
+    final local = address.shortAddress.trim();
+    if (local.isNotEmpty && local != 'Delivery address') {
+      return local.length <= 20 ? local : '${local.substring(0, 20)}...';
     }
 
-    final city = address.city.trim();
-    final fallback = city.isNotEmpty ? city : HomeStrings.selectLocation;
-    return fallback.length <= 20 ? fallback : '${fallback.substring(0, 20)}...';
+    return HomeStrings.selectLocation;
   }
 }

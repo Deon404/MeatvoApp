@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../app_navigator_key.dart';
@@ -62,7 +64,10 @@ Future<bool> ensureDeliveryPartnerAccess(BuildContext context) async {
     return true;
   }
 
-  final user = await auth.getMe();
+  final user = await auth.getMe().timeout(
+    const Duration(seconds: 15),
+    onTimeout: () => cached,
+  );
   if (user == null) {
     await auth.signOut();
     if (context.mounted) {
@@ -78,7 +83,9 @@ Future<bool> ensureDeliveryPartnerAccess(BuildContext context) async {
   }
 
   try {
-    await RiderService().getRiderProfile();
+    await RiderService().getRiderProfile().timeout(
+      const Duration(seconds: 15),
+    );
     return true;
   } catch (_) {
     // No approved delivery partner profile.

@@ -73,8 +73,9 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
     if (!mounted || native == null) return;
 
     if (!native.isReady && EnvConfig.hasGoogleMapsApiKey) {
+      debugPrint(GoogleMapsSetup.devManifestKeyDiagnostic());
       setState(() {
-        _mapError = GoogleMapsSetup.manifestKeyMissingError();
+        _mapError = GoogleMapsSetup.customerLocationMapMessage;
         _isMapReady = false;
       });
       debugPrint(
@@ -84,9 +85,9 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
     }
 
     if (!native.isReady && !EnvConfig.hasGoogleMapsApiKey) {
+      debugPrint(GoogleMapsSetup.setupChecklist);
       setState(() {
-        _mapError =
-            'Google Maps API key is missing.\n\n${GoogleMapsSetup.setupChecklist}';
+        _mapError = GoogleMapsSetup.customerLocationMapMessage;
         _isMapReady = false;
       });
     }
@@ -306,10 +307,10 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
     _mapTimeoutTimer?.cancel();
     
     if (!EnvConfig.hasGoogleMapsApiKey) {
+      debugPrint(GoogleMapsSetup.setupChecklist);
       if (mounted) {
         setState(() {
-          _mapError =
-              'Google Maps API key is missing or invalid.\n\n${GoogleMapsSetup.setupChecklist}';
+          _mapError = GoogleMapsSetup.customerLocationMapMessage;
           _isMapReady = false;
         });
       }
@@ -318,9 +319,10 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
 
     final native = await MapsPlatformConfig.getNativeConfig();
     if (native != null && !native.isReady) {
+      debugPrint(GoogleMapsSetup.devManifestKeyDiagnostic());
       if (mounted) {
         setState(() {
-          _mapError = GoogleMapsSetup.manifestKeyMissingError();
+          _mapError = GoogleMapsSetup.customerLocationMapMessage;
           _isMapReady = false;
         });
       }
@@ -349,10 +351,13 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
     _mapTimeoutTimer = Timer(const Duration(seconds: 15), () async {
       if (!mounted || _isMapReady || _mapError != null) return;
       final native = await MapsPlatformConfig.getNativeConfig();
-      setState(() {
-        _mapError = GoogleMapsSetup.tilesLoadError(
+      debugPrint(
+        GoogleMapsSetup.devTilesLoadDiagnostic(
           applicationId: native?.applicationId,
-        );
+        ),
+      );
+      setState(() {
+        _mapError = GoogleMapsSetup.customerLocationMapMessage;
       });
       debugPrint('⚠️ Map tiles timeout - tiles may not be loading');
     });
@@ -395,13 +400,13 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 const Icon(
-                  Icons.error_outline,
+                  Icons.map_outlined,
                   size: 64,
-                  color: Colors.red,
+                  color: AppColors.textMuted,
                 ),
                 const SizedBox(height: 16),
                 const Text(
-                  'Google Maps API Key Required',
+                  'Map unavailable',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -410,7 +415,7 @@ class _MapPickerWidgetState extends State<MapPickerWidget> {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'Please add GOOGLE_MAPS_API_KEY to your .env file to use map picker.',
+                  GoogleMapsSetup.customerLocationMapMessage,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textSecondary),
                 ),

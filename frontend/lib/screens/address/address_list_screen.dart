@@ -23,6 +23,7 @@ class _AddressListScreenState extends State<AddressListScreen> {
   UserModel? _userProfile;
   bool _isLoading = true;
   String? _errorMessage;
+  String? _selectingAddressId;
 
   @override
   void initState() {
@@ -65,6 +66,48 @@ class _AddressListScreenState extends State<AddressListScreen> {
           _errorMessage = e.toString();
           _isLoading = false;
         });
+      }
+    }
+  }
+
+  Future<void> _selectAddress(AddressModel address) async {
+    if (address.isDefault || _selectingAddressId != null) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    final previousAddresses = List<AddressModel>.from(_addresses);
+
+    setState(() {
+      _selectingAddressId = address.id;
+      _addresses = _addresses
+          .map(
+            (a) => a.copyWith(isDefault: a.id == address.id),
+          )
+          .toList();
+    });
+
+    try {
+      await _addressService.setDefaultAddress(address.id);
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Default address updated'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _addresses = previousAddresses);
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Failed to update address: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _selectingAddressId = null);
       }
     }
   }
@@ -349,26 +392,35 @@ class _AddressListScreenState extends State<AddressListScreen> {
   }
 
   Widget _buildAddressCard(AddressModel address) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    final isSelecting = _selectingAddressId == address.id;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: address.isDefault || _selectingAddressId != null
+            ? null
+            : () => _selectAddress(address),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: address.isDefault
-              ? AppColors.primary
-              : AppColors.divider,
-          width: address.isDefault ? 2 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: address.isDefault
+                  ? AppColors.primary
+                  : AppColors.divider,
+              width: address.isDefault ? 2 : 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Stack(
+          child: Stack(
         children: [
           // Red overlay for default address
           if (address.isDefault)
@@ -471,24 +523,40 @@ class _AddressListScreenState extends State<AddressListScreen> {
                 // Edit and Delete Icons
                 Column(
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit, size: 20),
-                      color: AppColors.textPrimary,
-                      onPressed: () => _navigateToEditAddress(address),
-                      tooltip: 'Edit',
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 20),
-                      color: AppColors.textPrimary,
-                      onPressed: () => _deleteAddress(address),
-                      tooltip: 'Delete',
-                    ),
+                    if (isSelecting)
+                      const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      )
+                    else ...[
+                      IconButton(
+                        icon: const Icon(Icons.edit, size: 20),
+                        color: AppColors.textPrimary,
+                        onPressed: () => _navigateToEditAddress(address),
+                        tooltip: 'Edit',
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        color: AppColors.textPrimary,
+                        onPressed: () => _deleteAddress(address),
+                        tooltip: 'Delete',
+                      ),
+                    ],
                   ],
                 ),
               ],
             ),
           ),
         ],
+          ),
+        ),
       ),
     );
   }
