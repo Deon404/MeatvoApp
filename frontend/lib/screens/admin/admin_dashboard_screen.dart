@@ -5,6 +5,7 @@ import '../../services/socket_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
 import '../../widgets/admin/assignment_failed_alert_banner.dart';
+import '../../widgets/admin/failed_delivery_alert_banner.dart';
 import '../../widgets/admin/new_order_alert_banner.dart';
 import '../../widgets/common/error_state.dart';
 import 'admin_orders_screen.dart';
@@ -21,6 +22,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   final _socketService = SocketService();
   AdminNewOrderAlertController? _alertController;
   AdminAssignmentFailedAlertController? _assignmentFailedController;
+  AdminFailedDeliveryAlertController? _failedDeliveryController;
   Map<String, dynamic>? _stats;
   bool _isLoading = true;
   String? _loadError;
@@ -31,6 +33,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _loadStats();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupNewOrderAlerts();
+      _loadFailedDeliveryTasks();
+      _loadAssignmentFailureTasks();
     });
   }
 
@@ -38,8 +42,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   void dispose() {
     _socketService.offNewOrder();
     _socketService.offAssignmentFailed();
+    _socketService.offFailedDelivery();
     _alertController?.dispose();
     _assignmentFailedController?.dispose();
+    _failedDeliveryController?.dispose();
     super.dispose();
   }
 
@@ -56,14 +62,68 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _assignmentFailedController = AdminAssignmentFailedAlertController(
       overlayState: overlay,
       onTap: (_) => _openOrdersFromAlert(),
+      onResolve: _resolveAssignmentFailure,
+    );
+    _failedDeliveryController = AdminFailedDeliveryAlertController(
+      overlayState: overlay,
+      onTap: (_) => _openOrdersFromAlert(),
     );
     _setupSocket();
+  }
+
+  Future<void> _loadAssignmentFailureTasks() async {
+    try {
+      final tasks =
+          await _adminService.getOpenAdminTasks(type: 'assignment_failed');
+      if (!mounted) return;
+      final alerts = tasks
+          .map(AssignmentFailedAlertData.fromTask)
+          .where((a) => a.orderId > 0)
+          .toList();
+      _assignmentFailedController?.syncFromTasks(alerts);
+    } catch (e) {
+      debugPrint('Failed to load assignment failure tasks: $e');
+    }
+  }
+
+  Future<void> _resolveAssignmentFailure(AssignmentFailedAlertData alert) async {
+    try {
+      await _adminService.resolveAssignmentFailure(alert.orderId.toString());
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not resolve: $e')),
+      );
+      rethrow;
+    }
+  }
+
+  Future<void> _loadFailedDeliveryTasks() async {
+    try {
+      final tasks = await _adminService.getOpenAdminTasks(type: 'failed_delivery');
+      if (!mounted) return;
+      final alerts = tasks
+          .map(FailedDeliveryAlertData.fromTask)
+          .where((a) => a.orderId > 0)
+          .toList();
+      _failedDeliveryController?.syncFromTasks(alerts);
+    } catch (e) {
+      debugPrint('Failed to load admin tasks: $e');
+    }
+  }
+
+  void _handleFailedDeliverySocket(dynamic data) {
+    if (!mounted) return;
+    final alert = FailedDeliveryAlertData.fromSocket(data);
+    if (alert.orderId == 0) return;
+    _failedDeliveryController?.show(alert);
   }
 
   Future<void> _setupSocket() async {
     await _socketService.connect();
     _socketService.onNewOrder(_handleNewOrder);
     _socketService.onAssignmentFailed(_handleAssignmentFailed);
+    _socketService.onFailedDelivery(_handleFailedDeliverySocket);
   }
 
   void _handleAssignmentFailed(dynamic data) {
@@ -141,6 +201,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       'activeRiders',
       'total_delivery_partners',
       'totalDeliveryPartners',
+    ]);
+    final dispatchQueue = _readStatInt([
+      'dispatch_queue_count',
+      'dispatchQueueCount',
+    ]);
+    final packAgeWarnings = _readStatInt([
+      'pack_age_warning_count',
+      'packAgeWarningCount',
+    ]);
+    final packAgeCritical = _readStatInt([
+      'pack_age_critical_count',
+      'packAgeCriticalCount',
     ]);
     
     // Responsive font sizes
@@ -229,6 +301,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       statValueFontSize: statValueFontSize,
                       statIconSize: statIconSize,
                     ),
+                    if (dispatchQueue > 0 || packAgeWarnings > 0 || packAgeCritical > 0) ...[
+                      SizedBox(height: gridSpacing),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildStatCard(
+                              'Dispatch Queue',
+                              '$dispatchQueue',
+                              Icons.inventory_2_outlined,
+                              AppColors.bluePrimary,
+                              statValueFontSize: statValueFontSize,
+                              statIconSize: statIconSize,
+                            ),
+                          ),
+                          SizedBox(width: gridSpacing),
+                          Expanded(
+                            child: _buildStatCard(
+                              'Pack Age Alerts',
+                              packAgeCritical > 0
+                                  ? '$packAgeCritical critical'
+                                  : '$packAgeWarnings warning',
+                              Icons.timer_outlined,
+                              packAgeCritical > 0
+                                  ? AppColors.primary
+                                  : AppColors.warning,
+                              statValueFontSize: statValueFontSize,
+                              statIconSize: statIconSize,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     SizedBox(height: horizontalPadding),
                   ],
                 ),

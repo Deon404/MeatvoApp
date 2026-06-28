@@ -23,11 +23,11 @@ abstract final class ProductCardAdapter {
   }
 
   static bool canOrder(StoreStatus store, ProductWithVariants product) {
-    return store.isOpen && canAdd(product);
+    return store.isAcceptingOrders && canAdd(product);
   }
 
   static bool isOrderingPaused(StoreStatus store, ProductWithVariants product) {
-    return !store.isOpen && canAdd(product);
+    return !store.isAcceptingOrders && canAdd(product);
   }
 
   static String displayUnit(ProductWithVariants product) {

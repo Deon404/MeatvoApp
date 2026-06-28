@@ -6,7 +6,24 @@ void main() {
     test('lowercases and trims backend statuses', () {
       expect(normalizeOrderStatus('CANCELLED'), 'cancelled');
       expect(normalizeOrderStatus(' DELIVERED '), 'delivered');
-      expect(normalizeOrderStatus(null), 'pending');
+      expect(normalizeOrderStatus(null), 'confirmed');
+    });
+
+    test('collapses internal statuses to customer-facing keys', () {
+      expect(normalizeOrderStatus('PACKED'), 'preparing');
+      expect(normalizeOrderStatus('RIDER_ASSIGNED'), 'preparing');
+      expect(normalizeOrderStatus('OUT_FOR_DELIVERY'), 'out_for_delivery');
+      expect(normalizeOrderStatus('PLACED'), 'confirmed');
+    });
+  });
+
+  group('tracking steps', () {
+    test('uses four customer-visible steps', () {
+      expect(trackingStepCount, 4);
+      expect(resolveTrackingStepIndex('CONFIRMED'), 0);
+      expect(resolveTrackingStepIndex('PACKED'), 1);
+      expect(resolveTrackingStepIndex('OUT_FOR_DELIVERY'), 2);
+      expect(resolveTrackingStepIndex('DELIVERED'), 3);
     });
   });
 

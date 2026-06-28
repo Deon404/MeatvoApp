@@ -282,7 +282,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     final storeStatus = ref.read(storeSettingsSyncProvider);
     final cartItem = _currentCartItem;
     final previousQty = cartItem?.quantity.round() ?? 0;
-    if (!storeStatus.isOpen && _quantity > previousQty) {
+    if (!storeStatus.isAcceptingOrders && _quantity > previousQty) {
       await StoreClosedSheet.show(context, storeStatus);
       if (mounted && cartItem != null) {
         setState(() => _quantity = previousQty);
@@ -993,7 +993,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     final hasExistingCartItem = _currentCartItem != null;
     final totalPrice = _priceFor(activeProduct) * _quantity;
     final storeStatus = ref.watch(storeSettingsSyncProvider);
-    final storeClosedButInStock = _isInStock && !storeStatus.isOpen;
+    final storeClosedButInStock = _isInStock && !storeStatus.isAcceptingOrders;
 
     return SafeArea(
       top: false,
@@ -1052,7 +1052,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     ),
                   ),
                   child: Text(
-                    storeClosedButInStock ? 'Store closed' : 'Add to Cart',
+                    storeClosedButInStock ? 'Not accepting orders' : 'Add to Cart',
                     style: AppTextStyles.button.copyWith(
                       fontSize: 15,
                       color: mv.surfaceCard,
@@ -1095,7 +1095,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             icon: Icons.add,
             onTap: () async {
                     final storeStatus = ref.read(storeSettingsSyncProvider);
-                    if (!storeStatus.isOpen) {
+                    if (!storeStatus.isAcceptingOrders) {
                       await StoreClosedSheet.show(context, storeStatus);
                       return;
                     }

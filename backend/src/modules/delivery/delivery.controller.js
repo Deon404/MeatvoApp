@@ -10,6 +10,16 @@ const {
   emitRouteZoneAssigned,
   clearAssignmentTimeout,
 } = require('../../services/assignment.service');
+const {
+  markFailedDelivery,
+  confirmReturnToStore,
+} = require('../../services/failedDelivery.service');
+const {
+  instrumentRiderAcceptedAndDispatched,
+  publishOperationalEventAsync,
+  OPERATIONAL_EVENT_TYPES,
+  ACTOR_TYPES,
+} = require('../../utils/operationalEvents.util');
 const { addressToText, addressToObject, cleanAddressText } = require('../../utils/address');
 
 const ADMIN_PENDING_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
@@ -87,6 +97,7 @@ const {
   updateRiderEarnings,
 } = require('../../services/earnings.service');
 const { DELIVERY_STATUS_TRANSITIONS, canTransition } = require('../../utils/orderStatus');
+const { assertWeightReconciliationForDispatch } = require('../../utils/weightReconciliationDispatch.util');
 const { ensureDeliveryOTP } = require('../../services/deliveryProof.service');
 
 // Enhanced tracking service
@@ -99,11 +110,81 @@ const { getStoreSettings } = require('../settings/settings.controller');
 const { logger } = require('../../utils/logger');
 const { validateRiderProofUpload } = require('../../utils/uploadSigning');
 const { storeDeliveryProof } = require('../../services/deliveryProof.service');
+const {
+  getDeliveryPartnerIdForUser,
+  countRiderActiveOrdersForUser,
+  countRiderActiveOrders,
+  MAX_ACTIVE_ORDERS,
+  refreshPartnerOperationalState,
+} = require('../../utils/deliveryPartner.util');
+const { processDispatchQueue } = require('../../services/dispatch.service');
+const { reportRiderOperationalException } = require('../../services/riderException.service');
 
-const getDeliveryPartnerIdForUser = async (userId) => {
-  const { rows } = await query('SELECT id FROM delivery_partners WHERE user_id = $1', [userId]);
-  return rows[0]?.id ? Number(rows[0].id) : null;
+const EARNINGS_PERIOD_FILTERS = {
+  today: "reh.created_at >= DATE_TRUNC('day', CURRENT_DATE)",
+  week: "reh.created_at >= DATE_TRUNC('week', CURRENT_DATE)",
+  month: "reh.created_at >= DATE_TRUNC('month', CURRENT_DATE)",
 };
+
+const DELIVERED_FALLBACK_PERIOD_FILTERS = {
+  today: "o.updated_at >= DATE_TRUNC('day', CURRENT_DATE)",
+  week: "o.updated_at >= DATE_TRUNC('week', CURRENT_DATE)",
+  month: "o.updated_at >= DATE_TRUNC('month', CURRENT_DATE)",
+};
+
+async function fetchRiderRatingStats(userId) {
+  try {
+    const { rows } = await query(
+      `SELECT
+         COALESCE(ROUND(AVG(orev.rider_rating)::numeric, 1), 0) AS avg_rating,
+         COUNT(orev.rider_rating) FILTER (WHERE orev.rider_rating IS NOT NULL)::int AS ratings_count
+       FROM order_reviews orev
+       JOIN order_assignments oa ON oa.order_id = orev.order_id
+       JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
+       WHERE dp.user_id = $1`,
+      [userId]
+    );
+    return {
+      avgRating: Number(rows[0]?.avg_rating || 0),
+      ratingsCount: Number(rows[0]?.ratings_count || 0),
+    };
+  } catch (err) {
+    if (err?.code === '42P01') return { avgRating: 0, ratingsCount: 0 };
+    throw err;
+  }
+}
+
+async function fetchLifetimeEarnings(userId, deliveryPartnerId) {
+  try {
+    const { rows } = await query(
+      `SELECT COALESCE(SUM(reh.total_amount), 0) AS lifetime_total
+       FROM rider_earnings_history reh
+       WHERE reh.rider_id = $1`,
+      [userId]
+    );
+    const historyTotal = Number(rows[0]?.lifetime_total || 0);
+    if (historyTotal > 0) return historyTotal;
+  } catch (err) {
+    if (err?.code !== '42P01') throw err;
+  }
+
+  const { rows: partnerRows } = await query(
+    'SELECT COALESCE(earnings, 0) AS earnings FROM delivery_partners WHERE user_id = $1',
+    [userId]
+  );
+  const partnerTotal = Number(partnerRows[0]?.earnings || 0);
+  if (partnerTotal > 0) return partnerTotal;
+
+  const { rows: fallbackRows } = await query(
+    `SELECT COALESCE(SUM(ROUND(o.total_amount * 0.1)), 0) AS lifetime_total
+     FROM order_assignments oa
+     JOIN orders o ON o.id = oa.order_id
+     WHERE oa.delivery_partner_id = $1
+       AND o.status = 'DELIVERED'`,
+    [deliveryPartnerId]
+  );
+  return Number(fallbackRows[0]?.lifetime_total || 0);
+}
 
 const fetchProfile = async (userId) => {
   try {
@@ -182,6 +263,7 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
 
   const baseSelect = `
     SELECT o.id, o.customer_id, cu.phone AS phone, cu.name AS customer_name, o.status, o.total_amount, o.address, o.payment_mode,
+           o.failed_delivery_reason, o.failed_delivery_resolution, o.returned_at, o.return_condition,
            oa.delivery_partner_id, oa.status AS assignment_status,
            oa.assigned_at,
            (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms,
@@ -220,7 +302,10 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
   const { rows: active } = await query(
     `${baseSelect}
      WHERE oa.delivery_partner_id = $1
-       AND o.status IN ('OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY')
+       AND (
+         o.status IN ('OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY', 'RIDER_NEARBY')
+         OR (o.status = 'FAILED_DELIVERY' AND o.failed_delivery_resolution = 'PENDING')
+       )
      ${groupBy}
      ORDER BY o.created_at DESC
      LIMIT 100`,
@@ -246,6 +331,10 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
       phone: o.phone || '',
       status: o.status,
       assignment_status: o.assignment_status || null,
+      failed_delivery_reason: o.failed_delivery_reason || null,
+      failed_delivery_resolution: o.failed_delivery_resolution || null,
+      returned_at: o.returned_at || null,
+      return_condition: o.return_condition || null,
       assigned_at: o.assigned_at || null,
       totalAmount: Number(o.total_amount || 0),
       address: addressObj,
@@ -268,7 +357,7 @@ const acceptOrder = asyncHandler(async (req, res) => {
 
   const updatedOrder = await withTransaction(async (client) => {
     const { rows: orderRows } = await client.query(
-      'SELECT id, status FROM orders WHERE id = $1 FOR UPDATE',
+      'SELECT id, status, weight_reconciliation_status FROM orders WHERE id = $1 FOR UPDATE',
       [orderId]
     );
     const order = orderRows[0];
@@ -277,8 +366,15 @@ const acceptOrder = asyncHandler(async (req, res) => {
       err.statusCode = 404;
       throw err;
     }
-    if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
-      const err = new Error('Order is not available');
+    if (order.status !== 'PACKED') {
+      const err = new Error('Only packed orders can be accepted by a rider');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const reconStatus = String(order.weight_reconciliation_status || '').toUpperCase();
+    if (reconStatus !== 'COMPLETED' && reconStatus !== 'NOT_REQUIRED') {
+      const err = new Error('Weight reconciliation must complete before rider can accept');
       err.statusCode = 400;
       throw err;
     }
@@ -362,7 +458,70 @@ const acceptOrder = asyncHandler(async (req, res) => {
     });
   }
 
+  instrumentRiderAcceptedAndDispatched(io, {
+    orderId,
+    riderId: deliveryPartnerId,
+    riderUserId: userId,
+    previousState: 'PACKED',
+  });
+
+  refreshPartnerOperationalState({
+    deliveryPartnerId,
+    io,
+    reason: 'order_accepted',
+  }).catch(() => {});
+
   return ok(res, { order: updatedOrder }, 'Order accepted');
+});
+
+const markOrderFailedDelivery = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.id);
+  const orderId = Number(req.validated.params.id);
+  const reason = req.validated.body.reason;
+  const io = req.app.get('io');
+
+  const result = await markFailedDelivery({
+    orderId,
+    riderUserId: userId,
+    reason,
+    io,
+  });
+
+  return ok(res, { order: result.order, task: result.task }, 'Failed delivery recorded');
+});
+
+const confirmOrderReturnToStore = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.id);
+  const orderId = Number(req.validated.params.id);
+  const returnCondition = req.validated.body.returnCondition;
+  const io = req.app.get('io');
+
+  const result = await confirmReturnToStore({
+    orderId,
+    riderUserId: userId,
+    returnCondition,
+    io,
+  });
+
+  return ok(res, { order: result.order }, 'Return to store confirmed');
+});
+
+const reportOperationalException = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.id);
+  const orderId = Number(req.validated.params.id);
+  const exceptionType = req.validated.body.exceptionType;
+  const notes = req.validated.body.notes;
+  const io = req.app.get('io');
+
+  const result = await reportRiderOperationalException({
+    orderId,
+    riderUserId: userId,
+    exceptionType,
+    notes,
+    io,
+  });
+
+  return ok(res, result, 'Operational exception reported');
 });
 
 const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
@@ -382,6 +541,8 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
     proofStoragePath = proofCheck.storagePath;
   }
 
+  let previousOrderStatus = null;
+
   await withTransaction(async (client) => {
     const { rows: aRows } = await client.query(
       'SELECT id FROM order_assignments WHERE order_id = $1 AND delivery_partner_id = $2 FOR UPDATE',
@@ -394,14 +555,24 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
     }
 
     const { rows: orderRows } = await client.query(
-      'SELECT status FROM orders WHERE id = $1 FOR UPDATE',
+      'SELECT status, weight_reconciliation_status FROM orders WHERE id = $1 FOR UPDATE',
       [orderId]
     );
     const currentStatus = orderRows[0]?.status;
+    previousOrderStatus = currentStatus;
     if (!canTransition(DELIVERY_STATUS_TRANSITIONS, currentStatus, status)) {
       const err = new Error(`Invalid transition from ${currentStatus} to ${status}`);
       err.statusCode = 400;
       throw err;
+    }
+
+    if (status === 'OUT_FOR_DELIVERY') {
+      try {
+        assertWeightReconciliationForDispatch(orderRows[0]?.weight_reconciliation_status);
+      } catch (reconErr) {
+        reconErr.statusCode = 400;
+        throw reconErr;
+      }
     }
 
     const assignmentStatusByOrderStatus = {
@@ -465,6 +636,25 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
     });
   }
 
+  if (status === 'DELIVERED') {
+    publishOperationalEventAsync(io, {
+      eventType: OPERATIONAL_EVENT_TYPES.DELIVERED,
+      orderId,
+      actorType: ACTOR_TYPES.RIDER,
+      actorId: userId,
+      riderId: deliveryPartnerId,
+      previousState: previousOrderStatus,
+      newState: 'DELIVERED',
+      metadata: {},
+    });
+
+    refreshPartnerOperationalState({
+      deliveryPartnerId,
+      io,
+      reason: 'order_delivered',
+    }).catch(() => {});
+  }
+
   if (status === 'DELIVERED' && rows[0]) {
     try {
       const { rows: assignmentRows } = await query(
@@ -520,6 +710,10 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
       // Non-blocking — delivery status already committed
       console.error('delivery_earnings_update_failed', earningsErr.message);
     }
+
+    processDispatchQueue(io).catch((err) => {
+      console.error('dispatch_queue_after_delivery_failed', err.message);
+    });
   }
   
   return ok(res, { order: rows[0] }, 'Order updated');
@@ -671,20 +865,11 @@ const getEarnings = asyncHandler(async (req, res) => {
   const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
   if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
 
-  let intervalDays = 1;
-  let dateFilterSql = `reh.created_at >= NOW() - ($2 || ' days')::interval`;
-  const params = [userId];
-
-  if (period === 'week') {
-    intervalDays = 7;
-  } else if (period === 'month') {
-    intervalDays = 30;
-  } else if (period.startsWith('date:')) {
-    const dateKey = period.slice(5);
-    dateFilterSql = `reh.created_at::date = $2::date`;
-    params.push(dateKey);
-  } else {
-    params.push(String(intervalDays));
+  const historyParams = [userId];
+  let historyDateFilter = EARNINGS_PERIOD_FILTERS[period] || EARNINGS_PERIOD_FILTERS.today;
+  if (period.startsWith('date:')) {
+    historyDateFilter = 'reh.created_at::date = $2::date';
+    historyParams.push(period.slice(5));
   }
 
   let rows = [];
@@ -692,12 +877,12 @@ const getEarnings = asyncHandler(async (req, res) => {
     const historyResult = await query(
       `SELECT reh.order_id, reh.total_amount, reh.base_amount, reh.distance_bonus,
               reh.time_bonus, reh.peak_bonus, reh.performance_bonus, reh.created_at,
-              reh.rider_rating, reh.completion_rate
+              reh.completion_rate
        FROM rider_earnings_history reh
        WHERE reh.rider_id = $1
-         AND ${dateFilterSql}
+         AND ${historyDateFilter}
        ORDER BY reh.created_at DESC`,
-      params
+      historyParams
     );
     rows = historyResult.rows;
   } catch (err) {
@@ -705,15 +890,24 @@ const getEarnings = asyncHandler(async (req, res) => {
   }
 
   if (rows.length === 0) {
+    const fallbackParams = [deliveryPartnerId];
+    let fallbackDateFilter =
+      DELIVERED_FALLBACK_PERIOD_FILTERS[period] ||
+      DELIVERED_FALLBACK_PERIOD_FILTERS.today;
+    if (period.startsWith('date:')) {
+      fallbackDateFilter = 'o.updated_at::date = $2::date';
+      fallbackParams.push(period.slice(5));
+    }
+
     const fallback = await query(
-      `SELECT o.id AS order_id, o.total_amount, o.created_at
+      `SELECT o.id AS order_id, o.total_amount, o.updated_at AS created_at
        FROM order_assignments oa
        JOIN orders o ON o.id = oa.order_id
        WHERE oa.delivery_partner_id = $1
          AND o.status = 'DELIVERED'
-         AND o.created_at >= NOW() - ($2 || ' days')::interval
-       ORDER BY o.created_at DESC`,
-      [deliveryPartnerId, String(intervalDays)]
+         AND ${fallbackDateFilter}
+       ORDER BY o.updated_at DESC`,
+      fallbackParams
     );
     rows = fallback.rows.map((r) => ({
       order_id: r.order_id,
@@ -724,7 +918,6 @@ const getEarnings = asyncHandler(async (req, res) => {
       peak_bonus: 0,
       performance_bonus: 0,
       created_at: r.created_at,
-      rider_rating: null,
       completion_rate: null,
     }));
   }
@@ -746,16 +939,23 @@ const getEarnings = asyncHandler(async (req, res) => {
     createdAt: r.created_at,
   }));
   const total = breakdown.reduce((sum, b) => sum + b.amount, 0);
-  const avgRating = rows.find((r) => r.rider_rating != null)?.rider_rating;
+
+  const [{ avgRating, ratingsCount }, lifetimeTotal] = await Promise.all([
+    fetchRiderRatingStats(userId),
+    fetchLifetimeEarnings(userId, deliveryPartnerId),
+  ]);
 
   return ok(
     res,
     {
       total,
+      lifetimeTotal,
       deliveries: breakdown.length,
       breakdown,
       period,
-      rating: avgRating != null ? Number(avgRating) : 0,
+      rating: avgRating,
+      totalRatings: ratingsCount,
+      ratings_count: ratingsCount,
       completionRate: rows[0]?.completion_rate != null
         ? Number(rows[0].completion_rate)
         : 0,
@@ -780,6 +980,22 @@ const toggleOnline = asyncHandler(async (req, res) => {
     const { rows: current } = await query('SELECT is_online FROM delivery_partners WHERE user_id = $1', [userId]);
     if (!current[0]) return fail(res, 400, 'Delivery partner profile not found');
     onlineState = !current[0].is_online;
+  }
+
+  if (!onlineState) {
+    const activeOrderCount = await countRiderActiveOrdersForUser(userId);
+    if (activeOrderCount > 0) {
+      return fail(
+        res,
+        409,
+        `Cannot go offline with ${activeOrderCount} active ${activeOrderCount === 1 ? 'delivery' : 'deliveries'}. Complete or return all orders first.`,
+        {
+          code: 'ACTIVE_DELIVERIES_BLOCK_OFFLINE',
+          activeOrderCount,
+          maxActiveOrders: MAX_ACTIVE_ORDERS,
+        }
+      );
+    }
   }
 
   let finalLat = hasCoords ? lat : null;
@@ -809,6 +1025,13 @@ const toggleOnline = asyncHandler(async (req, res) => {
 
   const { rows } = await query(sql, params);
   if (!rows[0]) return fail(res, 400, 'Delivery partner profile not found');
+
+  refreshPartnerOperationalState({
+    deliveryPartnerId: Number(rows[0].id),
+    io: req.app.get('io'),
+    reason: onlineState ? 'went_online' : 'went_offline',
+  }).catch(() => {});
+
   return ok(res, { deliveryPartner: rows[0] }, 'Online status updated');
 });
 
@@ -1224,6 +1447,9 @@ module.exports = {
   listOrdersForDeliveryApp,
   acceptOrder,
   rejectOrder,
+  markOrderFailedDelivery,
+  confirmOrderReturnToStore,
+  reportOperationalException,
   updateDeliveryOrderStatus,
   updateLocation,
   getEarnings,

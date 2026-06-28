@@ -143,7 +143,6 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
                 const SizedBox(height: 16),
                 _roleOption(ctx, 'customer', 'Customer', Icons.person, currentRole),
                 _roleOption(ctx, 'delivery_partner', 'Rider', Icons.delivery_dining, currentRole),
-                _roleOption(ctx, 'staff', 'Staff', Icons.restaurant_menu, currentRole),
                 _roleOption(ctx, 'admin', 'Admin', Icons.admin_panel_settings, currentRole),
               ],
             ),
@@ -245,8 +244,6 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
         return Colors.blue;
       case 'customer':
         return AppColors.success;
-      case 'staff':
-        return AppColors.warning;
       default:
         return AppColors.surface;
     }
@@ -260,8 +257,6 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
         return 'Rider';
       case 'customer':
         return 'Customer';
-      case 'staff':
-        return 'Staff';
       default:
         return 'Unknown';
     }

@@ -20,6 +20,12 @@ const {
   ORDER_STATES: ENHANCED_ORDER_STATES,
 } = require('../../services/orderLifecycle.service');
 const {
+  instrumentOrderConfirmed,
+  publishOperationalEventAsync,
+  OPERATIONAL_EVENT_TYPES,
+  ACTOR_TYPES,
+} = require('../../utils/operationalEvents.util');
+const {
   sendOrderStateNotifications,
   sendCustomNotification,
 } = require('../../services/notification.service');
@@ -28,6 +34,7 @@ const { signStoredImageUrl } = require('../../utils/uploadSigning');
 const { validateCouponForOrder } = require('../coupons/coupons.service');
 const { haversineKm } = require('../delivery/route-optimizer');
 const { getStoreSettings } = require('../settings/settings.controller');
+const { withCustomerStatus } = require('../../utils/customerOrderStatus.util');
 const { resolveUnitSalePrice } = require('../../utils/productPricing.util');
 const { resolveDeliveryCharge } = require('../../utils/orderPricing.util');
 const { calculateExpressETA, calculateRiderTrackingETA } = require('../../utils/eta-calculator');
@@ -35,6 +42,10 @@ const {
   restoreStockForOrder,
   shouldRestoreStockOnCancel,
 } = require('../payments/payment-stock');
+const {
+  packOrderWithWeightReconciliation,
+} = require('../../services/packingWeightReconciliation.service');
+const { orderedWeightGramsForLine, isWeightBasedProduct } = require('../../utils/weightBasedProduct.util');
 
 /** Push/SMS/OTP after checkout — must not block the HTTP response (FCM can take 8s+ per user). */
 function schedulePostOrderSideEffects({
@@ -188,7 +199,7 @@ const createOrder = asyncHandler(async (req, res) => {
       res,
       400,
       storeSettings.closed_message ||
-        'Store is closed — orders resume when we open',
+        'We are not accepting orders right now — please check back soon',
       {
         code: 'STORE_CLOSED',
         closedReason: storeSettings.closed_reason ?? null,
@@ -297,6 +308,11 @@ const createOrder = asyncHandler(async (req, res) => {
       if (Number(p.stock) < item.quantity) {
         const err = new Error('Insufficient stock');
         err.statusCode = 400;
+        err.stockFailure = {
+          productId: item.product_id,
+          requested: item.quantity,
+          available: Number(p.stock),
+        };
         throw err;
       }
       subtotal += resolveUnitSalePrice(p) * item.quantity;
@@ -375,17 +391,23 @@ const createOrder = asyncHandler(async (req, res) => {
     const productIdsForInsert = [];
     const itemQuantities = [];
     const itemPrices = [];
+    const orderedWeights = [];
     for (const item of items) {
       const p = productById.get(item.product_id);
       orderIds.push(order.id);
       productIdsForInsert.push(item.product_id);
       itemQuantities.push(item.quantity);
       itemPrices.push(resolveUnitSalePrice(p));
+      orderedWeights.push(
+        isWeightBasedProduct(p)
+          ? orderedWeightGramsForLine(p, item.quantity)
+          : null
+      );
     }
     await client.query(
-      `INSERT INTO order_items (order_id, product_id, quantity, price)
-       SELECT * FROM UNNEST($1::bigint[], $2::bigint[], $3::integer[], $4::numeric[])`,
-      [orderIds, productIdsForInsert, itemQuantities, itemPrices]
+      `INSERT INTO order_items (order_id, product_id, quantity, price, ordered_weight_g)
+       SELECT * FROM UNNEST($1::bigint[], $2::bigint[], $3::integer[], $4::numeric[], $5::integer[])`,
+      [orderIds, productIdsForInsert, itemQuantities, itemPrices, orderedWeights]
     );
 
     return {
@@ -410,6 +432,12 @@ const createOrder = asyncHandler(async (req, res) => {
     io.to('admin_room').emit('order:new', newOrderPayload);
     if (result.order.status === 'CONFIRMED') {
       io.to('staff_room').emit('order:new', newOrderPayload);
+      instrumentOrderConfirmed(io, {
+        orderId: result.order.id,
+        actorId: customerId,
+        actorRole: 'customer',
+        metadata: { paymentMode: 'COD' },
+      });
     }
   }
 
@@ -459,7 +487,8 @@ const listOrders = asyncHandler(async (req, res) => {
     `${sql} ${where} ORDER BY o.created_at DESC LIMIT ${limitPh} OFFSET ${offsetPh}`,
     binder.params
   );
-  return ok(res, { orders: rows }, 'Orders');
+  const orders = isCustomer ? rows.map(withCustomerStatus) : rows;
+  return ok(res, { orders }, 'Orders');
 });
 
 const getOrder = asyncHandler(async (req, res) => {
@@ -607,7 +636,15 @@ const getOrder = asyncHandler(async (req, res) => {
     });
   }
 
-  return ok(res, { order: orderWithRider, items: signedItems, assignment }, 'Order');
+  return ok(
+    res,
+    {
+      order: isOwner ? withCustomerStatus(orderWithRider) : orderWithRider,
+      items: signedItems,
+      assignment,
+    },
+    'Order'
+  );
 });
 
 const updateOrderStatus = asyncHandler(async (req, res) => {
@@ -669,6 +706,29 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
   }
 
   try {
+    if (String(status).toUpperCase() === 'PACKED') {
+      const result = await packOrderWithWeightReconciliation({
+        orderId,
+        lineWeights: req.body?.items ?? req.body?.lineWeights ?? [],
+        actor: req.user.id,
+        actorRole,
+        context: { notes: req.body.notes },
+        io,
+      });
+
+      const { rows: updatedRows } = await query(
+        `SELECT id, customer_id, status, total_amount, coupon_id, address, payment_mode, created_at
+         FROM orders WHERE id = $1`,
+        [orderId]
+      );
+
+      return ok(
+        res,
+        { order: updatedRows[0], transition: result.transition, reconciliation: result.reconciliation },
+        'Order status updated'
+      );
+    }
+
     // Use enhanced lifecycle service for state transition
     const result = await transitionOrderState({
       orderId,
@@ -839,13 +899,15 @@ const getOrders = asyncHandler(async (req, res) => {
     }, {});
 
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    ordersWithItems = rows.map((order) => ({
-      ...order,
-      items: (itemsByOrderId[order.id] || []).map((item) => ({
-        ...item,
-        image_url: signStoredImageUrl(item.image_url || '', baseUrl),
-      })),
-    }));
+    ordersWithItems = rows.map((order) =>
+      withCustomerStatus({
+        ...order,
+        items: (itemsByOrderId[order.id] || []).map((item) => ({
+          ...item,
+          image_url: signStoredImageUrl(item.image_url || '', baseUrl),
+        })),
+      })
+    );
   }
 
   const countParams = [customerId];

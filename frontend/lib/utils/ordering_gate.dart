@@ -12,7 +12,7 @@ abstract final class OrderingGate {
     Future<void> Function() action,
   ) async {
     final status = ref.read(storeSettingsSyncProvider);
-    if (!status.isOpen) {
+    if (!status.isAcceptingOrders) {
       await StoreClosedSheet.show(context, status);
       return;
     }

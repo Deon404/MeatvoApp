@@ -6,6 +6,7 @@ const { emitToAll } = require('../../socket/socket');
 const { syncOperationalToStoreSettings, getMergedStoreSettings } = require('../../utils/storeSettings.util');
 const { addressToText } = require('../../utils/address');
 const { canTransition } = require('../../utils/orderStateMachine');
+const { assertWeightReconciliationForDispatch } = require('../../utils/weightReconciliationDispatch.util');
 const {
   emitAssignmentSuccess,
   emitAssignmentCancelled,
@@ -19,7 +20,27 @@ const {
   restoreStockForOrder,
   shouldRestoreStockOnCancel,
 } = require('../payments/payment-stock');
+const {
+  listOpenAdminTasks,
+  resolveFailedDelivery,
+} = require('../../services/failedDelivery.service');
+const { isOrderBlockedFromAssignment, ADMIN_TASK_TYPES } = require('../../constants/failedDelivery.constants');
+const { DEFAULT_STORE_SETTINGS, PACK_AGE } = require('../../config/businessRules');
+const { enrichOrderWithPackAge } = require('../../services/packAge.service');
+const { getDispatchQueueOrders } = require('../../services/dispatch.service');
+const { resolveAdminTaskByOrder } = require('../../services/adminTask.service');
+const { countRiderActiveOrders, refreshPartnerOperationalState } = require('../../utils/deliveryPartner.util');
 const { createParamBinder, joinWhere, buildUpdateSet } = require('../../utils/sqlParams');
+const {
+  packOrderWithWeightReconciliation,
+} = require('../../services/packingWeightReconciliation.service');
+const {
+  getOpsMetrics,
+  resolvePeriodBounds,
+  computeCommerceKpiDeltas,
+  computeOpsMetricsForRange,
+  normalizePeriod,
+} = require('../../services/businessMetrics.service');
 
 const redis = require('../../db/redis');
 const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
@@ -72,6 +93,46 @@ const dashboard = asyncHandler(async (req, res) => {
     "SELECT COUNT(*)::int AS total FROM orders WHERE status NOT IN ('DELIVERED','CANCELLED')"
   );
 
+  const { rows: dispatchQueueRows } = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM orders o
+     LEFT JOIN order_assignments oa
+       ON oa.order_id = o.id AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+     WHERE o.status = 'PACKED'
+       AND oa.id IS NULL`
+  );
+
+  const { rows: packAgeWarningRows } = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM orders o
+     LEFT JOIN order_assignments oa
+       ON oa.order_id = o.id AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+     WHERE o.status = 'PACKED'
+       AND oa.id IS NULL
+       AND o.packed_at IS NOT NULL
+       AND o.packed_at <= NOW() - ($1::text || ' minutes')::interval`,
+    [String(PACK_AGE.warningMinutes)]
+  );
+
+  const { rows: packAgeCriticalRows } = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM orders o
+     LEFT JOIN order_assignments oa
+       ON oa.order_id = o.id AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+     WHERE o.status = 'PACKED'
+       AND oa.id IS NULL
+       AND o.packed_at IS NOT NULL
+       AND o.packed_at <= NOW() - ($1::text || ' minutes')::interval`,
+    [String(PACK_AGE.criticalMinutes)]
+  );
+
+  const { rows: openAssignmentTasks } = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM admin_tasks
+     WHERE status = 'open' AND task_type = $1`,
+    [ADMIN_TASK_TYPES.ASSIGNMENT_FAILED]
+  );
+
   return ok(
     res,
     {
@@ -84,6 +145,10 @@ const dashboard = asyncHandler(async (req, res) => {
         todayOrders: todayOrdersRows[0].total,
         todayRevenue: todayRevenueRows[0].total,
         activeRiders: activeRidersRows[0].total,
+        dispatchQueueCount: dispatchQueueRows[0].total,
+        packAgeWarningCount: packAgeWarningRows[0].total,
+        packAgeCriticalCount: packAgeCriticalRows[0].total,
+        openAssignmentFailureTasks: openAssignmentTasks[0].total,
       },
     },
     'Dashboard'
@@ -145,7 +210,7 @@ const customers = asyncHandler(async (req, res) => {
                WHERE oa.delivery_partner_id = dp.id AND o.status = 'DELIVERED') AS total_deliveries
        FROM users u
        LEFT JOIN delivery_partners dp ON dp.user_id = u.id
-       WHERE u.role IN ('customer', 'delivery', 'admin', 'staff')
+       WHERE u.role IN ('customer', 'delivery', 'admin')
        ORDER BY u.created_at DESC`
     ));
   } catch (err) {
@@ -165,7 +230,7 @@ const customers = asyncHandler(async (req, res) => {
               0::int AS total_deliveries
        FROM users u
        LEFT JOIN delivery_partners dp ON dp.user_id = u.id
-       WHERE u.role IN ('customer', 'delivery', 'admin', 'staff')
+       WHERE u.role IN ('customer', 'delivery', 'admin')
        ORDER BY u.created_at DESC`
     ));
   }
@@ -376,6 +441,8 @@ const deliveryPartners = asyncHandler(async (req, res) => {
     ({ rows } = await query(
       `SELECT dp.id, dp.user_id, dp.is_online, dp.current_lat, dp.current_lng, dp.vehicle_type,
               dp.approved, dp.vehicle_number, dp.licence_number, dp.bank_details, dp.earnings,
+              dp.availability_status, dp.estimated_return_at, dp.estimated_return_minutes,
+              dp.active_order_count,
               u.phone, u.name, u.created_at
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
@@ -399,6 +466,10 @@ const deliveryPartners = asyncHandler(async (req, res) => {
       licence_number: null,
       bank_details: null,
       earnings: 0,
+      availability_status: r.availability_status || (r.is_online ? 'available' : 'offline'),
+      estimated_return_at: r.estimated_return_at ?? null,
+      estimated_return_minutes: r.estimated_return_minutes ?? null,
+      active_order_count: r.active_order_count ?? 0,
     }));
   }
 
@@ -407,6 +478,13 @@ const deliveryPartners = asyncHandler(async (req, res) => {
     user_id: String(p.user_id),
     phone: p.phone || '',
     joined_at: p.created_at ? new Date(p.created_at).toISOString() : null,
+    operationalStatus: p.availability_status || (p.is_online ? 'available' : 'offline'),
+    estimatedReturnMinutes:
+      p.estimated_return_minutes != null ? Number(p.estimated_return_minutes) : null,
+    estimatedReturnAt: p.estimated_return_at
+      ? new Date(p.estimated_return_at).toISOString()
+      : null,
+    activeOrderCount: Number(p.active_order_count ?? 0),
     profile: {
       name: p.name || '',
       online: Boolean(p.is_online),
@@ -418,6 +496,13 @@ const deliveryPartners = asyncHandler(async (req, res) => {
       earnings: Number(p.earnings || 0),
       currentLat: p.current_lat !== null ? Number(p.current_lat) : null,
       currentLng: p.current_lng !== null ? Number(p.current_lng) : null,
+      operationalStatus: p.availability_status || (p.is_online ? 'available' : 'offline'),
+      estimatedReturnMinutes:
+        p.estimated_return_minutes != null ? Number(p.estimated_return_minutes) : null,
+      estimatedReturnAt: p.estimated_return_at
+        ? new Date(p.estimated_return_at).toISOString()
+        : null,
+      activeOrderCount: Number(p.active_order_count ?? 0),
     },
   }));
 
@@ -426,13 +511,41 @@ const deliveryPartners = asyncHandler(async (req, res) => {
 
 const toggleDeliveryPartner = asyncHandler(async (req, res) => {
   const id = Number(req.validated.params.id);
+  const { rows: current } = await query(
+    'SELECT id, user_id, is_online FROM delivery_partners WHERE id = $1',
+    [id]
+  );
+  if (!current[0]) {
+    return fail(res, 404, 'Delivery partner not found');
+  }
+
+  const goingOffline = current[0].is_online === true;
+  if (goingOffline) {
+    const activeOrderCount = await countRiderActiveOrders(id);
+    if (activeOrderCount > 0) {
+      return fail(
+        res,
+        409,
+        `Cannot set rider offline with ${activeOrderCount} active ${activeOrderCount === 1 ? 'delivery' : 'deliveries'}.`,
+        {
+          code: 'ACTIVE_DELIVERIES_BLOCK_OFFLINE',
+          activeOrderCount,
+        }
+      );
+    }
+  }
+
   const { rows } = await query(
     'UPDATE delivery_partners SET is_online = NOT is_online WHERE id = $1 RETURNING id, user_id, is_online',
     [id]
   );
-  if (!rows[0]) {
-    return fail(res, 404, 'Delivery partner not found');
-  }
+
+  refreshPartnerOperationalState({
+    deliveryPartnerId: id,
+    io: req.app.get('io'),
+    reason: rows[0]?.is_online ? 'admin_went_online' : 'admin_went_offline',
+  }).catch(() => {});
+
   return ok(res, { deliveryPartner: rows[0] }, 'Delivery partner updated');
 });
 
@@ -555,7 +668,7 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
   const params = binder.params;
 
   const baseSelect = `
-    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address,
+    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address, o.packed_at,
            COALESCE(u.phone, '') AS phone,
            COALESCE(u.name, u.phone, 'Customer') AS customer_name`;
 
@@ -638,6 +751,8 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
     const orderId = String(o.id);
     const items = itemsByOrderId[orderId] || [];
 
+    const packAge = enrichOrderWithPackAge(o);
+
     return {
       id: orderId,
       customerUid: String(o.customer_id),
@@ -652,6 +767,10 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
         ? new Date(o.created_at).toISOString()
         : new Date(createdAtMs).toISOString(),
       updatedAt: createdAtMs,
+      packedAt: packAge.packedAt,
+      packAgeMinutes: packAge.packAgeMinutes,
+      packAgeTier: packAge.packAgeTier,
+      dispatchPriority: packAge.dispatchPriority,
       user: {
         name: customerName,
         phone: o.phone || 'N/A',
@@ -728,14 +847,88 @@ const assignRiderToOrder = asyncHandler(async (req, res) => {
   );
 });
 
+const listAdminTasksHandler = asyncHandler(async (req, res) => {
+  const taskType = req.validated.query?.type || null;
+  const tasks = await listOpenAdminTasks({ taskType });
+  return ok(res, { tasks }, 'Admin tasks');
+});
+
+const resolveAssignmentFailureOrder = asyncHandler(async (req, res) => {
+  const orderId = Number(req.validated.params.id);
+  const adminUserId = Number(req.user.id);
+
+  const resolved = await resolveAdminTaskByOrder(null, {
+    orderId,
+    taskType: ADMIN_TASK_TYPES.ASSIGNMENT_FAILED,
+    adminUserId,
+  });
+
+  if (!resolved) {
+    return fail(res, 404, 'No open assignment failure task for this order');
+  }
+
+  return ok(res, { orderId, resolved: true }, 'Assignment failure resolved');
+});
+
+const resolveFailedDeliveryOrder = asyncHandler(async (req, res) => {
+  const orderId = Number(req.validated.params.id);
+  const resolution = req.validated.body.resolution;
+  const adminUserId = Number(req.user.id);
+  const io = req.app.get('io');
+
+  const result = await resolveFailedDelivery({
+    orderId,
+    adminUserId,
+    resolution,
+    io,
+  });
+
+  return ok(
+    res,
+    { order: result.order, resolution: result.resolution },
+    'Failed delivery resolved'
+  );
+});
+
 const patchOrderCompat = asyncHandler(async (req, res) => {
   const orderId = Number(req.validated.params.id);
   const { orderStatus, deliveryUserId } = req.validated.body || {};
 
+  if (String(orderStatus || '').toUpperCase() === 'PACKED') {
+    const io = req.app.get('io');
+    try {
+      const packResult = await packOrderWithWeightReconciliation({
+        orderId,
+        lineWeights: req.body?.items ?? req.body?.lineWeights ?? [],
+        actor: req.user.id,
+        actorRole: req.user.role,
+        io,
+      });
+      const { rows } = await query(
+        `SELECT o.id, o.customer_id, u.phone, o.total_amount, o.status,
+                oa.delivery_partner_id,
+                (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
+         FROM orders o
+         JOIN users u ON u.id = o.customer_id
+         LEFT JOIN order_assignments oa ON oa.order_id = o.id
+         WHERE o.id = $1`,
+        [orderId]
+      );
+      return ok(
+        res,
+        { ...(rows[0] || { orderId }), packResult },
+        'Order packed'
+      );
+    } catch (error) {
+      const statusCode = error.statusCode || 400;
+      return fail(res, statusCode, error.message || 'Packing failed');
+    }
+  }
+
   const result = await withTransaction(async (client) => {
     const db = client;
     const { rows: oRows } = await client.query(
-      `SELECT id, customer_id, status
+      `SELECT id, customer_id, status, failed_delivery_resolution, weight_reconciliation_status
        FROM orders
        WHERE id = $1
        FOR UPDATE`,
@@ -743,6 +936,12 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
     );
     const order = oRows[0];
     if (!order) return null;
+
+    if (orderStatus === 'ASSIGNED' && isOrderBlockedFromAssignment(order)) {
+      const err = new Error('Order has pending failed delivery — resolve before reassigning');
+      err.statusCode = 409;
+      throw err;
+    }
 
     if (orderStatus === 'CANCELLED') {
       const { rows: partnerRows } = await client.query(
@@ -828,6 +1027,14 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
         const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
         err.statusCode = 400;
         throw err;
+      }
+      if (String(newStatus).toUpperCase() === 'OUT_FOR_DELIVERY') {
+        try {
+          assertWeightReconciliationForDispatch(order.weight_reconciliation_status);
+        } catch (reconErr) {
+          reconErr.statusCode = 400;
+          throw reconErr;
+        }
       }
       await client.query('UPDATE orders SET status = $1 WHERE id = $2', [orderStatus, orderId]);
     }
@@ -1726,6 +1933,7 @@ const mapOperationalRow = (row) => ({
   delivery_charge: row?.delivery_charge,
   min_order_amount: row?.min_order_amount,
   store_open: row?.store_open,
+  store_acceptance_mode: row?.store_acceptance_mode ?? 'accepting',
   store_open_time: row?.store_open_time ?? null,
   store_close_time: row?.store_close_time ?? null,
   delivery_radius_km: row?.delivery_radius_km,
@@ -1735,7 +1943,7 @@ const readOperationalSettings = async () => {
   try {
     const { rows } = await query(
       `SELECT delivery_charge, min_order_amount, store_open,
-              store_open_time, store_close_time, delivery_radius_km
+              store_acceptance_mode, store_open_time, store_close_time, delivery_radius_km
        FROM app_settings
        ORDER BY updated_at DESC NULLS LAST
        LIMIT 1`
@@ -1747,7 +1955,7 @@ const readOperationalSettings = async () => {
       await repairAppSettingsSchema();
       const { rows } = await query(
         `SELECT delivery_charge, min_order_amount, store_open,
-                store_open_time, store_close_time, delivery_radius_km
+                store_acceptance_mode, store_open_time, store_close_time, delivery_radius_km
          FROM app_settings
          ORDER BY updated_at DESC NULLS LAST
          LIMIT 1`
@@ -1760,12 +1968,13 @@ const readOperationalSettings = async () => {
 
 const writeOperationalSettings = async (value) => {
   const params = [
-    value.delivery_charge ?? 30,
-    value.min_order_amount ?? 150,
+    value.delivery_charge ?? DEFAULT_STORE_SETTINGS.delivery_fee,
+    value.min_order_amount ?? DEFAULT_STORE_SETTINGS.min_order_amount,
     value.store_open ?? true,
+    value.store_acceptance_mode ?? 'accepting',
     value.store_open_time ?? null,
     value.store_close_time ?? null,
-    value.delivery_radius_km ?? 5,
+    value.delivery_radius_km ?? DEFAULT_STORE_SETTINGS.delivery_radius_km,
   ];
 
   try {
@@ -1781,44 +1990,30 @@ const writeOperationalSettings = async (value) => {
          SET delivery_charge = $1,
              min_order_amount = $2,
              store_open = $3,
-             store_open_time = $4,
-             store_close_time = $5,
-             delivery_radius_km = $6,
+             store_acceptance_mode = $4,
+             store_open_time = $5,
+             store_close_time = $6,
+             delivery_radius_km = $7,
              updated_at = NOW()
-         WHERE ctid = $7
+         WHERE ctid = $8
          RETURNING delivery_charge, min_order_amount, store_open,
-                   store_open_time, store_close_time, delivery_radius_km`,
+                   store_acceptance_mode, store_open_time, store_close_time, delivery_radius_km`,
         [...params, existing[0].ctid]
       );
       return mapOperationalRow(rows[0]);
     }
 
-    try {
-      const { rows } = await query(
-        `INSERT INTO app_settings (
-           key, value, delivery_charge, min_order_amount, store_open,
-           store_open_time, store_close_time, delivery_radius_km, updated_at
-         )
-         VALUES ('operational', '{}'::jsonb, $1, $2, $3, $4, $5, $6, NOW())
-         RETURNING delivery_charge, min_order_amount, store_open,
-                   store_open_time, store_close_time, delivery_radius_km`,
-        params
-      );
-      return mapOperationalRow(rows[0]);
-    } catch (insertErr) {
-      if (insertErr?.code !== '42703') throw insertErr;
-      const { rows } = await query(
-        `INSERT INTO app_settings (
-           delivery_charge, min_order_amount, store_open,
-           store_open_time, store_close_time, delivery_radius_km, updated_at
-         )
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())
-         RETURNING delivery_charge, min_order_amount, store_open,
-                   store_open_time, store_close_time, delivery_radius_km`,
-        params
-      );
-      return mapOperationalRow(rows[0]);
-    }
+    const { rows } = await query(
+      `INSERT INTO app_settings (
+         delivery_charge, min_order_amount, store_open,
+         store_acceptance_mode, store_open_time, store_close_time, delivery_radius_km, updated_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+       RETURNING delivery_charge, min_order_amount, store_open,
+                 store_acceptance_mode, store_open_time, store_close_time, delivery_radius_km`,
+      params
+    );
+    return mapOperationalRow(rows[0]);
   } catch (err) {
     if (err?.code === '42703') {
       await repairAppSettingsSchema();
@@ -1834,12 +2029,13 @@ const getSettings = asyncHandler(async (req, res) => {
   return ok(
     res,
     {
-      delivery_charge: Number(operational.delivery_charge ?? 30),
-      min_order_amount: Number(operational.min_order_amount ?? 150),
+      delivery_charge: Number(operational.delivery_charge ?? DEFAULT_STORE_SETTINGS.delivery_fee),
+      min_order_amount: Number(operational.min_order_amount ?? DEFAULT_STORE_SETTINGS.min_order_amount),
       store_open: operational.store_open ?? true,
+      store_acceptance_mode: operational.store_acceptance_mode ?? 'accepting',
       store_open_time: operational.store_open_time ?? null,
       store_close_time: operational.store_close_time ?? null,
-      delivery_radius_km: Number(operational.delivery_radius_km ?? 5),
+      delivery_radius_km: Number(operational.delivery_radius_km ?? DEFAULT_STORE_SETTINGS.delivery_radius_km),
     },
     'Settings'
   );
@@ -1851,6 +2047,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     delivery_charge,
     min_order_amount,
     store_open,
+    store_acceptance_mode,
     store_open_time,
     store_close_time,
     delivery_radius_km,
@@ -1865,6 +2062,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     ...(min_order_amount !== undefined ? { min_order_amount } : {}),
     ...(delivery_radius_km !== undefined ? { delivery_radius_km } : {}),
     ...(store_open !== undefined ? { store_open } : {}),
+    ...(store_acceptance_mode !== undefined ? { store_acceptance_mode } : {}),
   };
   const saved = await writeOperationalSettings(nextOperational);
   await syncOperationalToStoreSettings(saved);
@@ -1873,18 +2071,21 @@ const updateSettings = asyncHandler(async (req, res) => {
   emitToAll('store:status_changed', {
     isOpen: effective.is_open,
     manualOpen: effective.manual_open,
+    acceptanceMode: effective.acceptance_mode,
     closedMessage: effective.closed_message,
+    capacityMessage: effective.capacity_message,
   });
 
   return ok(
     res,
     {
-      delivery_charge: Number(saved.delivery_charge ?? 30),
-      min_order_amount: Number(saved.min_order_amount ?? 150),
+      delivery_charge: Number(saved.delivery_charge ?? DEFAULT_STORE_SETTINGS.delivery_fee),
+      min_order_amount: Number(saved.min_order_amount ?? DEFAULT_STORE_SETTINGS.min_order_amount),
       store_open: saved.store_open ?? true,
+      store_acceptance_mode: saved.store_acceptance_mode ?? 'accepting',
       store_open_time: saved.store_open_time ?? null,
       store_close_time: saved.store_close_time ?? null,
-      delivery_radius_km: Number(saved.delivery_radius_km ?? 5),
+      delivery_radius_km: Number(saved.delivery_radius_km ?? DEFAULT_STORE_SETTINGS.delivery_radius_km),
     },
     'Settings updated'
   );
@@ -1903,9 +2104,9 @@ const changeUserRole = asyncHandler(async (req, res) => {
     return fail(res, 403, 'Only administrators can change user roles');
   }
 
-  // Validate role - customer, delivery partner, admin, or staff
-  if (!['customer', 'delivery_partner', 'admin', 'staff'].includes(role)) {
-    return fail(res, 400, 'Invalid role. Allowed: customer, delivery_partner, admin, staff');
+  // Validate role - customer, delivery partner, or admin
+  if (!['customer', 'delivery_partner', 'admin'].includes(role)) {
+    return fail(res, 400, 'Invalid role. Allowed: customer, delivery_partner, admin');
   }
 
   // Map frontend role to database role
@@ -1959,184 +2160,321 @@ const changeUserRole = asyncHandler(async (req, res) => {
   return ok(res, { user: updatedUser }, 'User role updated successfully');
 });
 
-// Analytics endpoint for real data
+// Analytics endpoint — real operational and commerce data
 const getAnalytics = asyncHandler(async (req, res) => {
-  const period = req.query.period || 'week';
-  const now = new Date();
+  const rawPeriod = req.validated?.query?.period || req.query.period || 'week';
+  const period =
+    rawPeriod === 'month' ? 'month' : rawPeriod === 'today' ? 'today' : 'week';
+  const normalized = normalizePeriod(period);
+  const bounds = resolvePeriodBounds(normalized);
+  const { start, end, previousStart, previousEnd } = bounds;
 
-  // Calculate date range based on period
-  let startDate = new Date(now);
-  switch (period) {
-    case 'today':
-      startDate.setHours(0, 0, 0, 0);
-      break;
-    case 'week':
-      startDate.setDate(startDate.getDate() - 7);
-      break;
-    case 'month':
-      startDate.setMonth(startDate.getMonth() - 1);
-      break;
-    default:
-      startDate.setDate(startDate.getDate() - 7);
-  }
+  const [
+    { rows: orders },
+    { rows: productRows },
+    { rows: partnerRows },
+    { rows: customerRows },
+    { rows: ratingRows },
+    { rows: productRatingRows },
+    kpiDeltas,
+    opsSnapshot,
+  ] = await Promise.all([
+    query(
+      `SELECT o.id, o.total_amount, o.status, o.created_at,
+              (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.order_id = o.id) as items_count
+       FROM orders o
+       WHERE o.created_at >= $1 AND o.created_at < $2
+       ORDER BY o.created_at DESC`,
+      [start.toISOString(), end.toISOString()]
+    ),
+    query(
+      `SELECT p.id, p.name,
+              COALESCE(c.name, 'Uncategorized') AS category,
+              SUM(oi.quantity)::int AS quantity_sold,
+              COALESCE(SUM(oi.quantity * oi.price),0)::numeric(10,2) AS revenue,
+              MAX(p.stock)::int AS stock,
+              COALESCE(AVG(pr.rating), 0)::numeric(3,2) AS avg_rating
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       JOIN products p ON p.id = oi.product_id
+       LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN product_ratings pr ON pr.product_id = p.id
+       WHERE o.created_at >= $1 AND o.created_at < $2
+       GROUP BY p.id, p.name, c.name
+       ORDER BY revenue DESC
+       LIMIT 20`,
+      [start.toISOString(), end.toISOString()]
+    ),
+    query(
+      `SELECT COALESCE(u.name, u.phone) AS name,
+              COUNT(*) FILTER (WHERE o.status = 'DELIVERED')::int AS total_deliveries,
+              COALESCE(AVG(rv.rider_rating), 0)::numeric(3,2) AS avg_rating,
+              COUNT(*) FILTER (WHERE oa.status IN ('ACCEPTED', 'PICKED', 'DELIVERED'))::int AS accepted_count,
+              COUNT(oa.id)::int AS assignment_count,
+              dp.is_online
+       FROM delivery_partners dp
+       JOIN users u ON u.id = dp.user_id
+       LEFT JOIN order_assignments oa ON oa.delivery_partner_id = dp.id
+       LEFT JOIN orders o ON o.id = oa.order_id AND o.created_at >= $1 AND o.created_at < $2
+       LEFT JOIN order_reviews rv ON rv.order_id = o.id
+       GROUP BY dp.id, u.name, u.phone, dp.is_online
+       HAVING COUNT(*) FILTER (WHERE o.status = 'DELIVERED') > 0
+       ORDER BY total_deliveries DESC
+       LIMIT 10`,
+      [start.toISOString(), end.toISOString()]
+    ),
+    query(
+      `SELECT u.id, COALESCE(u.name, u.phone) AS name,
+              COUNT(o.id)::int AS orders,
+              COALESCE(SUM(o.total_amount),0)::numeric(10,2) AS total_spent
+       FROM users u
+       LEFT JOIN orders o ON o.customer_id = u.id
+         AND o.created_at >= $1 AND o.created_at < $2
+       WHERE u.role = 'customer'
+       GROUP BY u.id, u.name, u.phone
+       HAVING COUNT(o.id) > 0
+       ORDER BY total_spent DESC
+       LIMIT 10`,
+      [start.toISOString(), end.toISOString()]
+    ),
+    query(
+      `SELECT
+         COUNT(*)::int AS review_count,
+         COALESCE(AVG(
+           (COALESCE(rider_rating, 0) + COALESCE(product_quality_rating, 0) + COALESCE(delivery_speed_rating, 0))
+           / NULLIF(
+             (CASE WHEN rider_rating IS NOT NULL THEN 1 ELSE 0 END)
+             + (CASE WHEN product_quality_rating IS NOT NULL THEN 1 ELSE 0 END)
+             + (CASE WHEN delivery_speed_rating IS NOT NULL THEN 1 ELSE 0 END),
+             0
+           )
+         ), 0)::numeric(3,2) AS avg_rating,
+         COUNT(*) FILTER (WHERE rider_rating = 5 OR product_quality_rating = 5 OR delivery_speed_rating = 5)::int AS r5,
+         COUNT(*) FILTER (WHERE rider_rating = 4 OR product_quality_rating = 4 OR delivery_speed_rating = 4)::int AS r4,
+         COUNT(*) FILTER (WHERE rider_rating = 3 OR product_quality_rating = 3 OR delivery_speed_rating = 3)::int AS r3,
+         COUNT(*) FILTER (WHERE rider_rating = 2 OR product_quality_rating = 2 OR delivery_speed_rating = 2)::int AS r2,
+         COUNT(*) FILTER (WHERE rider_rating = 1 OR product_quality_rating = 1 OR delivery_speed_rating = 1)::int AS r1
+       FROM order_reviews r
+       JOIN orders o ON o.id = r.order_id
+       WHERE o.created_at >= $1 AND o.created_at < $2`,
+      [start.toISOString(), end.toISOString()]
+    ),
+    query(
+      `SELECT product_id, AVG(rating)::numeric(3,2) AS avg_rating
+       FROM product_ratings pr
+       JOIN orders o ON o.id = pr.order_id
+       WHERE o.created_at >= $1 AND o.created_at < $2
+       GROUP BY product_id`,
+      [start.toISOString(), end.toISOString()]
+    ),
+    computeCommerceKpiDeltas(start, end, previousStart, previousEnd),
+    computeOpsMetricsForRange(start, end),
+  ]);
 
-  // Get orders in date range
-  const { rows: orders } = await query(
-    `SELECT o.id, o.total_amount, o.status, o.created_at,
-            (SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.order_id = o.id) as items_count
-     FROM orders o
-     WHERE o.created_at >= $1
-     ORDER BY o.created_at DESC`,
-    [startDate]
+  const productRatingMap = new Map(
+    productRatingRows.map((r) => [Number(r.product_id), Number(r.avg_rating || 0)])
   );
 
-  // Calculate KPIs
   const totalRevenue = orders
-    .filter(o => o.status === 'DELIVERED')
+    .filter((o) => o.status === 'DELIVERED')
     .reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
 
   const totalOrders = orders.length;
-  const deliveredOrders = orders.filter(o => o.status === 'DELIVERED').length;
-  const cancelledOrders = orders.filter(o => o.status === 'CANCELLED').length;
-  const pendingOrders = orders.filter(o => !['DELIVERED', 'CANCELLED'].includes(o.status)).length;
+  const deliveredOrders = orders.filter((o) => o.status === 'DELIVERED').length;
+  const cancelledOrders = orders.filter((o) => o.status === 'CANCELLED').length;
+  const pendingOrders = orders.filter(
+    (o) => !['DELIVERED', 'CANCELLED'].includes(o.status)
+  ).length;
 
-  const { rows: productRows } = await query(
-    `SELECT p.name,
-            COALESCE(c.name, 'Uncategorized') AS category,
-            SUM(oi.quantity)::int AS quantity_sold,
-            COALESCE(SUM(oi.quantity * oi.price),0)::numeric(10,2) AS revenue,
-            MAX(p.stock)::int AS stock
-     FROM order_items oi
-     JOIN orders o ON o.id = oi.order_id
-     JOIN products p ON p.id = oi.product_id
-     LEFT JOIN categories c ON c.id = p.category_id
-     WHERE o.created_at >= $1
-     GROUP BY p.id, p.name, c.name
-     ORDER BY revenue DESC
-     LIMIT 20`,
-    [startDate]
-  );
-
-  const products = productRows.map((p, idx) => ({
+  const products = productRows.map((p) => ({
     name: p.name,
     category: p.category,
     quantitySold: Number(p.quantity_sold || 0),
     revenue: Number(p.revenue || 0),
-    avgRating: 4.2,
+    avgRating: Number(productRatingMap.get(Number(p.id)) || p.avg_rating || 0),
     stock: Number(p.stock || 0),
-    trend: Math.max(-15, Math.min(25, 12 - idx)),
-    profitMargin: 20,
+    trend: null,
+    profitMargin: null,
+    dataAvailable: Number(p.quantity_sold || 0) > 0,
   }));
 
-  const { rows: partnerRows } = await query(
-    `SELECT COALESCE(u.name, u.phone) AS name,
-            COUNT(*) FILTER (WHERE o.status = 'DELIVERED')::int AS total_deliveries,
-            COALESCE(SUM(CASE WHEN o.status = 'DELIVERED' THEN o.total_amount * 0.1 ELSE 0 END),0)::numeric(10,2) AS earnings,
-            dp.is_online
-     FROM delivery_partners dp
-     JOIN users u ON u.id = dp.user_id
-     LEFT JOIN order_assignments oa ON oa.delivery_partner_id = dp.id
-     LEFT JOIN orders o ON o.id = oa.order_id AND o.created_at >= $1
-     GROUP BY dp.id, u.name, u.phone, dp.is_online
-     ORDER BY total_deliveries DESC
-     LIMIT 10`,
-    [startDate]
-  );
+  const deliveryPartners = partnerRows.map((p) => {
+    const assignmentCount = Number(p.assignment_count || 0);
+    const acceptedCount = Number(p.accepted_count || 0);
+    const acceptanceRate =
+      assignmentCount > 0 ? Math.round((acceptedCount / assignmentCount) * 100) : null;
 
-  const deliveryPartners = partnerRows.map((p) => ({
-    name: p.name,
-    totalDeliveries: Number(p.total_deliveries || 0),
-    avgRating: 4.3,
-    onTimePercentage: 92,
-    acceptanceRate: 88,
-    earnings: Math.round(Number(p.earnings || 0)),
-    status: p.is_online ? 'online' : 'offline',
-  }));
+    return {
+      name: p.name,
+      totalDeliveries: Number(p.total_deliveries || 0),
+      avgRating: Number(p.avg_rating || 0) || null,
+      onTimePercentage: null,
+      acceptanceRate,
+      earnings: null,
+      status: p.is_online ? 'online' : 'offline',
+      dataAvailable: Number(p.total_deliveries || 0) > 0,
+    };
+  });
 
-  const { rows: customerRows } = await query(
-    `SELECT u.id, COALESCE(u.name, u.phone) AS name,
-            COUNT(o.id)::int AS orders,
-            COALESCE(SUM(o.total_amount),0)::numeric(10,2) AS total_spent
-     FROM users u
-     LEFT JOIN orders o ON o.customer_id = u.id
-     WHERE u.role = 'customer'
-     GROUP BY u.id, u.name, u.phone
-     ORDER BY total_spent DESC
-     LIMIT 10`
-  );
+  const customersWithOrders = customerRows.filter((c) => Number(c.orders || 0) > 0);
+  const returningCount = customersWithOrders.filter((c) => Number(c.orders || 0) > 1).length;
+  const customerTotal = customersWithOrders.length || 0;
+  const newCustomersPct =
+    customerTotal > 0
+      ? Math.max(0, Math.round(((customerTotal - returningCount) / customerTotal) * 100))
+      : null;
+  const returningCustomersPct =
+    customerTotal > 0 ? Math.max(0, 100 - (newCustomersPct || 0)) : null;
 
-  const totalCustomers = customerRows.length || 1;
-  const returningCount = customerRows.filter((c) => Number(c.orders || 0) > 1).length;
-  const newCustomersPct = Math.max(0, Math.round(((totalCustomers - returningCount) / totalCustomers) * 100));
-  const returningCustomersPct = Math.max(0, 100 - newCustomersPct);
-
-  // Revenue chart data (daily aggregation)
   const revenueChart = [];
-  const days = period === 'today' ? 1 : (period === 'week' ? 7 : 30);
+  const days = period === 'today' ? 1 : period === 'week' ? 7 : 30;
   for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(now);
+    const date = new Date(end);
     date.setDate(date.getDate() - i);
-    const dayOrders = orders.filter(o => {
+    const dayOrders = orders.filter((o) => {
       const orderDate = new Date(o.created_at);
       return orderDate.toDateString() === date.toDateString();
     });
     revenueChart.push({
       date: date.toISOString().split('T')[0],
       revenue: dayOrders
-        .filter(o => o.status === 'DELIVERED')
-        .reduce((sum, o) => sum + Number(o.total_amount || 0), 0)
+        .filter((o) => o.status === 'DELIVERED')
+        .reduce((sum, o) => sum + Number(o.total_amount || 0), 0),
+      orders: dayOrders.length,
     });
   }
 
-  // Hourly heatmap data
-  const hourlyHeatmap = Array(24).fill(0).map((_, hour) => {
-    const hourOrders = orders.filter(o => new Date(o.created_at).getHours() === hour).length;
-    return { hour, orders: hourOrders };
+  const hourlyHeatmap = Array(24)
+    .fill(0)
+    .map((_, hour) => {
+      const hourOrders = orders.filter(
+        (o) => new Date(o.created_at).getHours() === hour
+      ).length;
+      return { hour, orders: hourOrders };
+    });
+
+  const ratingRow = ratingRows[0] || {};
+  const reviewCount = Number(ratingRow.review_count || 0);
+  const avgRating = reviewCount > 0 ? Number(ratingRow.avg_rating || 0) : null;
+
+  const avgDeliveryTime =
+    opsSnapshot.metrics.averageEndToEndDeliveryTime?.dataAvailable
+      ? opsSnapshot.metrics.averageEndToEndDeliveryTime.value
+      : opsSnapshot.metrics.averageRiderTripTime?.dataAvailable
+        ? opsSnapshot.metrics.averageRiderTripTime.value
+        : null;
+
+  const onTimeRate = null;
+
+  return ok(
+    res,
+    {
+      kpi: {
+        totalRevenue: Math.round(totalRevenue),
+        totalOrders,
+        deliveredOrders,
+        cancelledOrders,
+        pendingOrders,
+        avgOrderValue: deliveredOrders > 0 ? Math.round(totalRevenue / deliveredOrders) : 0,
+        revenueChange: kpiDeltas.revenueChange,
+        ordersChange: kpiDeltas.ordersChange,
+        aovChange: kpiDeltas.aovChange,
+        avgRating,
+        ratingChange: null,
+        avgDeliveryTime,
+        deliveryChange: null,
+        conversionRate: null,
+        conversionChange: null,
+      },
+      revenueChart,
+      hourlyHeatmap,
+      products,
+      delivery: {
+        successRate:
+          totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0,
+        avgTime: avgDeliveryTime,
+        onTimeRate,
+        partners: deliveryPartners,
+        zones: [],
+        batchPercentage: opsSnapshot.metrics.batchPercentage,
+        averageDispatchDelay: opsSnapshot.metrics.averageDispatchDelay,
+        averagePackedTime: opsSnapshot.metrics.averagePackedTime,
+        averageRiderTripTime: opsSnapshot.metrics.averageRiderTripTime,
+        soloVsBatchRatio: opsSnapshot.metrics.soloVsBatchRatio,
+        refundPercentage: opsSnapshot.metrics.refundPercentage,
+        stockFailurePercentage: opsSnapshot.metrics.stockFailurePercentage,
+        ordersCancelledByReason: opsSnapshot.metrics.ordersCancelledByReason,
+        peakModeHours: opsSnapshot.metrics.peakModeHours,
+      },
+      customers: {
+        newCustomers: newCustomersPct,
+        returningCustomers: returningCustomersPct,
+        topCustomers: customerRows.map((c) => ({
+          name: c.name,
+          orders: Number(c.orders || 0),
+          totalSpent: Math.round(Number(c.total_spent || 0)),
+        })),
+        retentionRate:
+          customerTotal > 0 ? Math.round((returningCount / customerTotal) * 100) : null,
+        ratingDistribution:
+          reviewCount > 0
+            ? {
+                5: Number(ratingRow.r5 || 0),
+                4: Number(ratingRow.r4 || 0),
+                3: Number(ratingRow.r3 || 0),
+                2: Number(ratingRow.r2 || 0),
+                1: Number(ratingRow.r1 || 0),
+              }
+            : null,
+        dataAvailable: customerTotal > 0,
+      },
+      opsMetrics: opsSnapshot.metrics,
+      dataCompleteness: opsSnapshot.dataCompleteness,
+      period,
+    },
+    'Analytics data'
+  );
+});
+
+const getOpsMetricsHandler = asyncHandler(async (req, res) => {
+  const { period, granularity } = req.validated?.query || req.query || {};
+  const result = await getOpsMetrics({ period, granularity });
+  return ok(res, result, 'Operational metrics');
+});
+
+const {
+  listOperationalEvents,
+  getOrderOperationalTimeline,
+} = require('../../services/operationalEvent.service');
+
+const listOperationalEventsHandler = asyncHandler(async (req, res) => {
+  const {
+    orderId,
+    riderId,
+    eventType,
+    from,
+    to,
+    limit,
+    offset,
+  } = req.validated?.query || {};
+
+  const events = await listOperationalEvents({
+    orderId: orderId != null ? Number(orderId) : null,
+    riderId: riderId != null ? Number(riderId) : null,
+    eventType: eventType || null,
+    fromDate: from || null,
+    toDate: to || null,
+    limit,
+    offset,
   });
 
-  return ok(res, {
-    kpi: {
-      totalRevenue: Math.round(totalRevenue),
-      totalOrders,
-      deliveredOrders,
-      cancelledOrders,
-      pendingOrders,
-      avgOrderValue: deliveredOrders > 0 ? Math.round(totalRevenue / deliveredOrders) : 0,
-      revenueChange: 0,
-      ordersChange: 0,
-      aovChange: 0,
-      avgRating: 4.3,
-      ratingChange: 0,
-      avgDeliveryTime: 35,
-      deliveryChange: 0,
-      conversionRate: 0,
-      conversionChange: 0
-    },
-    revenueChart,
-    hourlyHeatmap,
-    products,
-    delivery: {
-      successRate: totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0,
-      avgTime: 35,
-      onTimeRate: 90,
-      partners: deliveryPartners,
-      zones: [
-        { name: 'Core Zone', orderCount: totalOrders, percentage: 100 }
-      ]
-    },
-    customers: {
-      newCustomers: newCustomersPct,
-      returningCustomers: returningCustomersPct,
-      topCustomers: customerRows.map((c) => ({
-        name: c.name,
-        orders: Number(c.orders || 0),
-        totalSpent: Math.round(Number(c.total_spent || 0))
-      })),
-      retentionRate: Math.round((returningCount / totalCustomers) * 100),
-      ratingDistribution: { 5: 58, 4: 25, 3: 10, 2: 5, 1: 2 },
-    },
-    period
-  }, 'Analytics data');
+  return ok(res, { events, count: events.length }, 'Operational events');
+});
+
+const getOrderTimelineHandler = asyncHandler(async (req, res) => {
+  const orderId = Number(req.validated?.params?.id);
+  const timeline = await getOrderOperationalTimeline(orderId);
+  return ok(res, timeline, 'Order operational timeline');
 });
 
 module.exports = {
@@ -2150,6 +2488,9 @@ module.exports = {
   listOrdersCompat,
   patchOrderCompat,
   assignRiderToOrder,
+  listAdminTasksHandler,
+  resolveAssignmentFailureOrder,
+  resolveFailedDeliveryOrder,
   listCategoriesCompat,
   createCategoryCompat,
   patchCategoryCompat,
@@ -2174,4 +2515,7 @@ module.exports = {
   updateSettings,
   changeUserRole,
   getAnalytics,
+  getOpsMetricsHandler,
+  listOperationalEventsHandler,
+  getOrderTimelineHandler,
 };

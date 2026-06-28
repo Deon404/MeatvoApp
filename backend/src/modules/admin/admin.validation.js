@@ -72,6 +72,30 @@ const assignRiderToOrderSchema = z.object({
   query: z.object({}).optional(),
 });
 
+const listAdminTasksSchema = z.object({
+  query: z
+    .object({
+      type: z.string().trim().optional(),
+    })
+    .optional(),
+  params: z.object({}).optional(),
+  body: z.object({}).optional(),
+});
+
+const resolveFailedDeliverySchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z.object({
+    resolution: z.enum(['REDELIVER', 'REFUND', 'DISCARD']),
+  }),
+  query: z.object({}).optional(),
+});
+
+const resolveAssignmentFailureSchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
 const listCompatSchema = z.object({
   query: z.object({}).optional(),
   params: z.object({}).optional(),
@@ -182,6 +206,9 @@ const updateSettingsSchema = z.object({
       delivery_charge: z.coerce.number().nonnegative().optional(),
       min_order_amount: z.coerce.number().nonnegative().optional(),
       store_open: z.boolean().optional(),
+      store_acceptance_mode: z
+        .enum(['accepting', 'limited_capacity', 'not_accepting'])
+        .optional(),
       store_open_time: z.string().trim().optional().nullable(),
       store_close_time: z.string().trim().optional().nullable(),
       delivery_radius_km: z.coerce.number().nonnegative().optional(),
@@ -204,7 +231,7 @@ const updateSettingsSchema = z.object({
 
 const changeUserRoleSchema = z.object({
   body: z.object({
-    role: z.enum(['customer', 'delivery_partner', 'admin', 'staff']),
+    role: z.enum(['customer', 'delivery_partner', 'admin']),
   }),
   params: z.object({
     id: z.string().transform(Number),
@@ -241,6 +268,65 @@ const toggleStoreOpenSchema = z.object({
   query: z.object({}).optional(),
 });
 
+const setStoreAcceptanceModeSchema = z.object({
+  body: z.object({
+    mode: z.enum(['accepting', 'limited_capacity', 'not_accepting']),
+  }),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+const dismissCapacitySuggestionSchema = z.object({
+  body: z.object({
+    minutes: z.coerce.number().int().min(1).max(24 * 60).optional(),
+  }).optional(),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+const listOperationalEventsSchema = z.object({
+  query: z.object({
+    orderId: z.coerce.number().int().positive().optional(),
+    riderId: z.coerce.number().int().positive().optional(),
+    eventType: z.string().trim().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(200).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+  }).optional(),
+  body: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+const getOrderTimelineSchema = z.object({
+  params: z.object({
+    id: z.coerce.number().int().positive(),
+  }),
+  body: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+const opsMetricsSchema = z.object({
+  query: z
+    .object({
+      period: z.enum(['today', '7d', '30d', 'week', 'month']).optional(),
+      granularity: z.enum(['hour', 'day']).optional(),
+    })
+    .optional(),
+  body: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
+const analyticsSchema = z.object({
+  query: z
+    .object({
+      period: z.enum(['today', 'week', 'month', '7d', '30d']).optional(),
+    })
+    .optional(),
+  body: z.object({}).optional(),
+  params: z.object({}).optional(),
+});
+
 module.exports = {
   dashboardSchema,
   listCustomersSchema,
@@ -251,6 +337,9 @@ module.exports = {
   listOrdersCompatSchema,
   patchOrderCompatSchema,
   assignRiderToOrderSchema,
+  listAdminTasksSchema,
+  resolveFailedDeliverySchema,
+  resolveAssignmentFailureSchema,
   listCompatSchema,
   upsertCategoryCompatSchema,
   upsertProductCompatSchema,
@@ -264,4 +353,10 @@ module.exports = {
   changeUserRoleSchema,
   updateDeliveryZoneSchema,
   toggleStoreOpenSchema,
+  setStoreAcceptanceModeSchema,
+  dismissCapacitySuggestionSchema,
+  listOperationalEventsSchema,
+  getOrderTimelineSchema,
+  opsMetricsSchema,
+  analyticsSchema,
 };

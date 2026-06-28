@@ -108,14 +108,6 @@ const initSocket = (httpServer) => {
       logger.debug('socket_admin_joined_room', { socketId: socket.id });
     });
 
-    // Kitchen staff joins staff room (canonical + legacy)
-    socket.on('join_staff_room', () => {
-      if (socket.userRole !== 'staff') return;
-      socket.join('staff_room');
-      socket.join('staff:orders');
-      logger.debug('socket_staff_joined_room', { socketId: socket.id });
-    });
-
     // Customer joins order-specific tracking room
     socket.on('join_order_room', async (orderId) => {
       const numericOrderId = Number(orderId);
@@ -136,7 +128,7 @@ const initSocket = (httpServer) => {
         });
         return;
       }
-      if (!['customer', 'admin', 'staff'].includes(role)) return;
+      if (!['customer', 'admin'].includes(role)) return;
 
       socket.join(`order:${numericOrderId}`);
       logger.debug('socket_order_room_joined', {

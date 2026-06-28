@@ -5,6 +5,7 @@
  */
 
 const EARTH_RADIUS_KM = 6371;
+const { STORE } = require('../config/businessRules');
 
 /**
  * Converts degrees to radians.
@@ -50,7 +51,7 @@ const haversineDistanceKm = (lat1, lng1, lat2, lng2) => {
  * @param {number} radiusKm   - Delivery radius in kilometres (default 5)
  * @returns {{ deliverable: boolean, distanceKm: number }}
  */
-const isWithinDeliveryZone = (centerLat, centerLng, pointLat, pointLng, radiusKm = 5) => {
+const isWithinDeliveryZone = (centerLat, centerLng, pointLat, pointLng, radiusKm = STORE.deliveryRadiusKm) => {
   const distanceKm = haversineDistanceKm(centerLat, centerLng, pointLat, pointLng);
   return {
     deliverable: distanceKm <= radiusKm,

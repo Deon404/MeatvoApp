@@ -5,15 +5,44 @@ const { addressToText } = require('../utils/address');
 const { logger } = require('../utils/logger');
 const { tryJoinBatchWindow, scheduleBatchAssignment } = require('./order-batcher');
 const { ensureDeliveryOTP } = require('./deliveryProof.service');
+const {
+  assignableOrderStatusSet,
+  activeAssignmentStatusSet,
+} = require('./assignment.constants');
+const {
+  isOrderBlockedFromAssignment,
+  ADMIN_TASK_TYPES,
+} = require('../constants/failedDelivery.constants');
+const {
+  countRiderActiveOrders,
+  isRiderAtLoadCap,
+  getRiderRemainingCapacity,
+  buildReturnEtaObserveMetadata,
+  refreshPartnerOperationalState,
+} = require('../utils/deliveryPartner.util');
+const { createOpenAdminTask, resolveAdminTaskByOrder } = require('./adminTask.service');
+const {
+  publishOperationalEventAsync,
+  OPERATIONAL_EVENT_TYPES,
+  ACTOR_TYPES,
+  instrumentRiderAssigned,
+  instrumentRiderAcceptedAndDispatched,
+} = require('../utils/operationalEvents.util');
+const {
+  ASSIGNMENT,
+  RETURN_ETA,
+  computeAssignmentScore,
+  resolveAssignmentTimeoutMs,
+} = require('../config/businessRules');
 
-const ATTEMPT_TTL_SECONDS = 24 * 60 * 60;
-const MAX_ASSIGNMENT_ATTEMPTS = 3;
-const ASSIGNMENT_TIMEOUT_MS = Number(process.env.ASSIGNMENT_TIMEOUT_MS || 10_000);
-const SMALL_FLEET_THRESHOLD = Number(process.env.SMALL_FLEET_THRESHOLD || 3);
+const ATTEMPT_TTL_SECONDS = ASSIGNMENT.attemptTtlSeconds;
+const MAX_ASSIGNMENT_ATTEMPTS = ASSIGNMENT.maxAttempts;
+const ASSIGNMENT_TIMEOUT_MS = resolveAssignmentTimeoutMs();
+const SMALL_FLEET_THRESHOLD = ASSIGNMENT.smallFleetThreshold;
 const pendingAssignmentTimeouts = new Map();
 
-const assignableOrderStatuses = new Set(['PACKED']);
-const activeAssignmentStatuses = new Set(['ASSIGNED', 'ACCEPTED', 'PICKED']);
+const assignableOrderStatuses = assignableOrderStatusSet;
+const activeAssignmentStatuses = activeAssignmentStatusSet;
 
 const persistPartnerAssignment = async (orderId, partnerId) => {
   await withTransaction(async (client) => {
@@ -84,36 +113,7 @@ const getDeliveryTarget = async (order) => {
  * - Rating: 10% (higher is better)
  * - Zone familiarity: 10% (more deliveries in this zone is better)
  */
-const computeScore = ({ 
-  distanceKm, 
-  acceptanceRate, 
-  rating, 
-  activeOrders = 0,
-  zoneFamiliarity = 0 
-}) => {
-  // Distance component (0-100, decreases with distance)
-  const distanceScore = Math.max(0, 100 - (distanceKm * 15));
-  
-  // Acceptance rate (0-100)
-  const acceptanceScore = acceptanceRate * 100;
-  
-  // Load component (100 when no active orders, decreases by 25 per order)
-  const loadScore = Math.max(0, 100 - (activeOrders * 25));
-  
-  // Rating component (0-100)
-  const ratingScore = (rating / 5) * 100;
-  
-  // Zone familiarity (0-100, capped at 10 deliveries)
-  const zoneScore = Math.min(100, zoneFamiliarity * 10);
-  
-  return (
-    distanceScore * 0.35 +
-    acceptanceScore * 0.25 +
-    loadScore * 0.20 +
-    ratingScore * 0.10 +
-    zoneScore * 0.10
-  );
-};
+const computeScore = computeAssignmentScore;
 
 /**
  * Get eligible partners within a radius with enhanced scoring
@@ -121,7 +121,7 @@ const computeScore = ({
  * @param {number} maxDistanceKm - Maximum distance in kilometers
  * @param {number} excludePartnerId - Partner ID to exclude (for reassignment)
  */
-const getEligiblePartners = async (order, maxDistanceKm = 5, excludePartnerId = null) => {
+const getEligiblePartners = async (order, maxDistanceKm = ASSIGNMENT.defaultPartnerSearchRadiusKm, excludePartnerId = null) => {
   const target = await getDeliveryTarget(order);
   
   // Get zone ID for zone familiarity calculation
@@ -137,6 +137,7 @@ const getEligiblePartners = async (order, maxDistanceKm = 5, excludePartnerId = 
   );
 
   const filtered = [];
+  const observeMetadata = [];
   for (const partner of rows) {
     if (excludePartnerId && Number(partner.id) === Number(excludePartnerId)) continue;
     const plat = Number(partner.current_lat);
@@ -188,8 +189,32 @@ const getEligiblePartners = async (order, maxDistanceKm = 5, excludePartnerId = 
     const acceptedCount = Number(metrics[0]?.accepted_count || 0);
     const totalCount = Number(metrics[0]?.total_count || 0);
     const acceptanceRate = totalCount > 0 ? acceptedCount / totalCount : 1;
-    const rating = Number(metrics[0]?.avg_rating || 4); // Default 4 if no ratings
+    const rating = Number(metrics[0]?.avg_rating || ASSIGNMENT.scoring.defaultRatingOutOf5);
     const activeOrders = Number(activeRows[0]?.active_count || 0);
+
+    let returnEtaMeta = null;
+    if (RETURN_ETA.observeMode) {
+      returnEtaMeta = await buildReturnEtaObserveMetadata({
+        deliveryPartnerId: partner.id,
+        riderUserId: partner.user_id,
+        riderLat: plat,
+        riderLng: plng,
+        isOnline: partner.is_online,
+        activeOrderCount: activeOrders,
+      });
+    }
+
+    if (isRiderAtLoadCap(activeOrders)) {
+      if (returnEtaMeta) {
+        observeMetadata.push({
+          ...returnEtaMeta,
+          distanceKm,
+          score: null,
+          excludedReason: 'rider_load_cap',
+        });
+      }
+      continue;
+    }
     
     const score = computeScore({ 
       distanceKm, 
@@ -212,20 +237,47 @@ const getEligiblePartners = async (order, maxDistanceKm = 5, excludePartnerId = 
       activeOrders,
       zoneFamiliarity,
       score,
+      operationalStatus: returnEtaMeta?.operationalStatus ?? null,
+      estimatedReturnMinutes: returnEtaMeta?.estimatedReturnMinutes ?? 0,
+      estimatedReturnAt: returnEtaMeta?.estimatedReturnAt ?? null,
+      activeOrderCount: activeOrders,
     });
   }
 
   filtered.sort((a, b) => b.score - a.score);
-  return filtered;
+  return { eligible: filtered, observe: observeMetadata };
 };
 
-const emitAssignmentFailure = (io, orderId, attempts) => {
-  if (!io) return;
-  io.to('admin_room').emit('order:assignment_failed', {
-    orderId: Number(orderId),
-    attempts,
-    timestamp: new Date().toISOString(),
-  });
+const emitAssignmentFailure = async (io, orderId, attempts) => {
+  if (io) {
+    io.to('admin_room').emit('order:assignment_failed', {
+      orderId: Number(orderId),
+      attempts,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  try {
+    await createOpenAdminTask(null, {
+      taskType: ADMIN_TASK_TYPES.ASSIGNMENT_FAILED,
+      orderId,
+      payload: { attempts, reason: 'max_attempts_exceeded' },
+    });
+    publishOperationalEventAsync(io, {
+      eventType: OPERATIONAL_EVENT_TYPES.ASSIGNMENT_FAILED,
+      orderId,
+      actorType: ACTOR_TYPES.SYSTEM,
+      previousState: 'PACKED',
+      newState: 'PACKED',
+      metadata: {
+        assignmentAttempts: attempts,
+        assignmentSuccess: false,
+        assignmentFailureReason: 'max_attempts_exceeded',
+      },
+    });
+  } catch (err) {
+    logger.error('assignment_failure_task_failed', { orderId, error: err.message });
+  }
 };
 
 const buildPartnerAssignmentPayload = (order, partner) => {
@@ -310,14 +362,20 @@ const autoAcceptNearestStoreRider = async ({
   previousPartnerUserId = null,
 }) => {
   const { rows: orderRows } = await query(
-    `SELECT id, customer_id, status, address, total_amount, payment_mode
+    `SELECT id, customer_id, status, address, total_amount, payment_mode,
+            weight_reconciliation_status
      FROM orders WHERE id = $1`,
     [orderId]
   );
   const order = orderRows[0];
   if (!order) return { autoAccepted: false, reason: 'order_not_found' };
-  if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
+  if (order.status !== 'PACKED') {
     return { autoAccepted: false, reason: 'order_not_assignable' };
+  }
+
+  const reconStatus = String(order.weight_reconciliation_status || '').toUpperCase();
+  if (reconStatus !== 'COMPLETED' && reconStatus !== 'NOT_REQUIRED') {
+    return { autoAccepted: false, reason: 'weight_reconciliation_pending' };
   }
 
   const { rows: assignmentRows } = await query(
@@ -368,6 +426,11 @@ const autoAcceptNearestStoreRider = async ({
 
   if (!nearest) {
     return { autoAccepted: false, reason: 'no_online_riders' };
+  }
+
+  const nearestActiveCount = await countRiderActiveOrders(nearest.id);
+  if (isRiderAtLoadCap(nearestActiveCount)) {
+    return { autoAccepted: false, reason: 'rider_load_cap' };
   }
 
   await withTransaction(async (client) => {
@@ -424,6 +487,14 @@ const autoAcceptNearestStoreRider = async ({
     orderId,
     partnerId: nearest.id,
     distanceKm: Number(nearestKm.toFixed(2)),
+  });
+
+  instrumentRiderAcceptedAndDispatched(io, {
+    orderId,
+    riderId: nearest.id,
+    riderUserId: nearest.userId,
+    previousState: order.status,
+    metadata: { autoAccepted: true },
   });
 
   return { autoAccepted: true, partner: nearest, distanceKm: nearestKm };
@@ -610,6 +681,9 @@ const emitAssignmentSuccess = (io, order, partner) => {
   }
 
   emitPartnerAssigned(io, order, partner);
+
+  const { scheduleCapacitySuggestionCheck } = require('./capacitySuggestion.service');
+  scheduleCapacitySuggestionCheck(io);
 };
 
 const assignWithBatching = async ({
@@ -621,6 +695,12 @@ const assignWithBatching = async ({
   distanceKm = 0,
   score,
 }) => {
+  const activeCount = await countRiderActiveOrders(selected.id);
+  if (isRiderAtLoadCap(activeCount)) {
+    return { assigned: false, reason: 'rider_load_cap', attempts, queued: true };
+  }
+
+  const remainingCapacity = getRiderRemainingCapacity(activeCount);
   const onAssigned = (assignedOrderIds) => {
     for (const assignedOrderId of assignedOrderIds) {
       scheduleAssignmentTimeout({
@@ -638,6 +718,7 @@ const assignWithBatching = async ({
     riderUserId: selected.userId,
     io,
     onAssigned,
+    maxBatchSize: remainingCapacity,
   });
 
   if (result.immediate) {
@@ -701,20 +782,29 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
   await redis.expire(attemptKey, ATTEMPT_TTL_SECONDS);
 
   if (attempts > MAX_ASSIGNMENT_ATTEMPTS) {
-    emitAssignmentFailure(io, orderId, attempts);
+    await emitAssignmentFailure(io, orderId, attempts);
     return { assigned: false, reason: 'max_attempts_exceeded', attempts };
   }
 
   const { rows: orderRows } = await query(
-    `SELECT id, customer_id, status, address, total_amount, payment_mode
+    `SELECT id, customer_id, status, address, total_amount, payment_mode,
+            failed_delivery_resolution, weight_reconciliation_status
      FROM orders
      WHERE id = $1`,
     [orderId]
   );
   const order = orderRows[0];
   if (!order) return { assigned: false, reason: 'order_not_found', attempts };
+  if (isOrderBlockedFromAssignment(order)) {
+    return { assigned: false, reason: 'failed_delivery_pending', attempts };
+  }
   if (!assignableOrderStatuses.has(order.status)) {
     return { assigned: false, reason: 'order_not_assignable', attempts };
+  }
+
+  const reconStatus = String(order.weight_reconciliation_status || '').toUpperCase();
+  if (reconStatus === 'PENDING' || reconStatus === '') {
+    return { assigned: false, reason: 'weight_reconciliation_pending', attempts };
   }
 
   const { rows: existingAssignmentRows } = await query(
@@ -741,19 +831,21 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
   }
 
   // Fallback tier system
-  const tiers = [
-    { distance: 3, label: 'nearby' },
-    { distance: 5, label: 'medium' },
-    { distance: 8, label: 'extended' },
-  ];
+  const tiers = ASSIGNMENT.distanceTiersKm.map((distance, index) => ({
+    distance,
+    label: ['nearby', 'medium', 'extended'][index] || 'extended',
+  }));
 
   let candidates = [];
   let usedTier = null;
+  let assignmentObserveMetadata = [];
 
   // Try each tier in order
   for (const tier of tiers) {
-    candidates = await getEligiblePartners(order, tier.distance, excludePartnerId);
-    if (candidates.length > 0) {
+    const { eligible, observe } = await getEligiblePartners(order, tier.distance, excludePartnerId);
+    assignmentObserveMetadata.push(...observe);
+    if (eligible.length > 0) {
+      candidates = eligible;
       usedTier = tier.label;
       break;
     }
@@ -762,7 +854,7 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
   // Tier 4: Broadcast to all online riders if no one found in distance tiers
   if (!candidates.length) {
     const { rows } = await query(
-      `SELECT dp.id, dp.user_id, u.name, u.phone
+      `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, u.name, u.phone
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
        WHERE dp.is_online = TRUE
@@ -772,8 +864,32 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
     if (rows.length > 0) {
       // Startup / small fleet: auto-assign directly when only a few riders are online.
       if (rows.length <= SMALL_FLEET_THRESHOLD) {
+        const partnerId = Number(rows[0].id);
+        const partnerActive = await countRiderActiveOrders(partnerId);
+        if (isRiderAtLoadCap(partnerActive)) {
+          let loadCapObserve = null;
+          if (RETURN_ETA.observeMode) {
+            loadCapObserve = await buildReturnEtaObserveMetadata({
+              deliveryPartnerId: partnerId,
+              riderUserId: rows[0].user_id,
+              riderLat: rows[0].current_lat,
+              riderLng: rows[0].current_lng,
+              isOnline: true,
+              activeOrderCount: partnerActive,
+            });
+          }
+          return {
+            assigned: false,
+            reason: 'rider_load_cap',
+            attempts,
+            queued: true,
+            scoringMetadata: {
+              observe: loadCapObserve ? [{ ...loadCapObserve, excludedReason: 'rider_load_cap' }] : [],
+            },
+          };
+        }
         const selected = {
-          id: Number(rows[0].id),
+          id: partnerId,
           userId: Number(rows[0].user_id),
           name: rows[0].name || '',
           phone: rows[0].phone || '',
@@ -858,13 +974,13 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
     }
 
     if (attempts >= MAX_ASSIGNMENT_ATTEMPTS) {
-      emitAssignmentFailure(io, orderId, attempts);
+      await emitAssignmentFailure(io, orderId, attempts);
     }
     return { assigned: false, reason: 'no_eligible_partners', attempts };
   }
 
   const selected = candidates[0];
-  return assignWithBatching({
+  const batchResult = await assignWithBatching({
     orderId,
     selected,
     io,
@@ -873,6 +989,36 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
     distanceKm: selected.distanceKm,
     score: selected.score,
   });
+
+  if (batchResult?.assigned) {
+    await resolveAdminTaskByOrder(null, {
+      orderId,
+      taskType: ADMIN_TASK_TYPES.ASSIGNMENT_FAILED,
+    });
+    refreshPartnerOperationalState({
+      deliveryPartnerId: selected.id,
+      io,
+      reason: 'assignment',
+    }).catch(() => {});
+  }
+
+  return {
+    ...batchResult,
+    scoringMetadata: RETURN_ETA.observeMode
+      ? {
+          selectedPartner: {
+            deliveryPartnerId: selected.id,
+            operationalStatus: selected.operationalStatus,
+            estimatedReturnMinutes: selected.estimatedReturnMinutes,
+            estimatedReturnAt: selected.estimatedReturnAt,
+            activeOrderCount: selected.activeOrderCount,
+            score: selected.score,
+            distanceKm: selected.distanceKm,
+          },
+          observe: assignmentObserveMetadata,
+        }
+      : undefined,
+  };
 };
 
 const retryAssignOrderToPartner = async ({
@@ -898,13 +1044,17 @@ const manualAssignOrderToPartner = async ({
   }
 
   const { rows: orderRows } = await query(
-    `SELECT id, customer_id, status, address, total_amount, payment_mode
+    `SELECT id, customer_id, status, address, total_amount, payment_mode,
+            failed_delivery_resolution
      FROM orders
      WHERE id = $1`,
     [orderId]
   );
   const order = orderRows[0];
   if (!order) return { assigned: false, reason: 'order_not_found' };
+  if (isOrderBlockedFromAssignment(order)) {
+    return { assigned: false, reason: 'failed_delivery_pending' };
+  }
   if (!assignableOrderStatuses.has(order.status)) {
     return { assigned: false, reason: 'order_not_assignable' };
   }
@@ -920,6 +1070,29 @@ const manualAssignOrderToPartner = async ({
   if (!partnerRow) return { assigned: false, reason: 'partner_not_found' };
   if (!partnerRow.approved) return { assigned: false, reason: 'partner_not_approved' };
 
+  const partnerActive = await countRiderActiveOrders(partnerId);
+  if (isRiderAtLoadCap(partnerActive)) {
+    let observeMeta = null;
+    if (RETURN_ETA.observeMode) {
+      observeMeta = await buildReturnEtaObserveMetadata({
+        deliveryPartnerId: partnerId,
+        riderUserId: partnerRow.user_id,
+        riderLat: partnerRow.current_lat,
+        riderLng: partnerRow.current_lng,
+        isOnline: true,
+        activeOrderCount: partnerActive,
+      });
+    }
+    return {
+      assigned: false,
+      reason: 'rider_load_cap',
+      activeOrders: partnerActive,
+      scoringMetadata: observeMeta
+        ? { observe: [{ ...observeMeta, excludedReason: 'rider_load_cap' }] }
+        : undefined,
+    };
+  }
+
   const selected = {
     id: Number(partnerRow.id),
     userId: Number(partnerRow.user_id),
@@ -931,6 +1104,7 @@ const manualAssignOrderToPartner = async ({
   };
 
   await persistPartnerAssignment(orderId, selected.id);
+  const attemptsRaw = await redis.get(`assign:attempts:${orderId}`);
   await redis.del(`assign:attempts:${orderId}`);
   emitAssignmentSuccess(io, order, selected);
   scheduleAssignmentTimeout({
@@ -939,6 +1113,26 @@ const manualAssignOrderToPartner = async ({
     partnerUserId: selected.userId,
     io,
   });
+
+  instrumentRiderAssigned(io, {
+    orderId,
+    riderId: selected.id,
+    riderUserId: selected.userId,
+    assignmentAttempt: attemptsRaw ? Number(attemptsRaw) : 1,
+    assignmentSuccess: true,
+    metadata: { tier: 'manual' },
+  });
+
+  await resolveAdminTaskByOrder(null, {
+    orderId,
+    taskType: ADMIN_TASK_TYPES.ASSIGNMENT_FAILED,
+  });
+
+  refreshPartnerOperationalState({
+    deliveryPartnerId: selected.id,
+    io,
+    reason: 'manual_assignment',
+  }).catch(() => {});
 
   return {
     assigned: true,

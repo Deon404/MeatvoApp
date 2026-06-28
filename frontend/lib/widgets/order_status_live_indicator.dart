@@ -87,26 +87,7 @@ class _OrderStatusLiveIndicatorState extends State<OrderStatusLiveIndicator>
   }
 
   String _getStatusLabel(String status) {
-    switch (status.toLowerCase()) {
-      case 'placed':
-        return 'Order Placed';
-      case 'confirmed':
-      case 'accepted':
-        return 'Order Confirmed';
-      case 'preparing':
-        return 'Preparing Your Order';
-      case 'assigned':
-        return 'Rider Assigned';
-      case 'out_for_delivery':
-      case 'on_way':
-        return 'Out for Delivery';
-      case 'delivered':
-        return 'Delivered';
-      case 'cancelled':
-        return 'Cancelled';
-      default:
-        return status;
-    }
+    return customerStatusLabel(status);
   }
 
   @override
@@ -283,26 +264,14 @@ String orderTrackingHeadlineForStatus(String status, {String? riderName}) {
     case 'cancelled':
     case 'failed_delivery':
       return 'Order cancelled';
-    case 'rider_nearby':
-      return 'Rider is nearby';
     case 'out_for_delivery':
-      return 'On the way to you';
-    case 'assigned':
-      return riderName != null ? '$riderName is assigned' : 'Rider assigned';
-    case 'picked_up':
-      return 'Order picked up';
+      return 'Out for delivery';
     case 'preparing':
-      if (riderName != null && riderName.trim().isNotEmpty) {
-        return '$riderName is assigned';
-      }
       return 'Preparing your order';
     case 'confirmed':
       return 'Order confirmed';
     case 'payment_pending':
       return 'Payment pending';
-    case 'placed':
-    case 'pending':
-      return 'Order placed';
     default:
       return 'Tracking your order';
   }
@@ -325,12 +294,6 @@ String orderTrackingChipLabelForOrder(OrderModel order) {
 
 const _trackingSteps = [
   {
-    'status': 'placed',
-    'label': 'Placed',
-    'icon': Icons.receipt,
-    'image': 'assets/images/order_tracking/order_placed.png',
-  },
-  {
     'status': 'confirmed',
     'label': 'Confirmed',
     'icon': Icons.check_circle,
@@ -343,14 +306,8 @@ const _trackingSteps = [
     'image': 'assets/images/order_tracking/order_preparing.png',
   },
   {
-    'status': 'assigned',
-    'label': 'Assigned',
-    'icon': Icons.person_pin_circle,
-    'image': 'assets/images/order_tracking/order_assigned.png',
-  },
-  {
     'status': 'out_for_delivery',
-    'label': 'On the\nway',
+    'label': 'Out for\nDelivery',
     'icon': Icons.delivery_dining,
     'image': 'assets/images/order_tracking/order_on_the_way.png',
   },

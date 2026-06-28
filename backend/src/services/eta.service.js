@@ -6,40 +6,13 @@
 const { query } = require('../db/postgres');
 const { haversineDistanceKm } = require('../utils/distance.util');
 const { logger } = require('../utils/logger');
+const { ETA, ROUTING, STORE, getTrafficMultiplier } = require('../config/businessRules');
+const { haversineKm } = require('../modules/delivery/route-optimizer');
 
-// Vehicle average speeds (km/h)
-const VEHICLE_SPEEDS = {
-  bike: 25,
-  scooter: 30,
-  motorcycle: 35,
-  car: 40,
-  bicycle: 15,
-  walking: 5,
-  default: 25,
-};
+const BATCH_ETA_MESSAGE = 'Rider is completing earlier deliveries.';
 
-// Traffic multipliers by time of day
-const TRAFFIC_FACTORS = {
-  // Hour: multiplier
-  7: 1.3,  // Morning rush
-  8: 1.4,
-  9: 1.3,
-  12: 1.2, // Lunch
-  13: 1.2,
-  17: 1.4, // Evening rush
-  18: 1.5,
-  19: 1.3,
-  20: 1.2,
-  default: 1.0,
-};
-
-/**
- * Get traffic multiplier based on current hour
- */
-function getTrafficMultiplier(date = new Date()) {
-  const hour = date.getHours();
-  return TRAFFIC_FACTORS[hour] || TRAFFIC_FACTORS.default;
-}
+const VEHICLE_SPEEDS = ETA.vehicleSpeedsKmh;
+const TRAFFIC_FACTORS = ETA.trafficFactors;
 
 /**
  * Get rider's average speed from historical data
@@ -49,13 +22,13 @@ async function getRiderAverageSpeed(riderUserId) {
     `SELECT 
       dp.vehicle_type,
       AVG(EXTRACT(EPOCH FROM (oa.updated_at - oa.assigned_at)) / 60) as avg_minutes,
-      AVG(CASE WHEN reh.distance_km > 0 THEN reh.distance_km ELSE 2 END) as avg_distance
+      AVG(CASE WHEN reh.distance_km > 0 THEN reh.distance_km ELSE ${ETA.fallbackAvgDistanceKm} END) as avg_distance
      FROM delivery_partners dp
      LEFT JOIN order_assignments oa ON oa.delivery_partner_id = dp.id
      LEFT JOIN rider_earnings_history reh ON reh.order_id = oa.order_id
      WHERE dp.user_id = $1
        AND oa.status = 'DELIVERED'
-       AND oa.assigned_at >= NOW() - INTERVAL '30 days'
+       AND oa.assigned_at >= NOW() - INTERVAL '${ETA.riderHistoricalLookbackDays} days'
      GROUP BY dp.vehicle_type`,
     [riderUserId]
   );
@@ -65,12 +38,274 @@ async function getRiderAverageSpeed(riderUserId) {
     const avgDistance = parseFloat(rows[0].avg_distance);
     // Speed = Distance / Time (convert minutes to hours)
     const speedKmh = (avgDistance / avgMinutes) * 60;
-    return Math.max(10, Math.min(50, speedKmh)); // Clamp between 10-50 km/h
+    return Math.max(ETA.riderSpeedClampMinKmh, Math.min(ETA.riderSpeedClampMaxKmh, speedKmh));
   }
 
   // Fallback to vehicle type default speed
   const vehicleType = rows[0]?.vehicle_type || 'default';
   return VEHICLE_SPEEDS[vehicleType] || VEHICLE_SPEEDS.default;
+}
+
+function parseAddressCoords(address) {
+  const parsed = typeof address === 'string' ? JSON.parse(address) : address;
+  const lat = Number(parsed?.lat);
+  const lng = Number(parsed?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng, text: parsed?.text || '' };
+}
+
+async function getStoreCenter() {
+  try {
+    const { rows } = await query(
+      `SELECT center_lat, center_lng
+       FROM store_settings
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    );
+    const lat = Number(rows[0]?.center_lat);
+    const lng = Number(rows[0]?.center_lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      return { lat, lng };
+    }
+  } catch {
+    // fall through to businessRules default
+  }
+  return { lat: STORE.centerLat, lng: STORE.centerLng };
+}
+
+/**
+ * Fetch active delivery stops for a partner (out-for-delivery + pending returns).
+ */
+async function getActiveDeliveryStops(deliveryPartnerId, dbClient = null) {
+  const runQuery = dbClient ? dbClient.query.bind(dbClient) : query;
+  const { rows } = await runQuery(
+    `SELECT o.id, o.address, o.status
+     FROM order_assignments oa
+     JOIN orders o ON o.id = oa.order_id
+     WHERE oa.delivery_partner_id = $1
+       AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+       AND o.status NOT IN ('DELIVERED', 'CANCELLED')`,
+    [deliveryPartnerId]
+  );
+
+  return rows
+    .map((row) => {
+      const coords = parseAddressCoords(row.address);
+      if (!coords) return null;
+      return {
+        orderId: Number(row.id),
+        lat: coords.lat,
+        lng: coords.lng,
+        status: row.status,
+      };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Greedy route through remaining stops, then return leg to store.
+ * Used for rider return ETA (Phase 4).
+ */
+async function calculateReturnToStoreETA({
+  riderUserId,
+  riderLat,
+  riderLng,
+  deliveryPartnerId,
+  dbClient = null,
+}) {
+  const lat = Number(riderLat);
+  const lng = Number(riderLng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return { estimatedReturnMinutes: 0, estimatedReturnAt: null, distanceKm: 0 };
+  }
+
+  const stops = await getActiveDeliveryStops(deliveryPartnerId, dbClient);
+  if (!stops.length) {
+    return { estimatedReturnMinutes: 0, estimatedReturnAt: null, distanceKm: 0 };
+  }
+
+  const store = await getStoreCenter();
+  let currentLat = lat;
+  let currentLng = lng;
+  let totalMinutes = 0;
+  let totalDistanceKm = 0;
+  const visited = new Set();
+
+  while (visited.size < stops.length) {
+    let nearestIdx = -1;
+    let nearestDist = Infinity;
+    for (let i = 0; i < stops.length; i++) {
+      if (visited.has(i)) continue;
+      const dist = haversineKm(currentLat, currentLng, stops[i].lat, stops[i].lng);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestIdx = i;
+      }
+    }
+    if (nearestIdx < 0) break;
+
+    const stop = stops[nearestIdx];
+    visited.add(nearestIdx);
+    totalDistanceKm += nearestDist;
+    const roadKm = nearestDist * ETA.roadDistanceFactor;
+    const segmentMinutes = (roadKm / ROUTING.avgSpeedKmh) * 60;
+    totalMinutes += Math.ceil(segmentMinutes * getTrafficMultiplier());
+    totalMinutes += ROUTING.stopMinutes;
+    currentLat = stop.lat;
+    currentLng = stop.lng;
+  }
+
+  const returnLeg = await calculateETA({
+    riderLat: currentLat,
+    riderLng: currentLng,
+    deliveryLat: store.lat,
+    deliveryLng: store.lng,
+    riderUserId,
+  });
+  totalMinutes += returnLeg.etaMinutes;
+  totalDistanceKm += returnLeg.distanceKm;
+
+  const estimatedReturnMinutes = Math.max(0, Math.ceil(totalMinutes));
+  const estimatedReturnAt =
+    estimatedReturnMinutes > 0
+      ? new Date(Date.now() + estimatedReturnMinutes * 60_000).toISOString()
+      : null;
+
+  return {
+    estimatedReturnMinutes,
+    estimatedReturnAt,
+    distanceKm: Number(totalDistanceKm.toFixed(2)),
+  };
+}
+
+async function resolveBatchQueueContext(orderId, riderLocation) {
+  const { rows } = await query(
+    `SELECT o.id, o.address, o.status, oa.batch_ids
+     FROM orders o
+     JOIN order_assignments oa ON oa.order_id = o.id
+     WHERE o.id = $1`,
+    [orderId]
+  );
+  const order = rows[0];
+  if (!order?.batch_ids) return null;
+
+  let batchIds = order.batch_ids;
+  if (typeof batchIds === 'string') {
+    try {
+      batchIds = JSON.parse(batchIds);
+    } catch {
+      return null;
+    }
+  }
+  if (!Array.isArray(batchIds) || batchIds.length <= 1) return null;
+
+  const numericBatchIds = batchIds.map(Number).filter((id) => id > 0);
+  const { rows: batchOrders } = await query(
+    `SELECT o.id, o.address, o.status
+     FROM orders o
+     WHERE o.id = ANY($1::bigint[])
+       AND o.status NOT IN ('DELIVERED', 'CANCELLED')`,
+    [numericBatchIds]
+  );
+
+  if (batchOrders.length <= 1) return null;
+
+  const points = batchOrders
+    .map((row) => {
+      const coords = parseAddressCoords(row.address);
+      if (!coords) return null;
+      return {
+        orderId: Number(row.id),
+        lat: coords.lat,
+        lng: coords.lng,
+        status: row.status,
+      };
+    })
+    .filter(Boolean);
+
+  if (points.length <= 1) return null;
+
+  let currentLat = Number(riderLocation.lat);
+  let currentLng = Number(riderLocation.lng);
+  const visited = new Set();
+  const routeOrder = [];
+  let totalDistanceKm = 0;
+
+  while (visited.size < points.length) {
+    let nearestIdx = -1;
+    let nearestDist = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      if (visited.has(i)) continue;
+      const dist = haversineKm(currentLat, currentLng, points[i].lat, points[i].lng);
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearestIdx = i;
+      }
+    }
+    if (nearestIdx < 0) break;
+    visited.add(nearestIdx);
+    totalDistanceKm += nearestDist;
+    routeOrder.push(points[nearestIdx]);
+    currentLat = points[nearestIdx].lat;
+    currentLng = points[nearestIdx].lng;
+  }
+
+  const queuePosition = routeOrder.findIndex((stop) => stop.orderId === Number(orderId)) + 1;
+  if (queuePosition <= 0) return null;
+
+  const stopsRemaining = routeOrder.length - queuePosition;
+  const isFirstStop = queuePosition === 1;
+
+  let adjustedETA = null;
+  if (!isFirstStop) {
+    let cumulativeKm = 0;
+    let lat = Number(riderLocation.lat);
+    let lng = Number(riderLocation.lng);
+    for (let i = 0; i < queuePosition; i++) {
+      const stop = routeOrder[i];
+      cumulativeKm += haversineKm(lat, lng, stop.lat, stop.lng);
+      lat = stop.lat;
+      lng = stop.lng;
+    }
+    const travelMinutes = Math.ceil((cumulativeKm / ROUTING.avgSpeedKmh) * 60);
+    adjustedETA =
+      travelMinutes + queuePosition * ROUTING.stopMinutes + ETA.bufferMinutes;
+  }
+
+  return {
+    queuePosition,
+    stopsRemaining,
+    adjustedETA,
+    isFirstStop,
+    batchSize: routeOrder.length,
+    message: isFirstStop ? null : BATCH_ETA_MESSAGE,
+  };
+}
+
+function buildEtaPayload(orderId, etaData, batchContext = null) {
+  const payload = {
+    orderId: Number(orderId),
+    eta: etaData.etaMinutes,
+    distance: etaData.distanceKm,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (batchContext && !batchContext.isFirstStop) {
+    payload.queuePosition = batchContext.queuePosition;
+    payload.stopsRemaining = batchContext.stopsRemaining;
+    payload.adjustedETA = batchContext.adjustedETA;
+    payload.eta = batchContext.adjustedETA;
+    payload.etaMinutes = batchContext.adjustedETA;
+    payload.message = batchContext.message;
+    payload.isBatchEta = true;
+  } else if (batchContext) {
+    payload.queuePosition = 1;
+    payload.stopsRemaining = batchContext.stopsRemaining;
+    payload.adjustedETA = etaData.etaMinutes;
+    payload.isBatchEta = true;
+  }
+
+  return payload;
 }
 
 /**
@@ -88,7 +323,7 @@ async function calculateETA({
   const distanceKm = haversineDistanceKm(riderLat, riderLng, deliveryLat, deliveryLng);
 
   // Add 20% for actual road distance (conservative estimate)
-  const roadDistanceKm = distanceKm * 1.2;
+  const roadDistanceKm = distanceKm * ETA.roadDistanceFactor;
 
   // Get rider's average speed
   const avgSpeed = await getRiderAverageSpeed(riderUserId);
@@ -103,7 +338,7 @@ async function calculateETA({
   }
 
   // Add buffer time (stops, parking, finding address)
-  const bufferMinutes = 2;
+  const bufferMinutes = ETA.bufferMinutes;
   etaMinutes += bufferMinutes;
 
   return {
@@ -156,31 +391,33 @@ async function updateLiveETA(orderId, riderLocation, io) {
       riderUserId: order.rider_user_id,
     });
 
+    const batchContext = await resolveBatchQueueContext(orderId, riderLocation);
+    const effectiveEtaMinutes =
+      batchContext && !batchContext.isFirstStop
+        ? batchContext.adjustedETA
+        : etaData.etaMinutes;
+
     // Update order ETA in database
     await query(
       `UPDATE orders 
        SET eta_minutes = $1, updated_at = CURRENT_TIMESTAMP 
        WHERE id = $2`,
-      [etaData.etaMinutes, orderId]
+      [effectiveEtaMinutes, orderId]
     );
 
-    // Emit real-time update to customer and admin
     const etaPayload = {
-      orderId: Number(orderId),
-      eta: etaData.etaMinutes,
-      distance: etaData.distanceKm,
+      ...buildEtaPayload(orderId, etaData, batchContext),
       riderLocation: {
         lat: riderLocation.lat,
         lng: riderLocation.lng,
       },
-      timestamp: new Date().toISOString(),
     };
 
     if (io) {
       // Emit to customer
       if (order.customer_id) {
         io.to(`customer_${order.customer_id}`).emit('eta:updated', etaPayload);
-        io.to(`order_${orderId}`).emit('eta:updated', etaPayload);
+        io.to(`order:${orderId}`).emit('eta:updated', etaPayload);
       }
       
       // Emit to admin
@@ -268,7 +505,7 @@ async function checkRiderNearby(orderId, riderLocation) {
     const distanceMeters = distanceKm * 1000;
 
     // Rider is within 500 meters
-    if (distanceMeters <= 500 && order.status === 'OUT_FOR_DELIVERY') {
+    if (distanceMeters <= ETA.nearbyThresholdMeters && order.status === 'OUT_FOR_DELIVERY') {
       // Auto-transition to RIDER_NEARBY
       await query(
         `UPDATE orders SET status = 'RIDER_NEARBY' WHERE id = $1 AND status = 'OUT_FOR_DELIVERY'`,
@@ -304,7 +541,7 @@ async function getInitialETA(orderAddress, riderId = null) {
     );
 
     if (!storeRows[0] || !orderAddress.lat || !orderAddress.lng) {
-      return { etaMinutes: 30, distanceKm: 0 }; // Default 30 minutes
+      return { etaMinutes: ETA.initialFallbackMinutes, distanceKm: 0 };
     }
 
     const storeLat = parseFloat(storeRows[0].center_lat);
@@ -313,7 +550,7 @@ async function getInitialETA(orderAddress, riderId = null) {
     const deliveryLng = parseFloat(orderAddress.lng);
 
     const distanceKm = haversineDistanceKm(storeLat, storeLng, deliveryLat, deliveryLng);
-    const roadDistanceKm = distanceKm * 1.2;
+    const roadDistanceKm = distanceKm * ETA.roadDistanceFactor;
 
     // Use default speed if no rider assigned yet
     const avgSpeed = riderId 
@@ -321,10 +558,10 @@ async function getInitialETA(orderAddress, riderId = null) {
       : VEHICLE_SPEEDS.default;
 
     // Add packing time (10 minutes) + delivery time
-    const packingMinutes = 10;
+    const packingMinutes = ETA.initialPackingMinutes;
     let deliveryMinutes = (roadDistanceKm / avgSpeed) * 60;
     deliveryMinutes *= getTrafficMultiplier();
-    deliveryMinutes += 2; // Buffer
+    deliveryMinutes += ETA.bufferMinutes;
 
     const totalMinutes = packingMinutes + deliveryMinutes;
 
@@ -334,15 +571,21 @@ async function getInitialETA(orderAddress, riderId = null) {
     };
   } catch (error) {
     logger.error('initial_eta_calculation_failed', { error: error.message });
-    return { etaMinutes: 30, distanceKm: 0 };
+    return { etaMinutes: ETA.initialFallbackMinutes, distanceKm: 0 };
   }
 }
 
 module.exports = {
   calculateETA,
+  calculateReturnToStoreETA,
+  getStoreCenter,
+  getActiveDeliveryStops,
   updateLiveETA,
   handleRiderLocationUpdate,
   checkRiderNearby,
   getInitialETA,
+  resolveBatchQueueContext,
+  buildEtaPayload,
+  BATCH_ETA_MESSAGE,
   VEHICLE_SPEEDS,
 };

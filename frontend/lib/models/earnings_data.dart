@@ -7,6 +7,7 @@ class EarningsData {
   final double rating;
   final int completedDeliveries;
   final int totalRatings;
+  final int todayDeliveries;
   final int cancelledDeliveries;
 
   const EarningsData({
@@ -18,6 +19,7 @@ class EarningsData {
     required this.rating,
     this.completedDeliveries = 0,
     this.totalRatings = 0,
+    this.todayDeliveries = 0,
     this.cancelledDeliveries = 0,
   });
 
@@ -31,15 +33,21 @@ class EarningsData {
     final rating = (monthData['rating'] as num?)?.toDouble() ??
         (todayData['rating'] as num?)?.toDouble() ??
         0;
+    final apiLifetime = monthData['lifetimeTotal'] ?? monthData['lifetime_total'];
     return EarningsData(
       today: _parseAmount(todayData['total']),
       thisWeek: _parseAmount(weekData['total']),
       thisMonth: _parseAmount(monthData['total']),
-      total: lifetimeTotal ?? _parseAmount(monthData['total']),
+      total: _parseAmount(
+        apiLifetime ?? lifetimeTotal ?? monthData['total'],
+      ),
       totalDeliveries: monthDeliveries,
       rating: rating,
       completedDeliveries: monthDeliveries,
-      totalRatings: monthDeliveries,
+      totalRatings: (monthData['totalRatings'] as num?)?.toInt() ??
+          (monthData['ratings_count'] as num?)?.toInt() ??
+          0,
+      todayDeliveries: (todayData['deliveries'] as num?)?.toInt() ?? 0,
       cancelledDeliveries: 0,
     );
   }

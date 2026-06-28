@@ -18,11 +18,16 @@ class StoreClosedBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (status.isOpen) return const SizedBox.shrink();
+    final capacityMessage = status.displayCapacityMessage;
+    if (status.isAcceptingOrders && capacityMessage == null) {
+      return const SizedBox.shrink();
+    }
 
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
-    final message = status.displayClosedMessage;
+    final message = status.isAcceptingOrders
+        ? capacityMessage!
+        : status.displayClosedMessage;
 
     return Padding(
       padding: padding ?? EdgeInsets.fromLTRB(mv.spacing.md, 0, mv.spacing.md, mv.spacing.sm),

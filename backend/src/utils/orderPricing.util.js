@@ -1,5 +1,7 @@
-const DEFAULT_DELIVERY_FEE = 30;
-const DEFAULT_FREE_DELIVERY_THRESHOLD = 500;
+const { PRICING } = require('../config/businessRules');
+
+const DEFAULT_DELIVERY_FEE = PRICING.defaultDeliveryFee;
+const DEFAULT_FREE_DELIVERY_THRESHOLD = PRICING.freeDeliveryThreshold;
 
 /**
  * Delivery charge for checkout — free when subtotal meets threshold.

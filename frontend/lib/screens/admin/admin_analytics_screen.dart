@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_constants.dart';
+import '../../models/admin_ops_metrics.dart';
 import '../../services/admin_service.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
+import '../../widgets/admin/ops_metrics_dashboard.dart';
+import '../../widgets/common/error_state.dart';
 
 class AdminAnalyticsScreen extends StatefulWidget {
   const AdminAnalyticsScreen({super.key});
@@ -12,9 +15,17 @@ class AdminAnalyticsScreen extends StatefulWidget {
 
 class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
   final _admin = AdminService();
-  Map<String, dynamic>? _data;
-  String _period = 'today';
+  AdminOpsMetrics? _opsMetrics;
+  Map<String, dynamic>? _commerceKpi;
+  String _period = '7d';
   bool _loading = true;
+  String? _error;
+
+  static const _periodOptions = <String, String>{
+    'today': 'Today',
+    '7d': '7D',
+    '30d': '30D',
+  };
 
   @override
   void initState() {
@@ -22,103 +33,136 @@ class _AdminAnalyticsScreenState extends State<AdminAnalyticsScreen> {
     _load();
   }
 
+  String _analyticsPeriodParam() {
+    switch (_period) {
+      case 'today':
+        return 'today';
+      case '30d':
+        return 'month';
+      default:
+        return 'week';
+    }
+  }
+
+  String _granularity() => _period == 'today' ? 'hour' : 'day';
+
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
-      _data = await _admin.getAnalytics(period: _period);
+      final results = await Future.wait([
+        _admin.getOpsMetrics(period: _period, granularity: _granularity()),
+        _admin.getAnalytics(period: _analyticsPeriodParam()),
+      ]);
+
+      if (!mounted) return;
+      setState(() {
+        _opsMetrics = results[0] as AdminOpsMetrics;
+        final analytics = results[1] as Map<String, dynamic>;
+        _commerceKpi = (analytics['kpi'] as Map?)?.cast<String, dynamic>();
+        _loading = false;
+      });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: AppColors.primary),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final kpis = (_data?['kpi'] as Map?)?.cast<String, dynamic>() ?? {};
-    final revenue = (_data?['kpi'] as Map?)?.cast<String, dynamic>() ?? {};
-
     return Scaffold(
+      backgroundColor: AppColors.background,
       drawer: AdminNavigationDrawer(
         currentSection: AdminNavSection.analytics,
         onLogout: () => AdminNavigationDrawer.confirmLogout(context),
       ),
       appBar: AppBar(
-        title: const Text('Analytics'),
-        backgroundColor: Colors.white,
+        title: const Text('Operations Analytics'),
+        backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         actions: [
           PopupMenuButton<String>(
             initialValue: _period,
-            onSelected: (v) {
-              setState(() => _period = v);
+            onSelected: (value) {
+              setState(() => _period = value);
               _load();
             },
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'today', child: Text('Today')),
-              PopupMenuItem(value: 'week', child: Text('Week')),
-              PopupMenuItem(value: 'month', child: Text('Month')),
-            ],
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
+            itemBuilder: (_) => _periodOptions.entries
+                .map(
+                  (e) => PopupMenuItem<String>(
+                    value: e.key,
+                    child: Text(e.value),
+                  ),
+                )
+                .toList(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: Row(
                 children: [
-                  _MetricCard(
-                    title: 'Orders',
-                    value: '${kpis['totalOrders'] ?? 0}',
+                  Text(
+                    _periodOptions[_period] ?? _period,
+                    style: AppTextStyles.body,
                   ),
-                  _MetricCard(
-                    title: 'Revenue',
-                    value: '₹${(kpis['totalRevenue'] ?? 0).toString()}',
-                  ),
-                  _MetricCard(
-                    title: 'Delivered',
-                    value: '${kpis['deliveredOrders'] ?? 0}',
-                  ),
-                  _MetricCard(
-                    title: 'Avg order value',
-                    value: '₹${(kpis['avgOrderValue'] ?? 0).toString()}',
-                  ),
+                  const Icon(Icons.arrow_drop_down),
                 ],
               ),
             ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loading ? null : _load,
+          ),
+        ],
+      ),
+      body: _buildBody(),
     );
   }
-}
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.title, required this.value});
+  Widget _buildBody() {
+    if (_loading && _opsMetrics == null) {
+      return const Center(child: CircularProgressIndicator(color: AppColors.primary));
+    }
 
-  final String title;
-  final String value;
+    if (_error != null && _opsMetrics == null) {
+      return ErrorStateWidget(
+        title: 'Could not load analytics',
+        message: _error!,
+        onRetry: _load,
+      );
+    }
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
+    if (_opsMetrics == null) {
+      return ErrorStateWidget(
+        title: 'No data',
+        message: 'Operational metrics are not available yet.',
+        onRetry: _load,
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: AppColors.primary,
+      child: ListView(
+        padding: const EdgeInsets.all(AppSpacing.md),
         children: [
-          Expanded(
-            child: Text(title, style: const TextStyle(color: AppColors.textSecondary)),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.only(bottom: AppSpacing.sm),
+              child: LinearProgressIndicator(
+                minHeight: 2,
+                color: AppColors.primary,
+                backgroundColor: AppColors.divider,
+              ),
+            ),
+          OpsMetricsDashboard(
+            opsMetrics: _opsMetrics!,
+            commerceKpi: _commerceKpi,
           ),
         ],
       ),

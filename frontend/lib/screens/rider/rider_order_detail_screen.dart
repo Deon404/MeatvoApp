@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../models/order_model.dart';
 import '../../services/rider_service.dart';
@@ -7,6 +8,7 @@ import '../../services/socket_service.dart';
 import '../../services/maps_service.dart';
 import '../../services/contact_action_service.dart';
 import '../../core/constants/app_constants.dart';
+import '../../config/store_config.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/responsive_helper.dart';
@@ -15,7 +17,7 @@ import '../../widgets/maps/rider_navigation_map.dart';
 import 'batch_delivery_screen.dart';
 
 /// Rider Order Detail Screen - Detailed view with actions for a single order assignment
-class RiderOrderDetailScreen extends StatefulWidget {
+class RiderOrderDetailScreen extends ConsumerStatefulWidget {
   final String assignmentId;
   final List<String>? batchOrderIds;
 
@@ -26,13 +28,13 @@ class RiderOrderDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<RiderOrderDetailScreen> createState() =>
+  ConsumerState<RiderOrderDetailScreen> createState() =>
       _RiderOrderDetailScreenState();
 }
 
-class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
+class _RiderOrderDetailScreenState
+    extends ConsumerState<RiderOrderDetailScreen> {
   final RiderService _riderService = RiderService();
-  final RiderLocationService _locationService = RiderLocationService();
   final SocketService _socketService = SocketService();
   final MapsService _mapsService = MapsService();
   final ContactActionService _contactService = ContactActionService();
@@ -40,6 +42,9 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   bool _isProcessing = false;
+
+  RiderLocationService get _locationService =>
+      ref.read(riderLocationServiceProvider);
 
   @override
   void initState() {
@@ -440,6 +445,261 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     }
   }
 
+  Future<void> _markFailedDelivery() async {
+    const reasons = <Map<String, String>>[
+      {'value': 'CUSTOMER_UNREACHABLE', 'label': 'Customer Unreachable'},
+      {'value': 'WRONG_ADDRESS', 'label': 'Wrong Address'},
+      {'value': 'CUSTOMER_REFUSED', 'label': 'Customer Refused'},
+    ];
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Failed Delivery'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: reasons
+              .map(
+                (r) => ListTile(
+                  title: Text(r['label']!),
+                  onTap: () => Navigator.pop(context, r['value']),
+                ),
+              )
+              .toList(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirm Failed Delivery'),
+        content: const Text(
+          'Mark this order as failed? You must return the package to the store before the manager can resolve it.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.warning),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      await _riderService.markFailedDelivery(_getActualOrderId(), selected);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed delivery recorded. Return to store.'),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+        await _loadOrderDetails();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to record: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Future<void> _reportOperationalException(String exceptionType, String label) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(label),
+        content: Text(
+          'Report "$label" to the store manager? Your delivery will not be cancelled.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Report'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      await _riderService.reportOperationalException(
+        _getActualOrderId(),
+        exceptionType,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$label reported to admin'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to report: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
+  Widget _buildOperationalExceptionButtons() {
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _isProcessing
+                    ? null
+                    : () => _reportOperationalException(
+                          'DELAYED_VEHICLE',
+                          'Delayed (vehicle issue)',
+                        ),
+                child: const Text(
+                  'Delayed',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _isProcessing
+                    ? null
+                    : () => _reportOperationalException(
+                          'COLD_CHAIN_ISSUE',
+                          'Cold Chain Issue',
+                        ),
+                child: const Text(
+                  'Cold Chain',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _isProcessing
+                    ? null
+                    : () => _reportOperationalException(
+                          'NEED_ASSISTANCE',
+                          'Need Assistance',
+                        ),
+                child: const Text(
+                  'Assistance',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmReturnToStore() async {
+    const conditions = <Map<String, String>>[
+      {'value': 'RESELLABLE', 'label': 'Resellable — product is still good'},
+      {'value': 'PARTIAL_SPOILAGE', 'label': 'Partial spoilage'},
+      {'value': 'DISCARD', 'label': 'Discard — not safe to resell'},
+    ];
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Return to Store'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Confirm you have returned the package to the store.'),
+            const SizedBox(height: 12),
+            ...conditions.map(
+              (c) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(c['label']!),
+                onTap: () => Navigator.pop(context, c['value']),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == null) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      await _riderService.confirmReturnToStore(_getActualOrderId(), selected);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Return to store confirmed'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+        await _loadOrderDetails();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to confirm return: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
+  }
+
   Future<void> _markDelivered() async {
     final order = _assignment?['order'] as Map<String, dynamic>?;
     final paymentMethod = (order?['payment_method'] as String? ?? 'cod').toLowerCase();
@@ -784,10 +1044,11 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
 
     final user = order['user'] as Map<String, dynamic>?;
     final customerPhone = (user?['phone'] ?? order['customer_phone'] ?? order['phone'] ?? '').toString().trim();
-    final storePhone = '1800-XXX-XXXX';
+    const String? storePhone = null; // No phone configured yet
     final rawAddressData = order['delivery_address'] ?? order['address'];
     final deliveryAddress = formatAddressForDisplay(rawAddressData);
-    final storeAddress = 'Meatvo Store, Main Branch';
+    final storeAddress = StoreConfig.storeAddress;
+    final storeName = StoreConfig.storeName;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -826,6 +1087,14 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
                       ),
                     ),
                     Text(
+                      storeName,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1A1A1A),
+                      ),
+                    ),
+                    Text(
                       storeAddress,
                       style: const TextStyle(
                         fontSize: 14,
@@ -836,16 +1105,19 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: () => _handleContactCall(storePhone),
-                icon: const Icon(
-                  Icons.call,
-                  color: Color(0xFFC8102E),
-                  size: 20,
-                ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
+              if (storePhone != null)
+                IconButton(
+                  onPressed: () => _handleContactCall(storePhone),
+                  icon: const Icon(
+                    Icons.call,
+                    color: Color(0xFFC8102E),
+                    size: 20,
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                )
+              else
+                const SizedBox.shrink(),
             ],
           ),
           Padding(
@@ -1125,8 +1397,30 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     );
   }
 
+  String _resolveActionStatus() {
+    final assignmentStatus =
+        (_assignment?['status'] as String? ?? 'assigned').toLowerCase();
+    final order = _assignment?['order'] as Map<String, dynamic>?;
+    final orderStatus = _resolveOrderStatus(order);
+
+    if (orderStatus == 'failed_delivery') {
+      final returnedAt = order?['returned_at'];
+      if (returnedAt == null || returnedAt.toString().isEmpty) {
+        return 'awaiting_return';
+      }
+      return 'return_confirmed';
+    }
+
+    if (orderStatus == 'on_the_way') return 'on_the_way';
+    if (orderStatus == 'picked_up') return 'picked_up';
+    if (orderStatus == 'out_for_delivery' && assignmentStatus == 'accepted') {
+      return 'accepted';
+    }
+    return assignmentStatus;
+  }
+
   Widget _buildStickyBottom() {
-    final status = _assignment?['status'] as String? ?? 'assigned';
+    final status = _resolveActionStatus();
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1214,52 +1508,117 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
           ),
         ),
       );
-    } else if (status == 'picked_up' || status == 'on_the_way') {
-      return Row(
+    } else if (status == 'picked_up' || status == 'on_the_way' || status == 'accepted') {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (status == 'picked_up')
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _isProcessing ? null : _markOnTheWay,
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Color(0xFFC8102E)),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+          Row(
+            children: [
+              if (status == 'picked_up')
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: _isProcessing ? null : _markOnTheWay,
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: Color(0xFFC8102E)),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: Text(
+                      _isProcessing ? 'Processing...' : 'On The Way',
+                      style: const TextStyle(
+                        color: Color(0xFFC8102E),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
-                child: Text(
-                  _isProcessing ? 'Processing...' : 'On The Way',
-                  style: const TextStyle(
-                    color: Color(0xFFC8102E),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+              if (status == 'picked_up') const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _isProcessing ? null : _markDelivered,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFC8102E),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: Text(
+                    _isProcessing ? 'Processing...' : 'Mark Delivered',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
-            ),
-          if (status == 'picked_up') const SizedBox(width: 12),
-          Expanded(
-            child: ElevatedButton(
-              onPressed: _isProcessing ? null : _markDelivered,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFC8102E),
-                padding: const EdgeInsets.symmetric(vertical: 14),
+            ],
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isProcessing ? null : _markFailedDelivery,
+              icon: const Icon(Icons.error_outline, size: 18),
+              label: const Text('Failed Delivery'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.warning,
+                side: const BorderSide(color: AppColors.warning),
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
+            ),
+          ),
+          _buildOperationalExceptionButtons(),
+        ],
+      );
+    } else if (status == 'awaiting_return') {
+      return ElevatedButton.icon(
+        onPressed: _isProcessing ? null : _confirmReturnToStore,
+        icon: const Icon(Icons.store, size: 20),
+        label: Text(
+          _isProcessing ? 'Processing...' : 'Confirm Return to Store',
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.warning,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          minimumSize: const Size(double.infinity, 50),
+        ),
+      );
+    } else if (status == 'return_confirmed') {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.warning),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.store, color: AppColors.warning),
+            SizedBox(width: 12),
+            Expanded(
               child: Text(
-                _isProcessing ? 'Processing...' : 'Mark Delivered',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
+                'Returned to store. Waiting for manager to resolve.',
+                style: TextStyle(
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       );
     } else if (status == 'delivered') {
       return Container(

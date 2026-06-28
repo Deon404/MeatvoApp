@@ -231,10 +231,82 @@ async function getPayments(orderId) {
   }
 }
 
+/**
+ * Create a Cashfree refund against a merchant order.
+ * @param {Object} params
+ * @param {string|number} params.orderId - Merchant order ID
+ * @param {number} params.refundAmount - Amount in major currency units
+ * @param {string} params.refundId - Unique merchant refund id (3–40 alphanumeric)
+ * @param {string} [params.refundNote] - Optional note
+ * @returns {Promise<{ cf_refund_id: string|null, refund_id: string, refund_status: string|null }>}
+ */
+async function createRefund({ orderId, refundAmount, refundId, refundNote }) {
+  if (!orderId) throw new Error('Cashfree createRefund failed: orderId is required');
+  if (refundAmount == null || Number(refundAmount) <= 0) {
+    throw new Error('Cashfree createRefund failed: refundAmount must be a positive number');
+  }
+  if (!refundId) throw new Error('Cashfree createRefund failed: refundId is required');
+
+  const payload = {
+    refund_amount: Number(refundAmount),
+    refund_id: String(refundId),
+    ...(refundNote ? { refund_note: String(refundNote).slice(0, 100) } : {}),
+  };
+
+  const cashfreeEnv = getCashfreeEnv();
+
+  try {
+    logger.info('cashfree_create_refund_start', {
+      orderId: String(orderId),
+      refundId: String(refundId),
+      refundAmount: Number(refundAmount),
+      cashfreeEnv,
+    });
+
+    const response = await axios.post(
+      `${getBaseUrl()}/orders/${encodeURIComponent(String(orderId))}/refunds`,
+      payload,
+      {
+        headers: buildHeaders(),
+        timeout: 30000,
+      },
+    );
+
+    const { cf_refund_id, refund_id, refund_status } = response.data || {};
+
+    logger.info('cashfree_create_refund_success', {
+      orderId: String(orderId),
+      refundId: refund_id || String(refundId),
+      cfRefundId: cf_refund_id != null ? String(cf_refund_id) : null,
+      refundStatus: refund_status || null,
+      cashfreeEnv,
+    });
+
+    return {
+      cf_refund_id: cf_refund_id != null ? String(cf_refund_id) : null,
+      refund_id: refund_id || String(refundId),
+      refund_status: refund_status || null,
+    };
+  } catch (error) {
+    if (error.message.startsWith('Cashfree createRefund failed:')) throw error;
+    const formatted = formatAxiosError(error, 'createRefund');
+    logger.error('cashfree_create_refund_failed', {
+      orderId: String(orderId),
+      refundId: String(refundId),
+      cashfreeEnv,
+      status: error.response?.status,
+      responseData: error.response?.data,
+      message: formatted.message,
+    });
+    throw formatted;
+  }
+}
+
 module.exports = {
   createOrder,
   getOrderStatus,
   getPayments,
+  createRefund,
   getCashfreeEnv,
   getBaseUrl,
 };

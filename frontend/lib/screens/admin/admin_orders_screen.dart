@@ -11,6 +11,8 @@ import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
 import '../../widgets/admin/assignment_failed_alert_banner.dart';
+import '../../widgets/admin/failed_delivery_alert_banner.dart';
+import '../../widgets/admin/admin_order_timeline_section.dart';
 import '../../widgets/admin/new_order_alert_banner.dart';
 import '../../widgets/skeletons/order_card_skeleton.dart';
 
@@ -28,6 +30,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   final _socketService = SocketService();
   final _dateFormat = DateFormat('MMM d, yyyy • hh:mm a');
   AdminNewOrderAlertController? _alertController;
+  AdminFailedDeliveryAlertController? _failedDeliveryController;
   Timer? _socketReloadDebounce;
 
   final List<Map<String, String?>> _statusFilters = const [
@@ -57,6 +60,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupNewOrderAlerts();
       _setupSocketListeners();
+      _loadFailedDeliveryTasks();
     });
   }
 
@@ -66,7 +70,9 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     _socketService.offNewOrder();
     _socketService.offAdminOrderUpdate();
     _socketService.offAssignmentFailed();
+    _socketService.offFailedDelivery();
     _alertController?.dispose();
+    _failedDeliveryController?.dispose();
     super.dispose();
   }
 
@@ -80,6 +86,110 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       overlayState: overlay,
       onTap: (_) => _debouncedReloadOrders(),
     );
+
+    _failedDeliveryController = AdminFailedDeliveryAlertController(
+      overlayState: overlay,
+      onTap: _showFailedDeliveryResolution,
+      onDismissed: (_) {},
+    );
+  }
+
+  Future<void> _loadFailedDeliveryTasks() async {
+    try {
+      final tasks = await _adminService.getOpenAdminTasks(type: 'failed_delivery');
+      if (!mounted) return;
+      final alerts = tasks
+          .map(FailedDeliveryAlertData.fromTask)
+          .where((a) => a.orderId > 0)
+          .toList();
+      _failedDeliveryController?.syncFromTasks(alerts);
+    } catch (e) {
+      debugPrint('Failed to load admin tasks: $e');
+    }
+  }
+
+  void _handleFailedDeliverySocket(dynamic data) {
+    if (!mounted) return;
+    final alert = FailedDeliveryAlertData.fromSocket(data);
+    if (alert.orderId == 0) return;
+    _failedDeliveryController?.show(alert);
+    _debouncedReloadOrders();
+    _loadFailedDeliveryTasks();
+  }
+
+  Future<void> _showFailedDeliveryResolution(FailedDeliveryAlertData alert) async {
+    if (alert.awaitingReturn) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Order #${alert.orderId} — waiting for rider to return to store.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final resolution = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Resolve Order #${alert.orderId}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Reason: ${alert.reasonLabel}'),
+            if (alert.returnCondition != null) ...[
+              const SizedBox(height: 8),
+              Text('Condition: ${alert.returnCondition!.replaceAll('_', ' ')}'),
+            ],
+            const SizedBox(height: 16),
+            const Text('Choose how to resolve this failed delivery:'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'REDELIVER'),
+            child: const Text('Redeliver'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'REFUND'),
+            child: const Text('Refund'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'DISCARD'),
+            child: const Text('Discard'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+
+    if (resolution == null) return;
+
+    try {
+      await _adminService.resolveFailedDelivery(
+        alert.orderId.toString(),
+        resolution,
+      );
+      _failedDeliveryController?.remove(alert.orderId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Order #${alert.orderId} resolved ($resolution)')),
+        );
+        _loadOrders();
+        _loadFailedDeliveryTasks();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to resolve: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _setupSocketListeners() async {
@@ -87,6 +197,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     _socketService.onNewOrder(_handleNewOrder);
     _socketService.onAdminOrderUpdate(_onOrderUpdatedSocketEvent);
     _socketService.onAssignmentFailed(_handleAssignmentFailed);
+    _socketService.onFailedDelivery(_handleFailedDeliverySocket);
   }
 
   void _handleAssignmentFailed(dynamic data) {
@@ -891,6 +1002,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                   ],
                 ),
               ),
+            AdminOrderTimelineSection(orderId: '${order['id'] ?? ''}'),
             Wrap(
               spacing: 8,
               runSpacing: 8,

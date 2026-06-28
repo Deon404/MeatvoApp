@@ -1,5 +1,6 @@
 const { reserveStockForPaidOrder } = require('./payment-stock');
 const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
+const { instrumentOrderConfirmed } = require('../../utils/operationalEvents.util');
 const { logger } = require('../../utils/logger');
 
 const UNCONFIRMED_ORDER_STATUSES = new Set(['PLACED', 'PAYMENT_PENDING']);
@@ -34,6 +35,11 @@ const confirmOrderAfterPayment = async (client, { orderId, customerId, io }) => 
       customerPhone: order.customer_phone,
       totalAmount: Number(order.total_amount),
       createdAt: new Date().toISOString(),
+    });
+    instrumentOrderConfirmed(io, {
+      orderId: order.id,
+      actorRole: 'system',
+      metadata: { source: 'payment_success' },
     });
   }
 

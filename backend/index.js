@@ -31,7 +31,6 @@ const firebaseRoutes = require('./src/modules/firebase/firebase.routes');
 const paymentsRoutes = require('./src/modules/payments/payments.routes');
 const adminRoutes = require('./src/modules/admin/admin.routes');
 const deliveryRoutes = require('./src/modules/delivery/delivery.routes');
-const staffRoutes = require('./src/modules/staff/staff.routes');
 const storeRoutes = require('./src/modules/settings/store.routes');
 const healthRoutes = require('./src/routes/health');
 const debugRoutes = require('./src/routes/debug.routes');
@@ -250,8 +249,6 @@ app.use('/api/admin', adminRateLimiter, adminRoutes);
 app.use('/api/v1/admin', adminRateLimiter, adminRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/v1/delivery', deliveryRoutes);
-app.use('/api/staff', staffRoutes);
-app.use('/api/v1/staff', staffRoutes);
 app.use('/api/firebase', firebaseRoutes);
 app.use('/api/store', storeRoutes);   // Public: /status, /check-delivery
 
@@ -302,10 +299,26 @@ const HOST = process.env.HOST || '0.0.0.0';
 const server = http.createServer(app);
 const socketIo = require('./src/socket/socket').initSocket(server);
 const { startPaymentReconciliation } = require('./src/services/payment-reconciliation.service');
+const { monitorPackAge } = require('./src/services/packAge.service');
+const { monitorPeakKitchenQueue } = require('./src/services/operationalEvent.service');
+const { startCapacitySuggestionMonitor } = require('./src/services/capacitySuggestion.service');
+const { PACK_AGE } = require('./src/config/businessRules');
 
 // Make io available globally for controllers
 app.set('io', socketIo);
 startPaymentReconciliation(socketIo);
+
+const packAgeMonitor = setInterval(() => {
+  monitorPackAge(socketIo).catch((err) => {
+    logger.warn('pack_age_monitor_tick_failed', { message: err?.message });
+  });
+  monitorPeakKitchenQueue(socketIo).catch((err) => {
+    logger.warn('peak_queue_monitor_tick_failed', { message: err?.message });
+  });
+}, PACK_AGE.monitorIntervalMs);
+packAgeMonitor.unref();
+
+startCapacitySuggestionMonitor(socketIo);
 
 (async () => {
   try {

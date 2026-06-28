@@ -7,10 +7,12 @@ class AssignmentFailedAlertData {
   const AssignmentFailedAlertData({
     required this.orderId,
     required this.attempts,
+    this.taskId,
   });
 
   final int orderId;
   final int attempts;
+  final int? taskId;
 
   String get displayText =>
       'Order #$orderId has no available rider after $attempts attempts';
@@ -21,6 +23,20 @@ class AssignmentFailedAlertData {
     return AssignmentFailedAlertData(
       orderId: _parseInt(map['orderId'] ?? map['order_id'] ?? map['id']),
       attempts: _parseInt(map['attempts']) == 0 ? 3 : _parseInt(map['attempts']),
+      taskId: _parseIntOrNull(map['taskId']),
+    );
+  }
+
+  factory AssignmentFailedAlertData.fromTask(Map<String, dynamic> task) {
+    final payload = task['payload'] is Map
+        ? Map<String, dynamic>.from(task['payload'] as Map)
+        : <String, dynamic>{};
+    return AssignmentFailedAlertData(
+      orderId: _parseInt(task['order_id'] ?? task['orderId']),
+      attempts: _parseInt(payload['attempts']) == 0
+          ? 3
+          : _parseInt(payload['attempts']),
+      taskId: _parseIntOrNull(task['id']),
     );
   }
 
@@ -28,6 +44,11 @@ class AssignmentFailedAlertData {
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static int? _parseIntOrNull(dynamic value) {
+    final parsed = _parseInt(value);
+    return parsed == 0 ? null : parsed;
   }
 }
 
@@ -39,12 +60,12 @@ class AdminAssignmentFailedAlertController {
   AdminAssignmentFailedAlertController({
     required this.overlayState,
     required this.onTap,
-    this.onDismissed,
+    this.onResolve,
   });
 
   final OverlayState overlayState;
   final void Function(AssignmentFailedAlertData alert) onTap;
-  final void Function(int orderId)? onDismissed;
+  final Future<void> Function(AssignmentFailedAlertData alert)? onResolve;
 
   static const _bannerColor = AppColors.warning;
   static const _slideDuration = Duration(milliseconds: 300);
@@ -60,11 +81,25 @@ class AdminAssignmentFailedAlertController {
     _rebuildOverlay();
   }
 
+  void syncFromTasks(List<AssignmentFailedAlertData> alerts) {
+    if (_disposed) return;
+    _activeAlerts
+      ..clear()
+      ..addEntries(alerts.map((a) => MapEntry(a.orderId, a)));
+    _rebuildOverlay();
+  }
+
+  Future<void> resolve(AssignmentFailedAlertData alert) async {
+    if (_disposed) return;
+    await onResolve?.call(alert);
+    _activeAlerts.remove(alert.orderId);
+    _rebuildOverlay();
+  }
+
   void dismiss(int orderId) {
     if (_disposed) return;
     if (!_activeAlerts.containsKey(orderId)) return;
     _activeAlerts.remove(orderId);
-    onDismissed?.call(orderId);
     _rebuildOverlay();
   }
 
@@ -88,7 +123,7 @@ class AdminAssignmentFailedAlertController {
         bannerColor: _bannerColor,
         slideDuration: _slideDuration,
         onTap: onTap,
-        onDismiss: dismiss,
+        onResolve: (alert) => resolve(alert),
       ),
     );
 
@@ -102,14 +137,14 @@ class _AssignmentFailedAlertStack extends StatelessWidget {
     required this.bannerColor,
     required this.slideDuration,
     required this.onTap,
-    required this.onDismiss,
+    required this.onResolve,
   });
 
   final List<AssignmentFailedAlertData> alerts;
   final Color bannerColor;
   final Duration slideDuration;
   final void Function(AssignmentFailedAlertData alert) onTap;
-  final void Function(int orderId) onDismiss;
+  final void Function(AssignmentFailedAlertData alert) onResolve;
 
   @override
   Widget build(BuildContext context) {
@@ -133,7 +168,7 @@ class _AssignmentFailedAlertStack extends StatelessWidget {
                     bannerColor: bannerColor,
                     slideDuration: slideDuration,
                     onTap: () => onTap(alert),
-                    onDismiss: () => onDismiss(alert.orderId),
+                    onDismiss: () => onResolve(alert),
                   ),
                 ),
             ],
@@ -241,7 +276,7 @@ class _AssignmentFailedAlertBannerState
               IconButton(
                 onPressed: widget.onDismiss,
                 icon: const Icon(Icons.close, color: Colors.white, size: 20),
-                tooltip: 'Dismiss',
+                tooltip: 'Resolve',
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),

@@ -39,7 +39,7 @@ router.post('/', protect, orderCreateRateLimiter, validate(createOrderSchema), c
 router.get('/', protect, validate(getOrdersSchema), getOrders);
 router.get('/:id', protect, validate(getOrderSchema), getOrder);
 router.put('/:id/cancel', protect, validate(cancelOrderSchema), cancelOrder);
-router.put('/:id/status', protect, rbac(ROLES.ADMIN, ROLES.STAFF), validate(updateOrderStatusSchema), updateOrderStatus);
+router.put('/:id/status', protect, rbac(ROLES.ADMIN), validate(updateOrderStatusSchema), updateOrderStatus);
 
 
 module.exports = router;

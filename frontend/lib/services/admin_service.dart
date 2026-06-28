@@ -8,6 +8,8 @@ import '../utils/media_url_resolver.dart';
 import 'api_service.dart';
 import 'error_tracking_service.dart';
 import 'product_service.dart';
+import 'store_status_service.dart' show StoreAcceptanceMode, StoreAcceptanceModeX;
+import '../models/admin_ops_metrics.dart';
 
 /// Admin service — custom Node.js backend (role: ADMIN required)
 final adminServiceProvider = Provider<AdminService>((ref) {
@@ -1234,6 +1236,33 @@ class AdminService {
     }
   }
 
+  Future<CapacitySuggestionResponse?> getCapacitySuggestion() async {
+    try {
+      final data = _extractMap(
+        await _api.get(ApiAdminPaths.capacitySuggestion),
+        'Failed to load capacity suggestion',
+      );
+      return CapacitySuggestionResponse.fromJson(data);
+    } on DioException catch (e) {
+      throw Exception(
+        _dioErrorMessage(e, fallback: 'Failed to load capacity suggestion'),
+      );
+    }
+  }
+
+  Future<void> dismissCapacitySuggestion({int minutes = 30}) async {
+    try {
+      await _api.post(
+        ApiAdminPaths.capacitySuggestionDismiss,
+        data: {'minutes': minutes},
+      );
+    } on DioException catch (e) {
+      throw Exception(
+        _dioErrorMessage(e, fallback: 'Failed to dismiss suggestion'),
+      );
+    }
+  }
+
   // ── Rider assignment (stub — not a dedicated endpoint in spec) ────────────
 
   Future<Map<String, dynamic>> getOptimizedDeliveryRoute({String? date}) async {
@@ -1335,6 +1364,80 @@ class AdminService {
           'Failed to assign rider: ${e.response?.data?['message'] ?? e.message}');
     } catch (e) {
       throw Exception('Failed to assign rider: $e');
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> getOpenAdminTasks({String? type}) async {
+    try {
+      final res = await _api.get(
+        ApiAdminPaths.adminTasks,
+        queryParameters: type != null ? {'type': type} : null,
+      );
+      final data = res.data;
+      if (data is Map && data['success'] == false) {
+        throw Exception(data['message'] ?? 'Failed to load admin tasks');
+      }
+      final payload = data is Map ? data['data'] : data;
+      final tasks = payload is Map ? payload['tasks'] : null;
+      if (tasks is List) {
+        return tasks.map((t) => Map<String, dynamic>.from(t as Map)).toList();
+      }
+      return [];
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to load admin tasks: ${e.response?.data?['message'] ?? e.message}');
+    }
+  }
+
+  Future<void> resolveFailedDelivery(String orderId, String resolution) async {
+    try {
+      final res = await _api.post(
+        ApiAdminPaths.resolveFailedDelivery(orderId),
+        data: {'resolution': resolution},
+      );
+      if (res.data['success'] != true) {
+        throw Exception(res.data['message'] ?? 'Failed to resolve failed delivery');
+      }
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to resolve: ${e.response?.data?['message'] ?? e.message}');
+    } catch (e) {
+      throw Exception('Failed to resolve: $e');
+    }
+  }
+
+  /// Chronological operational timeline for one order (newest first).
+  Future<List<Map<String, dynamic>>> getOrderTimeline(String orderId) async {
+    try {
+      final res = await _api.get(ApiAdminPaths.orderTimeline(orderId));
+      final data = _extractMap(res, 'Failed to load order timeline');
+      final events = data['events'];
+      if (events is List) {
+        return List<Map<String, dynamic>>.from(
+          events.map((e) => Map<String, dynamic>.from(e as Map)),
+        );
+      }
+      return [];
+    } on DioException catch (e) {
+      throw Exception(
+        _dioErrorMessage(e, fallback: 'Failed to load order timeline'),
+      );
+    }
+  }
+
+  Future<void> resolveAssignmentFailure(String orderId) async {
+    try {
+      final res = await _api.post(
+        ApiAdminPaths.resolveAssignmentFailure(orderId),
+      );
+      if (res.data['success'] != true) {
+        throw Exception(res.data['message'] ?? 'Failed to resolve assignment failure');
+      }
+    } on DioException catch (e) {
+      throw Exception(
+          'Failed to resolve: ${e.response?.data?['message'] ?? e.message}');
+    } catch (e) {
+      throw Exception('Failed to resolve: $e');
     }
   }
 
@@ -1632,5 +1735,163 @@ class AdminService {
       ),
       'Failed to load analytics',
     );
+  }
+
+  Future<AdminOpsMetrics> getOpsMetrics({
+    String period = '7d',
+    String granularity = 'day',
+  }) async {
+    final data = _extractMap(
+      await _api.get(
+        ApiAdminPaths.opsMetrics,
+        queryParameters: {
+          'period': period,
+          'granularity': granularity,
+        },
+      ),
+      'Failed to load operational metrics',
+    );
+    return AdminOpsMetrics.fromJson(data);
+  }
+}
+
+class CapacitySuggestionSignals {
+  const CapacitySuggestionSignals({
+    this.queueCount = 0,
+    this.confirmedRecent = 0,
+    this.activeRiders = 0,
+    this.availableRiders = 0,
+    this.riderCapacityUsed = 0,
+    this.currentMode,
+  });
+
+  final int queueCount;
+  final int confirmedRecent;
+  final int activeRiders;
+  final int availableRiders;
+  final double riderCapacityUsed;
+  final String? currentMode;
+
+  factory CapacitySuggestionSignals.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const CapacitySuggestionSignals();
+    return CapacitySuggestionSignals(
+      queueCount: _CapacitySuggestionJson.asInt(json['queueCount']),
+      confirmedRecent: _CapacitySuggestionJson.asInt(json['confirmedRecent']),
+      activeRiders: _CapacitySuggestionJson.asInt(json['activeRiders']),
+      availableRiders: _CapacitySuggestionJson.asInt(json['availableRiders']),
+      riderCapacityUsed: _CapacitySuggestionJson.asDouble(json['riderCapacityUsed']),
+      currentMode: json['currentMode']?.toString(),
+    );
+  }
+}
+
+class CapacitySuggestion {
+  const CapacitySuggestion({
+    required this.suggestedMode,
+    required this.currentMode,
+    required this.severity,
+    required this.reason,
+    required this.signals,
+    this.id,
+    this.createdAt,
+  });
+
+  final int? id;
+  final String suggestedMode;
+  final String currentMode;
+  final String severity;
+  final String reason;
+  final CapacitySuggestionSignals signals;
+  final String? createdAt;
+
+  String get headline {
+    switch (suggestedMode) {
+      case 'limited_capacity':
+        return 'Switch to Limited Capacity';
+      case 'accepting':
+        return 'Switch to Accepting Orders';
+      default:
+        return 'Store mode recommendation';
+    }
+  }
+
+  List<String> get reasonBullets {
+    final parts = reason.split(',').where((p) => p.trim().isNotEmpty);
+    return parts.map((part) {
+      switch (part.trim()) {
+        case 'dispatch_queue_high':
+          return 'Dispatch Queue: ${signals.queueCount}';
+        case 'confirmed_orders_high':
+          return '${signals.confirmedRecent} orders confirmed in last 15 minutes';
+        case 'all_riders_at_capacity':
+          return 'Active Riders Full';
+        case 'no_rider_queue_growing':
+          return 'No available riders while queue is growing';
+        case 'pressure_cleared':
+          return 'Operational pressure has cleared';
+        default:
+          return part.replaceAll('_', ' ');
+      }
+    }).toList();
+  }
+
+  StoreAcceptanceMode get suggestedAcceptanceMode =>
+      StoreAcceptanceModeX.fromApi(suggestedMode, isOpen: true);
+
+  factory CapacitySuggestion.fromJson(Map<String, dynamic> json) {
+    final signalsRaw = json['signals'];
+    return CapacitySuggestion(
+      id: _CapacitySuggestionJson.asIntOrNull(json['id']),
+      suggestedMode: json['suggestedMode']?.toString() ?? '',
+      currentMode: json['currentMode']?.toString() ?? '',
+      severity: json['severity']?.toString() ?? 'INFO',
+      reason: json['reason']?.toString() ?? '',
+      signals: CapacitySuggestionSignals.fromJson(
+        signalsRaw is Map ? Map<String, dynamic>.from(signalsRaw) : null,
+      ),
+      createdAt: json['createdAt']?.toString(),
+    );
+  }
+}
+
+class CapacitySuggestionResponse {
+  const CapacitySuggestionResponse({
+    this.suggestion,
+    this.active = false,
+    this.dismissedUntil,
+  });
+
+  final CapacitySuggestion? suggestion;
+  final bool active;
+  final String? dismissedUntil;
+
+  factory CapacitySuggestionResponse.fromJson(Map<String, dynamic> json) {
+    final suggestionRaw = json['suggestion'];
+    return CapacitySuggestionResponse(
+      suggestion: suggestionRaw is Map
+          ? CapacitySuggestion.fromJson(Map<String, dynamic>.from(suggestionRaw))
+          : null,
+      active: json['active'] == true,
+      dismissedUntil: json['dismissedUntil']?.toString(),
+    );
+  }
+}
+
+abstract final class _CapacitySuggestionJson {
+  static int asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static int? asIntOrNull(dynamic value) {
+    final parsed = asInt(value);
+    return parsed == 0 && value == null ? null : parsed;
+  }
+
+  static double asDouble(dynamic value) {
+    if (value is double) return value;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 }

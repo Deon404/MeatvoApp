@@ -83,7 +83,9 @@ class StoreClosedSheet extends StatelessWidget {
                 ),
                 SizedBox(height: mv.spacing.lg),
                 Text(
-                  'Store is closed',
+                  status.isAcceptingOrders
+                      ? 'Limited Capacity'
+                      : 'Not Accepting Orders',
                   style: textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w700,
                     color: mv.textPrimary,
@@ -92,7 +94,9 @@ class StoreClosedSheet extends StatelessWidget {
                 ),
                 SizedBox(height: mv.spacing.sm),
                 Text(
-                  status.displayClosedMessage,
+                  status.isAcceptingOrders
+                      ? (status.displayCapacityMessage ?? '')
+                      : status.displayClosedMessage,
                   style: textTheme.bodyMedium?.copyWith(
                     color: mv.textSecondary,
                     height: 1.5,

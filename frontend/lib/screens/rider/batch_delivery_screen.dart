@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../config/store_config.dart';
@@ -34,7 +35,7 @@ class _BatchStop {
 }
 
 /// Multi-stop batch delivery screen — Licious-style map + bottom sheet.
-class BatchDeliveryScreen extends StatefulWidget {
+class BatchDeliveryScreen extends ConsumerStatefulWidget {
   final List<String> orderIds;
 
   const BatchDeliveryScreen({
@@ -43,16 +44,16 @@ class BatchDeliveryScreen extends StatefulWidget {
   });
 
   @override
-  State<BatchDeliveryScreen> createState() => _BatchDeliveryScreenState();
+  ConsumerState<BatchDeliveryScreen> createState() =>
+      _BatchDeliveryScreenState();
 }
 
-class _BatchDeliveryScreenState extends State<BatchDeliveryScreen> {
+class _BatchDeliveryScreenState extends ConsumerState<BatchDeliveryScreen> {
   static const Color _primary = Color(0xFFC8102E);
   static const Color _greyText = Color(0xFF6B6B6B);
   static const Color _darkText = Color(0xFF1A1A1A);
 
   final RiderService _riderService = RiderService();
-  final RiderLocationService _locationService = RiderLocationService();
   final MapsService _mapsService = MapsService();
   final NavigationService _navigationService = NavigationService();
   final ApiService _api = ApiService();
@@ -70,6 +71,9 @@ class _BatchDeliveryScreenState extends State<BatchDeliveryScreen> {
   Set<Marker> _markers = {};
   Set<Polyline> _polylines = {};
   LatLng? _currentLocation;
+
+  RiderLocationService get _locationService =>
+      ref.read(riderLocationServiceProvider);
 
   @override
   void initState() {
@@ -836,9 +840,91 @@ class _BatchDeliveryScreenState extends State<BatchDeliveryScreen> {
               ),
             ],
           ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isProcessing ? null : _markCurrentFailedDelivery,
+              icon: const Icon(Icons.error_outline, size: 16),
+              label: const Text('Failed Delivery'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFF39C12),
+                side: const BorderSide(color: Color(0xFFF39C12)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  Future<void> _markCurrentFailedDelivery() async {
+    final stop = _currentStop;
+    if (stop == null || _isProcessing) return;
+
+    const reasons = <Map<String, String>>[
+      {'value': 'CUSTOMER_UNREACHABLE', 'label': 'Customer Unreachable'},
+      {'value': 'WRONG_ADDRESS', 'label': 'Wrong Address'},
+      {'value': 'CUSTOMER_REFUSED', 'label': 'Customer Refused'},
+    ];
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Failed Delivery'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: reasons
+              .map(
+                (r) => ListTile(
+                  title: Text(r['label']!),
+                  onTap: () => Navigator.pop(context, r['value']),
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+    if (selected == null) return;
+
+    setState(() => _isProcessing = true);
+    try {
+      await _riderService.markFailedDelivery(stop.orderId, selected);
+      if (!mounted) return;
+
+      setState(() {
+        _delivered[_currentStopIndex] = true;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Failed delivery recorded. Return package to store from order details.',
+          ),
+        ),
+      );
+
+      if (!_delivered.contains(false)) {
+        _showAllDeliveredDialog();
+      } else {
+        setState(() {
+          _currentStopIndex = _delivered.indexWhere((d) => !d);
+        });
+        _syncLocationTracking();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isProcessing = false);
+    }
   }
 
   Widget _buildOtherStopsList() {

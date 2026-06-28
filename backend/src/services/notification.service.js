@@ -109,7 +109,6 @@ async function sendOrderStateNotifications({
       customer: null,
       rider: null,
       admin: null,
-      staff: null,
     };
 
     if (notifications.customer && customerId) {
@@ -173,33 +172,6 @@ async function sendOrderStateNotifications({
       }
     }
 
-    if (notifications.staff) {
-      const { rows: staffUsers } = await query(
-        "SELECT id FROM users WHERE role = 'staff'"
-      );
-
-      for (const staffUser of staffUsers) {
-        const staffNotif = await sendNotification({
-          userId: staffUser.id,
-          role: 'staff',
-          type: 'kitchen_new_order',
-          title: notifications.staff.title,
-          body: notifications.staff.body,
-          data: { orderId, state: newState, type: 'kitchen_new_order' },
-          priority: notifications.staff.priority,
-          io,
-        });
-
-        if (!results.staff) {
-          results.staff = staffNotif;
-        }
-      }
-
-      if (io) {
-        emitNotification(io, 'staff_room', results.staff);
-      }
-    }
-
     return results;
   } catch (error) {
     logger.error('order_state_notifications_failed', {
@@ -236,7 +208,6 @@ async function sendCustomNotification({
       customer: `customer_${userId}`,
       rider: `delivery_${userId}`,
       admin: 'admin_room',
-      staff: 'staff_room',
     };
     const room = roomMap[role];
     emitNotification(io, room, notification);
@@ -373,39 +344,6 @@ async function sendLowStockAlert({ productId, productName, currentStock, io }) {
   }
 }
 
-async function notifyStaffNewOrder({ orderId, totalAmount = null, io = null }) {
-  const title = 'New Kitchen Order';
-  const body =
-    totalAmount != null
-      ? `Order #${orderId} — ₹${Number(totalAmount).toFixed(0)} ready to prepare`
-      : `Order #${orderId} is ready to prepare`;
-
-  const { rows: staffUsers } = await query(
-    "SELECT id FROM users WHERE role = 'staff'"
-  );
-
-  let firstNotif = null;
-  for (const staffUser of staffUsers) {
-    const notif = await sendNotification({
-      userId: staffUser.id,
-      role: 'staff',
-      type: 'kitchen_new_order',
-      title,
-      body,
-      data: { orderId, type: 'kitchen_new_order' },
-      priority: 'high',
-      io,
-    });
-    if (!firstNotif) firstNotif = notif;
-  }
-
-  if (io && firstNotif) {
-    emitNotification(io, 'staff_room', firstNotif);
-  }
-
-  return firstNotif;
-}
-
 async function sendRiderOfflineAlert({ riderUserId, riderName, orderId, io }) {
   const { rows: admins } = await query("SELECT id FROM users WHERE role = 'admin'");
 
@@ -433,5 +371,4 @@ module.exports = {
   sendRiderNearbyNotification,
   sendLowStockAlert,
   sendRiderOfflineAlert,
-  notifyStaffNewOrder,
 };

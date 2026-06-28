@@ -6,7 +6,7 @@ import '../../widgets/admin/admin_navigation_drawer.dart';
 import 'admin_user_detail_screen.dart';
 
 /// Admin Users Management Screen
-/// Allows viewing, searching, filtering, and managing users (customers, riders, staff, admins)
+/// Allows viewing, searching, filtering, and managing users (customers, riders, admins)
 class AdminUsersScreen extends StatefulWidget {
   const AdminUsersScreen({super.key});
 
@@ -20,7 +20,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
   List<Map<String, dynamic>> _users = [];
   bool _isLoading = true;
-  String? _selectedRole; // null = all, 'customer', 'rider', 'staff', 'admin'
+  String? _selectedRole; // null = all, 'customer', 'rider', 'admin'
   bool? _showOnlyActive; // null = all, true = active only, false = inactive only
   String? _processingUserId;
 
@@ -155,8 +155,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         return Colors.blue;
       case 'customer':
         return AppColors.success;
-      case 'staff':
-        return AppColors.warning;
       default:
         return AppColors.surface;
     }
@@ -176,8 +174,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
         return 'Rider';
       case 'customer':
         return 'Customer';
-      case 'staff':
-        return 'Staff';
       default:
         return 'Unknown';
     }
@@ -226,7 +222,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 const SizedBox(height: 16),
                 _roleOption(ctx, 'customer', 'Customer', Icons.person, currentRole),
                 _roleOption(ctx, 'delivery_partner', 'Rider', Icons.delivery_dining, currentRole),
-                _roleOption(ctx, 'staff', 'Staff', Icons.restaurant_menu, currentRole),
                 _roleOption(ctx, 'admin', 'Admin', Icons.admin_panel_settings, currentRole),
               ],
             ),
@@ -374,7 +369,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                           DropdownMenuItem(value: null, child: Text('All Roles')),
                           DropdownMenuItem(value: 'customer', child: Text('Customer')),
                           DropdownMenuItem(value: 'rider', child: Text('Rider')),
-                          DropdownMenuItem(value: 'staff', child: Text('Staff')),
                           DropdownMenuItem(value: 'admin', child: Text('Admin')),
                         ],
                         onChanged: (value) {

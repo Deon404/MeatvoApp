@@ -10,7 +10,6 @@ const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const { paymentLogger } = require('./secure-logger');
 const { reserveStockForPaidOrder } = require('./payment-stock');
-const { notifyStaffNewOrder } = require('../../services/notification.service');
 const { cancelOrderForPaymentFailure } = require('../../services/payment-reconciliation.service');
 const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
 const cashfreeController = require('./cashfree.controller');
@@ -553,12 +552,6 @@ const handlePhonePeWebhook = asyncHandler(async (req, res) => {
             createdAt: new Date().toISOString(),
           };
           io.to('admin_room').emit('order:new', payload);
-          io.to('staff_room').emit('order:new', payload);
-          await notifyStaffNewOrder({
-            orderId: payment.order_id,
-            totalAmount: Number(payment.total_amount || 0),
-            io,
-          });
         }
 
         // Check for existing assignment to prevent double-assignment

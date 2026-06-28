@@ -13,10 +13,6 @@ bool isDeliveryPartnerRole(String? role) {
       normalized == 'delivery_partner';
 }
 
-bool isStaffRole(String? role) {
-  return role?.toLowerCase().trim() == 'staff';
-}
-
 String roleAccessDeniedMessage(String _) {
   return 'This section is not available.';
 }
@@ -57,11 +53,22 @@ Future<void> handleRoleAccessDenied(RoleAccessException error) async {
 
 /// Returns false and redirects when the user is not a delivery partner.
 Future<bool> ensureDeliveryPartnerAccess(BuildContext context) async {
-  final user = await AuthService().getMe();
+  final auth = AuthService();
+
+  // Fast path: trust cached session so the rider home screen is not blocked on
+  // a slow /auth/me round-trip (Orders/Profile tabs never call getMe).
+  final cached = await auth.currentUser;
+  if (cached != null && isDeliveryPartnerRole(cached.role)) {
+    return true;
+  }
+
+  final user = await auth.getMe();
   if (user == null) {
-    await AuthService().signOut();
+    await auth.signOut();
     if (context.mounted) {
-      await redirectToRoleHome(message: 'Session expired. Please sign in again.');
+      await redirectToRoleHome(
+        message: 'Session expired. Please sign in again.',
+      );
     }
     return false;
   }
@@ -75,27 +82,6 @@ Future<bool> ensureDeliveryPartnerAccess(BuildContext context) async {
     return true;
   } catch (_) {
     // No approved delivery partner profile.
-  }
-
-  if (context.mounted) {
-    await redirectToRoleHome(role: user.role);
-  }
-  return false;
-}
-
-/// Returns false and redirects when the user is not kitchen staff.
-Future<bool> ensureStaffAccess(BuildContext context) async {
-  final user = await AuthService().getMe();
-  if (user == null) {
-    await AuthService().signOut();
-    if (context.mounted) {
-      await redirectToRoleHome(message: 'Session expired. Please sign in again.');
-    }
-    return false;
-  }
-
-  if (isStaffRole(user.role)) {
-    return true;
   }
 
   if (context.mounted) {

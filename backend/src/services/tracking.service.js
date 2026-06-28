@@ -10,20 +10,15 @@ const { sendRiderNearbyNotification } = require('./notification.service');
 const { ORDER_STATES, transitionOrderState } = require('./orderLifecycle.service');
 const { 
   handleRiderLocationUpdate, 
-  checkRiderNearby 
+  checkRiderNearby,
+  calculateETA: calculateLiveETA,
+  resolveBatchQueueContext,
 } = require('./eta.service');
+const { refreshPartnerOperationalState } = require('../utils/deliveryPartner.util');
+const { TRACKING } = require('../config/businessRules');
 
-// Average speed in km/h for different vehicle types
-const VEHICLE_SPEEDS = {
-  bike: 25,
-  scooter: 30,
-  bicycle: 15,
-  car: 35,
-  default: 25,
-};
-
-// Nearby distance threshold in km
-const NEARBY_THRESHOLD_KM = 0.5; // 500 meters
+const VEHICLE_SPEEDS = TRACKING.vehicleSpeedsKmh;
+const NEARBY_THRESHOLD_KM = TRACKING.nearbyThresholdKm;
 
 // Store last known rider positions
 const riderPositions = new Map();
@@ -38,9 +33,9 @@ function calculateETA(distanceKm, vehicleType = 'default') {
   const timeHours = distanceKm / speed;
   
   // Convert to minutes and add buffer time (20%)
-  const timeMinutes = Math.ceil(timeHours * 60 * 1.2);
+  const timeMinutes = Math.ceil(timeHours * 60 * TRACKING.etaBufferFactor);
   
-  return Math.max(5, timeMinutes); // Minimum 5 minutes
+  return Math.max(TRACKING.minEtaMinutes, timeMinutes);
 }
 
 /**
@@ -128,8 +123,16 @@ async function updateRiderLocation({
       throw new Error('Delivery partner not found');
     }
 
+    const deliveryPartnerId = Number(dpRows[0].id);
+
     // Use advanced ETA service to recalculate for all active orders
     await handleRiderLocationUpdate(riderUserId, { lat, lng }, io);
+
+    refreshPartnerOperationalState({
+      deliveryPartnerId,
+      io,
+      reason: 'location_update',
+    }).catch(() => {});
 
     // Check if rider is nearby any order (only for assigned orders)
     let verifiedOrderId = orderId;
@@ -164,7 +167,7 @@ async function updateRiderLocation({
             orderId: verifiedOrderId,
             customerId: orderRows[0].customer_id,
             riderName,
-            eta: 5, // Nearby = ~5 minutes
+            eta: TRACKING.nearbyNotificationEtaMinutes,
             io,
           });
         }
@@ -233,7 +236,7 @@ async function getRiderLocation(riderUserId) {
     if (cached) {
       const age = Date.now() - new Date(cached.timestamp).getTime();
       // Return cached if less than 30 seconds old
-      if (age < 30000) {
+      if (age < TRACKING.positionCacheFreshMs) {
         return cached;
       }
     }
@@ -273,9 +276,9 @@ async function getOrderTrackingInfo(orderId) {
   try {
     // Get order details
     const { rows: orderRows } = await query(
-      `SELECT o.id, o.customer_id, o.status, o.address, o.created_at,
-              oa.delivery_partner_id, oa.assigned_at,
-              dp.current_lat, dp.current_lng, dp.vehicle_type,
+      `SELECT o.id, o.customer_id, o.status, o.address, o.created_at, o.eta_minutes,
+              oa.delivery_partner_id, oa.assigned_at, oa.batch_ids,
+              dp.current_lat, dp.current_lng, dp.vehicle_type, dp.user_id AS rider_user_id,
               u.name as rider_name, u.phone as rider_phone
        FROM orders o
        LEFT JOIN order_assignments oa ON oa.order_id = o.id
@@ -328,8 +331,41 @@ async function getOrderTrackingInfo(orderId) {
       const distance = await getDistanceToCustomer(riderLat, riderLng, orderId);
       if (distance !== null) {
         tracking.distance = distance.toFixed(2);
-        tracking.eta = calculateETA(distance, order.vehicle_type);
+        const riderLocation = { lat: riderLat, lng: riderLng };
+        const batchContext = await resolveBatchQueueContext(orderId, riderLocation);
+
+        if (batchContext && !batchContext.isFirstStop) {
+          tracking.eta = batchContext.adjustedETA;
+          tracking.queuePosition = batchContext.queuePosition;
+          tracking.stopsRemaining = batchContext.stopsRemaining;
+          tracking.adjustedETA = batchContext.adjustedETA;
+          tracking.message = batchContext.message;
+          tracking.isBatchEta = true;
+        } else {
+          const address =
+            typeof order.address === 'string'
+              ? JSON.parse(order.address)
+              : order.address;
+          const etaData = await calculateLiveETA({
+            riderLat,
+            riderLng,
+            deliveryLat: parseFloat(address?.lat),
+            deliveryLng: parseFloat(address?.lng),
+            riderUserId: order.rider_user_id,
+          });
+          tracking.eta = etaData.etaMinutes;
+          if (batchContext) {
+            tracking.queuePosition = batchContext.queuePosition;
+            tracking.stopsRemaining = batchContext.stopsRemaining;
+            tracking.adjustedETA = etaData.etaMinutes;
+            tracking.isBatchEta = true;
+          }
+        }
       }
+    }
+
+    if (order.eta_minutes != null && tracking.eta == null) {
+      tracking.eta = Number(order.eta_minutes);
     }
 
     return tracking;
@@ -354,7 +390,7 @@ async function checkRiderOnlineStatus(riderUserId, io) {
     }
 
     const age = Date.now() - new Date(position.timestamp).getTime();
-    const OFFLINE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    const OFFLINE_THRESHOLD = TRACKING.offlineThresholdMs;
 
     if (age > OFFLINE_THRESHOLD) {
       // Rider might be offline

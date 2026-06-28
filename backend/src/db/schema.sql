@@ -5,10 +5,16 @@ BEGIN;
 
 -- Enums
 DO $$ BEGIN
-  CREATE TYPE user_role AS ENUM ('admin', 'customer', 'delivery', 'staff');
+  CREATE TYPE user_role AS ENUM ('admin', 'customer', 'delivery');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
+
+-- Migration to remove staff role from existing databases:
+-- Run: ALTER TYPE user_role RENAME TO user_role_old;
+-- CREATE TYPE user_role AS ENUM ('admin', 'customer', 'delivery');
+-- ALTER TABLE users ALTER COLUMN role TYPE user_role USING role::text::user_role;
+-- DROP TYPE user_role_old;
 
 DO $$ BEGIN
   CREATE TYPE order_status AS ENUM (
@@ -146,16 +152,19 @@ CREATE TABLE IF NOT EXISTS delivery_partners (
 CREATE INDEX IF NOT EXISTS idx_delivery_partners_online ON delivery_partners(is_online);
 CREATE INDEX IF NOT EXISTS idx_delivery_partners_approved ON delivery_partners(approved);
 
--- Settings (theme/banner/etc)
+-- Settings (single-row operational + JSONB theme/banner keys)
 CREATE TABLE IF NOT EXISTS app_settings (
-  key TEXT PRIMARY KEY,
-  value JSONB NOT NULL,
+  id SERIAL PRIMARY KEY,
+  delivery_charge NUMERIC(10,2) DEFAULT 30,
+  min_order_amount NUMERIC(10,2) DEFAULT 150,
+  store_open BOOLEAN DEFAULT true,
+  store_acceptance_mode VARCHAR(32) DEFAULT 'accepting',
+  store_open_time TIME,
+  store_close_time TIME,
+  delivery_radius_km NUMERIC(5,2) DEFAULT 8,
+  value JSONB NOT NULL DEFAULT '{}'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS id SERIAL;
-ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS value JSONB NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- Backward-compatible column additions (safe for existing DBs)
 DO $$ BEGIN

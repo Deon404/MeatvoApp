@@ -1,6 +1,7 @@
 const { query } = require('./postgres');
 const { logger } = require('../utils/logger');
 const { repairAppSettingsSchema } = require('./appSettings');
+const { SCHEMA_DEFAULTS } = require('../config/businessRules');
 
 const ensureSchema = async () => {
   const steps = [
@@ -8,8 +9,15 @@ const ensureSchema = async () => {
       name: 'app_settings',
       sql: `
         CREATE TABLE IF NOT EXISTS app_settings (
-          key TEXT PRIMARY KEY,
-          value JSONB NOT NULL,
+          id SERIAL PRIMARY KEY,
+          delivery_charge NUMERIC(10,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryFee},
+          min_order_amount NUMERIC(10,2) DEFAULT ${SCHEMA_DEFAULTS.minOrderAmount},
+          store_open BOOLEAN DEFAULT true,
+          store_acceptance_mode VARCHAR(32) DEFAULT 'accepting',
+          store_open_time TIME,
+          store_close_time TIME,
+          delivery_radius_km NUMERIC(5,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryRadiusKm},
+          value JSONB NOT NULL DEFAULT '{}'::jsonb,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `,
@@ -27,11 +35,11 @@ const ensureSchema = async () => {
       sql: `
         CREATE TABLE IF NOT EXISTS store_settings (
           id SERIAL PRIMARY KEY,
-          delivery_radius_km DECIMAL(5,2) DEFAULT 5.0,
+          delivery_radius_km DECIMAL(5,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryRadiusKm},
           center_lat DECIMAL(10,7) DEFAULT 0,
           center_lng DECIMAL(10,7) DEFAULT 0,
-          min_order_amount DECIMAL(10,2) DEFAULT 150.0,
-          delivery_fee DECIMAL(10,2) DEFAULT 30.0,
+          min_order_amount DECIMAL(10,2) DEFAULT ${SCHEMA_DEFAULTS.minOrderAmount},
+          delivery_fee DECIMAL(10,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryFee},
           is_open BOOLEAN DEFAULT true,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )
@@ -45,7 +53,7 @@ const ensureSchema = async () => {
       name: 'store_settings.seed_defaults',
       sql: `
         INSERT INTO store_settings (delivery_radius_km, center_lat, center_lng, min_order_amount, delivery_fee, is_open)
-        SELECT 8.0, 23.6583, 86.1764, 150.0, 30.0, true
+        SELECT ${SCHEMA_DEFAULTS.deliveryRadiusKm}, ${SCHEMA_DEFAULTS.centerLat}, ${SCHEMA_DEFAULTS.centerLng}, ${SCHEMA_DEFAULTS.minOrderAmount}, ${SCHEMA_DEFAULTS.deliveryFee}, true
         WHERE NOT EXISTS (SELECT 1 FROM store_settings)
       `,
     },
@@ -193,7 +201,28 @@ const ensureSchema = async () => {
     },
     {
       name: 'orders_payment_status',
-      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'PENDING' CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED'))`,
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'PENDING' CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED', 'COLLECTED'))`,
+    },
+    {
+      name: 'orders_payment_status_collected_check',
+      run: async () => {
+        await query(`
+          DO $$
+          BEGIN
+            IF EXISTS (
+              SELECT 1 FROM pg_constraint
+              WHERE conname = 'orders_payment_status_check'
+            ) THEN
+              ALTER TABLE orders DROP CONSTRAINT orders_payment_status_check;
+            END IF;
+          END $$;
+        `);
+        await query(`
+          ALTER TABLE orders
+          ADD CONSTRAINT orders_payment_status_check
+          CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED', 'COLLECTED'))
+        `);
+      },
     },
     {
       name: 'orders_payment_status_index',
@@ -490,10 +519,6 @@ const ensureSchema = async () => {
       sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PAYMENT_VERIFIED'`,
     },
     {
-      name: 'user_role.staff',
-      sql: `ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'staff'`,
-    },
-    {
       name: 'order_status.packing_started',
       sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'PACKING_STARTED'`,
     },
@@ -516,6 +541,73 @@ const ensureSchema = async () => {
     {
       name: 'order_status.refunded',
       sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'REFUNDED'`,
+    },
+    {
+      name: 'order_status.failed_delivery',
+      sql: `ALTER TYPE order_status ADD VALUE IF NOT EXISTS 'FAILED_DELIVERY'`,
+    },
+    {
+      name: 'assignment_status.failed',
+      sql: `ALTER TYPE assignment_status ADD VALUE IF NOT EXISTS 'FAILED'`,
+    },
+    {
+      name: 'orders.failed_delivery_reason',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS failed_delivery_reason TEXT`,
+    },
+    {
+      name: 'orders.failed_delivery_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS failed_delivery_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.failed_delivery_by',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS failed_delivery_by BIGINT REFERENCES users(id) ON DELETE SET NULL`,
+    },
+    {
+      name: 'orders.returned_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS returned_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.returned_by',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS returned_by BIGINT REFERENCES users(id) ON DELETE SET NULL`,
+    },
+    {
+      name: 'orders.return_reason',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_reason TEXT`,
+    },
+    {
+      name: 'orders.return_condition',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS return_condition TEXT`,
+    },
+    {
+      name: 'orders.failed_delivery_resolution',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS failed_delivery_resolution TEXT`,
+    },
+    {
+      name: 'orders.failed_delivery_resolved_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS failed_delivery_resolved_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.failed_delivery_resolved_by',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS failed_delivery_resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL`,
+    },
+    {
+      name: 'admin_tasks_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS admin_tasks (
+          id BIGSERIAL PRIMARY KEY,
+          task_type VARCHAR(50) NOT NULL,
+          order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          status VARCHAR(20) NOT NULL DEFAULT 'open',
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          resolved_at TIMESTAMPTZ,
+          resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL
+        )
+      `,
+    },
+    {
+      name: 'admin_tasks_open_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_admin_tasks_open ON admin_tasks(status, task_type) WHERE status = 'open'`,
     },
     {
       name: 'order_assignments.delivery_image_url',
@@ -608,6 +700,276 @@ const ensureSchema = async () => {
           UNIQUE (product_id, user_id, order_id)
         )
       `,
+    },
+    {
+      name: 'order_items.ordered_weight_g',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS ordered_weight_g INTEGER`,
+    },
+    {
+      name: 'order_items.actual_weight_g',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS actual_weight_g INTEGER`,
+    },
+    {
+      name: 'order_items.weight_delta_g',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS weight_delta_g INTEGER`,
+    },
+    {
+      name: 'order_items.supplement_g',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS supplement_g INTEGER NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'order_items.weight_refund_amount',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS weight_refund_amount NUMERIC(10,2) NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'order_items.weight_reconciliation_action',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS weight_reconciliation_action VARCHAR(50)`,
+    },
+    {
+      name: 'order_items.reconciled_at',
+      sql: `ALTER TABLE order_items ADD COLUMN IF NOT EXISTS reconciled_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'order_items.backfill_ordered_weight_g',
+      sql: `
+        UPDATE order_items oi
+        SET ordered_weight_g = COALESCE(
+          oi.ordered_weight_g,
+          GREATEST(1, oi.quantity) * COALESCE(
+            (SELECT (p.weight_variants)[1] FROM products p WHERE p.id = oi.product_id),
+            500
+          )
+        )
+        WHERE oi.ordered_weight_g IS NULL
+      `,
+    },
+    {
+      name: 'orders.packed_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS packed_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.weight_reconciliation_status',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS weight_reconciliation_status VARCHAR(30) NOT NULL DEFAULT 'PENDING'`,
+    },
+    {
+      name: 'orders.weight_reconciliation_completed_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS weight_reconciliation_completed_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.weight_reconciliation_total_refund',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS weight_reconciliation_total_refund NUMERIC(10,2) NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'order_weight_reconciliations_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS order_weight_reconciliations (
+          id BIGSERIAL PRIMARY KEY,
+          order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          order_item_id BIGINT NOT NULL REFERENCES order_items(id) ON DELETE CASCADE,
+          ordered_weight_g INTEGER NOT NULL,
+          actual_weight_g INTEGER NOT NULL,
+          delta_g INTEGER NOT NULL,
+          supplement_g INTEGER NOT NULL DEFAULT 0,
+          refund_amount NUMERIC(10,2) NOT NULL DEFAULT 0,
+          reconciliation_action VARCHAR(50) NOT NULL,
+          reconciled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          reconciled_by BIGINT REFERENCES users(id) ON DELETE SET NULL
+        )
+      `,
+    },
+    {
+      name: 'order_weight_reconciliations.order_id_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_order_weight_reconciliations_order_id ON order_weight_reconciliations(order_id)`,
+    },
+    {
+      name: 'order_partial_refunds_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS order_partial_refunds (
+          id BIGSERIAL PRIMARY KEY,
+          order_id BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          order_item_id BIGINT REFERENCES order_items(id) ON DELETE SET NULL,
+          amount NUMERIC(10,2) NOT NULL CHECK (amount > 0),
+          reason VARCHAR(100) NOT NULL DEFAULT 'weight_reconciliation',
+          status VARCHAR(20) NOT NULL DEFAULT 'RECORDED',
+          payment_mode VARCHAR(20),
+          gateway_refund_id VARCHAR(100),
+          idempotency_key VARCHAR(40),
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'order_partial_refunds.order_id_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_order_partial_refunds_order_id ON order_partial_refunds(order_id)`,
+    },
+    {
+      name: 'order_partial_refunds.gateway_refund_id',
+      sql: `ALTER TABLE order_partial_refunds ADD COLUMN IF NOT EXISTS gateway_refund_id VARCHAR(100)`,
+    },
+    {
+      name: 'order_partial_refunds.idempotency_key',
+      sql: `ALTER TABLE order_partial_refunds ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(40)`,
+    },
+    {
+      name: 'order_partial_refunds.idempotency_key_unique',
+      sql: `CREATE UNIQUE INDEX IF NOT EXISTS idx_order_partial_refunds_idempotency ON order_partial_refunds(idempotency_key) WHERE idempotency_key IS NOT NULL`,
+    },
+    {
+      name: 'inventory_movements_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS inventory_movements (
+          id BIGSERIAL PRIMARY KEY,
+          product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+          order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+          order_item_id BIGINT REFERENCES order_items(id) ON DELETE SET NULL,
+          movement_type VARCHAR(50) NOT NULL,
+          quantity_grams INTEGER NOT NULL CHECK (quantity_grams >= 0),
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'inventory_movements.order_id_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_inventory_movements_order_id ON inventory_movements(order_id)`,
+    },
+    {
+      name: 'operational_events_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS operational_events (
+          id BIGSERIAL PRIMARY KEY,
+          event_type VARCHAR(100) NOT NULL,
+          order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+          actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'operational_events.type_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_operational_events_type ON operational_events(event_type, created_at DESC)`,
+    },
+    {
+      name: 'delivery_partners.operational_status',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS operational_status VARCHAR(50) NOT NULL DEFAULT 'normal'`,
+    },
+    {
+      name: 'operational_events.rider_id',
+      sql: `ALTER TABLE operational_events ADD COLUMN IF NOT EXISTS rider_id BIGINT REFERENCES delivery_partners(id) ON DELETE SET NULL`,
+    },
+    {
+      name: 'operational_events.order_id_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_operational_events_order_id ON operational_events(order_id, created_at DESC)`,
+    },
+    {
+      name: 'operational_events.rider_id_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_operational_events_rider_id ON operational_events(rider_id, created_at DESC)`,
+    },
+    {
+      name: 'orders.confirmed_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.packing_started_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS packing_started_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.dispatch_queued_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS dispatch_queued_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.assigned_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS assigned_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.rider_accepted_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS rider_accepted_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.out_for_delivery_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS out_for_delivery_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.delivered_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'orders.refunded_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'delivery_batches_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS delivery_batches (
+          id BIGSERIAL PRIMARY KEY,
+          anchor_order_id BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+          batch_size INT NOT NULL,
+          order_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'delivery_batches.anchor_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_delivery_batches_anchor ON delivery_batches(anchor_order_id, created_at DESC)`,
+    },
+    {
+      name: 'capacity_suggestions_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS capacity_suggestions (
+          id BIGSERIAL PRIMARY KEY,
+          suggested_mode VARCHAR(32) NOT NULL,
+          current_mode VARCHAR(32) NOT NULL,
+          reason TEXT NOT NULL,
+          severity VARCHAR(16) NOT NULL,
+          signals JSONB NOT NULL DEFAULT '{}'::jsonb,
+          dismissed_until TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'capacity_suggestions.created_at_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_capacity_suggestions_created_at ON capacity_suggestions(created_at DESC)`,
+    },
+    {
+      name: 'business_metrics_daily_rollup_table',
+      sql: `
+        CREATE TABLE IF NOT EXISTS business_metrics_daily_rollup (
+          id BIGSERIAL PRIMARY KEY,
+          metric_date DATE NOT NULL UNIQUE,
+          metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
+          data_completeness JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `,
+    },
+    {
+      name: 'business_metrics_daily_rollup.metric_date_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_business_metrics_daily_rollup_date ON business_metrics_daily_rollup(metric_date DESC)`,
+    },
+    {
+      name: 'delivery_partners.availability_status',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS availability_status VARCHAR(20) NOT NULL DEFAULT 'offline'`,
+    },
+    {
+      name: 'delivery_partners.estimated_return_at',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS estimated_return_at TIMESTAMPTZ`,
+    },
+    {
+      name: 'delivery_partners.estimated_return_minutes',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS estimated_return_minutes INT`,
+    },
+    {
+      name: 'delivery_partners.active_order_count',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS active_order_count INT NOT NULL DEFAULT 0`,
+    },
+    {
+      name: 'delivery_partners.availability_status_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_delivery_partners_availability ON delivery_partners(availability_status) WHERE is_online = TRUE`,
     },
   ];
 

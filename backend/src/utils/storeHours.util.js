@@ -1,6 +1,11 @@
-const DEFAULT_OPEN_TIME = '09:00';
-const DEFAULT_CLOSE_TIME = '22:00';
-const IST_TIMEZONE = 'Asia/Kolkata';
+const {
+  STORE,
+  DEFAULT_STORE_SETTINGS,
+} = require('../config/businessRules');
+
+const DEFAULT_OPEN_TIME = STORE.storeOpenTime;
+const DEFAULT_CLOSE_TIME = STORE.storeCloseTime;
+const IST_TIMEZONE = STORE.istTimezone;
 
 const parseTimeToMinutes = (timeStr) => {
   if (timeStr == null || timeStr === '') return null;
@@ -65,32 +70,39 @@ const buildClosedMessage = ({ manualOpen, withinHours, openTime, closeTime, nowM
   const closeLabel = formatTime12h(closeTime);
 
   if (!manualOpen && withinHours) {
-    return `Store is temporarily closed. We'll resume when we're open again (${openLabel} – ${closeLabel}).`;
+    return `We're not accepting orders right now. We'll resume during store hours (${openLabel} – ${closeLabel}).`;
   }
 
   const closeMinutes = parseTimeToMinutes(closeTime);
   const openMinutes = parseTimeToMinutes(openTime);
 
   if (closeMinutes != null && nowMinutes >= closeMinutes) {
-    return `Store is closed right now. We'll take orders tomorrow from ${openLabel}.`;
+    return `We're not accepting orders right now. We'll resume tomorrow from ${openLabel}.`;
   }
 
   if (openMinutes != null && nowMinutes < openMinutes) {
-    return `Store is closed right now. We'll take orders from ${openLabel} today.`;
+    return `We're not accepting orders right now. We'll resume from ${openLabel} today.`;
   }
 
   if (!manualOpen) {
-    return `Store is closed right now. We'll take orders from ${openLabel} when we're open again.`;
+    return `We're not accepting orders right now. We'll resume from ${openLabel} when we're back.`;
   }
 
-  return `Store is closed right now. We'll take orders from ${openLabel} tomorrow.`;
+  return `We're not accepting orders right now. We'll resume from ${openLabel} tomorrow.`;
 };
 
 /**
  * Combines manual admin toggle with configured open/close hours (IST).
  */
+const {
+  STORE_ACCEPTANCE_MODE,
+  STORE_ACCEPTANCE_MESSAGES,
+  normalizeAcceptanceMode,
+} = require('../constants/storeAcceptanceMode.constants');
+
 const resolveStoreAvailability = ({
   manualOpen = true,
+  acceptanceMode = STORE_ACCEPTANCE_MODE.ACCEPTING,
   storeOpenTime = null,
   storeCloseTime = null,
   now = new Date(),
@@ -99,36 +111,48 @@ const resolveStoreAvailability = ({
   const closeTime = normalizeTimeHHMM(storeCloseTime, DEFAULT_CLOSE_TIME);
   const { minutesSinceMidnight } = getISTContext(now);
   const withinHours = isWithinStoreHours(openTime, closeTime, minutesSinceMidnight);
-  const effectiveOpen = Boolean(manualOpen) && withinHours;
+  const normalizedMode = normalizeAcceptanceMode(acceptanceMode);
+  const manualAccepting = Boolean(manualOpen) &&
+    normalizedMode !== STORE_ACCEPTANCE_MODE.NOT_ACCEPTING;
+  const effectiveOpen = manualAccepting && withinHours;
 
   let closedReason = null;
   let closedMessage = null;
+  let capacityMessage = null;
 
   if (!effectiveOpen) {
-    if (!manualOpen && !withinHours) {
+    if (!manualAccepting && !withinHours) {
       closedReason = 'MANUAL_AND_HOURS';
-    } else if (!manualOpen) {
+    } else if (!manualAccepting) {
       closedReason = 'MANUAL';
     } else {
       closedReason = 'OUTSIDE_HOURS';
     }
     closedMessage = buildClosedMessage({
-      manualOpen: Boolean(manualOpen),
+      manualOpen: manualAccepting,
       withinHours,
       openTime,
       closeTime,
       nowMinutes: minutesSinceMidnight,
     });
+  } else if (normalizedMode === STORE_ACCEPTANCE_MODE.LIMITED_CAPACITY) {
+    capacityMessage = STORE_ACCEPTANCE_MESSAGES[STORE_ACCEPTANCE_MODE.LIMITED_CAPACITY];
   }
+
+  const effectiveAcceptanceMode = !withinHours || !manualAccepting
+    ? STORE_ACCEPTANCE_MODE.NOT_ACCEPTING
+    : normalizedMode;
 
   return {
     is_open: effectiveOpen,
-    manual_open: Boolean(manualOpen),
+    manual_open: manualAccepting,
     within_hours: withinHours,
+    acceptance_mode: effectiveAcceptanceMode,
     store_open_time: openTime,
     store_close_time: closeTime,
     closed_reason: closedReason,
     closed_message: closedMessage,
+    capacity_message: capacityMessage,
     next_open_display: effectiveOpen ? null : formatTime12h(openTime),
   };
 };

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../config/api_config.dart';
@@ -13,17 +14,18 @@ import 'socket_service.dart';
 /// Backend broadcasts `delivery:location` to the customer's socket room.
 /// Uses smart updates: location change (50m) OR max 30s interval.
 class RiderLocationService {
+  static final RiderLocationService _instance =
+      RiderLocationService._internal();
+  factory RiderLocationService() => _instance;
+
   final ApiService _api;
   final MapsService _mapsService;
   final SocketService _socketService;
 
-  RiderLocationService({
-    ApiService? api,
-    MapsService? mapsService,
-    SocketService? socketService,
-  })  : _api = api ?? ApiService(),
-        _mapsService = mapsService ?? MapsService(),
-        _socketService = socketService ?? SocketService();
+  RiderLocationService._internal()
+      : _api = ApiService(),
+        _mapsService = MapsService(),
+        _socketService = SocketService();
 
   StreamSubscription<Position>? _positionSubscription;
   Timer? _backupTimer;
@@ -127,3 +129,7 @@ class RiderLocationService {
     _activeOrderId = null;
   }
 }
+
+final riderLocationServiceProvider = Provider<RiderLocationService>((ref) {
+  return RiderLocationService();
+});

@@ -325,12 +325,74 @@ class RiderNotifier extends StateNotifier<RiderState> {
   }
 }
 
+/// Tracks assignment alert sheets shown on the dashboard (cleared on logout).
+class _AlertsState {
+  final Set<String> alertedOrderIds;
+  final Set<String> alertedAssignmentKeys;
+
+  const _AlertsState({
+    this.alertedOrderIds = const {},
+    this.alertedAssignmentKeys = const {},
+  });
+
+  _AlertsState copyWith({
+    Set<String>? alertedOrderIds,
+    Set<String>? alertedAssignmentKeys,
+  }) {
+    return _AlertsState(
+      alertedOrderIds: alertedOrderIds ?? this.alertedOrderIds,
+      alertedAssignmentKeys:
+          alertedAssignmentKeys ?? this.alertedAssignmentKeys,
+    );
+  }
+}
+
+class _AlertsNotifier extends StateNotifier<_AlertsState> {
+  _AlertsNotifier() : super(const _AlertsState());
+
+  void clear() {
+    state = const _AlertsState();
+  }
+
+  void addOrder(String id) {
+    state = state.copyWith(
+      alertedOrderIds: {...state.alertedOrderIds, id},
+    );
+  }
+
+  void removeOrder(String id) {
+    final next = {...state.alertedOrderIds}..remove(id);
+    state = state.copyWith(alertedOrderIds: next);
+  }
+
+  void addAssignment(String key) {
+    state = state.copyWith(
+      alertedAssignmentKeys: {...state.alertedAssignmentKeys, key},
+    );
+  }
+
+  void removeAssignment(String key) {
+    final next = {...state.alertedAssignmentKeys}..remove(key);
+    state = state.copyWith(alertedAssignmentKeys: next);
+  }
+
+  bool containsOrder(String id) => state.alertedOrderIds.contains(id);
+
+  bool containsAssignment(String key) =>
+      state.alertedAssignmentKeys.contains(key);
+}
+
+final riderAssignmentAlertsProvider =
+    StateNotifierProvider<_AlertsNotifier, _AlertsState>(
+  (ref) => _AlertsNotifier(),
+);
+
 /// Rider provider instance
 final riderProvider = StateNotifierProvider<RiderNotifier, RiderState>((ref) {
   return RiderNotifier(
     RiderService(),
     SocketService(),
-    RiderLocationService(),
+    ref.read(riderLocationServiceProvider),
   );
 });
 

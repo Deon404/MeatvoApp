@@ -1,4 +1,5 @@
 const { query } = require('./postgres');
+const { SCHEMA_DEFAULTS } = require('../config/businessRules');
 
 const REQUIRED_APP_SETTINGS_COLUMNS = [
   'value',
@@ -6,6 +7,7 @@ const REQUIRED_APP_SETTINGS_COLUMNS = [
   'delivery_charge',
   'min_order_amount',
   'store_open',
+  'store_acceptance_mode',
   'store_open_time',
   'store_close_time',
   'delivery_radius_km',
@@ -14,12 +16,13 @@ const REQUIRED_APP_SETTINGS_COLUMNS = [
 const COLUMN_ALTER_STATEMENTS = {
   value: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS value JSONB NOT NULL DEFAULT '{}'::jsonb`,
   updated_at: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
-  delivery_charge: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS delivery_charge NUMERIC(10,2) DEFAULT 30`,
-  min_order_amount: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS min_order_amount NUMERIC(10,2) DEFAULT 150`,
+  delivery_charge: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS delivery_charge NUMERIC(10,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryFee}`,
+  min_order_amount: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS min_order_amount NUMERIC(10,2) DEFAULT ${SCHEMA_DEFAULTS.minOrderAmount}`,
   store_open: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS store_open BOOLEAN DEFAULT true`,
+  store_acceptance_mode: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS store_acceptance_mode VARCHAR(32) DEFAULT 'accepting'`,
   store_open_time: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS store_open_time TIME`,
   store_close_time: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS store_close_time TIME`,
-  delivery_radius_km: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS delivery_radius_km NUMERIC(5,2) DEFAULT 8.0`,
+  delivery_radius_km: `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS delivery_radius_km NUMERIC(5,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryRadiusKm}`,
 };
 
 /** Add columns expected by the Node API when an older app_settings table already exists. */
@@ -48,4 +51,4 @@ const repairAppSettingsSchema = async () => {
   }
 };
 
-module.exports = { repairAppSettingsSchema };
+module.exports = { repairAppSettingsSchema, REQUIRED_APP_SETTINGS_COLUMNS };

@@ -15,7 +15,10 @@ import '../utils/role_access_exception.dart';
 /// Rider / Delivery-partner service — custom Node.js backend
 /// Maps to /api/delivery/* endpoints
 final riderServiceProvider = Provider<RiderService>((ref) {
-  return RiderService(ref.read(apiServiceProvider));
+  return RiderService(
+    ref.read(apiServiceProvider),
+    ref.read(riderLocationServiceProvider),
+  );
 });
 
 class RiderService {
@@ -131,6 +134,12 @@ class RiderService {
       }
       if (groupedLists.isNotEmpty) {
         return groupedLists;
+      }
+      // Backend returns { available: [], active: [], delivered: [] } when rider has no orders.
+      if (map.containsKey('available') ||
+          map.containsKey('active') ||
+          map.containsKey('delivered')) {
+        return [];
       }
     }
     throw Exception(fallbackMessage);
@@ -288,16 +297,17 @@ class RiderService {
         ? Map<String, dynamic>.from(nested)
         : Map<String, dynamic>.from(data);
     final online = profile['online'] == true;
-    final name = (profile['name'] ?? '').toString();
-    final phone = (profile['phone'] ?? '').toString();
+    final name = (profile['name'] ?? '').toString().trim();
+    final phone = (profile['phone'] ?? '').toString().trim();
+    final displayName = name.isNotEmpty ? name : (phone.isNotEmpty ? phone : 'Rider');
     return {
       ...profile,
       'online': online,
       'status': online ? 'available' : 'offline',
-      'name': name,
+      'name': displayName,
       'phone': phone,
       'user': {
-        'name': name.isNotEmpty ? name : 'Rider',
+        'name': displayName,
         'phone': phone,
       },
     };
@@ -348,11 +358,17 @@ class RiderService {
     // Show as 'assigned' so rider sees Accept/Reject buttons
     String resolvedStatus;
     if (assignmentStatus == null || assignmentStatus.trim().isEmpty) {
-      // Order is available but not yet accepted by any rider
       resolvedStatus = 'assigned';
     } else {
-      // Order has been assigned to a rider, use assignment status
       resolvedStatus = _toLegacyAssignmentStatus(assignmentStatus);
+      // assignment_status stays PICKED for both PICKED_UP and ON_THE_WAY orders
+      if (_normalizeStatus(assignmentStatus) == 'picked') {
+        if (orderStatus == 'on_the_way') {
+          resolvedStatus = 'on_the_way';
+        } else if (orderStatus == 'picked_up') {
+          resolvedStatus = 'picked_up';
+        }
+      }
     }
     
     return {
@@ -410,8 +426,44 @@ class RiderService {
         throw Exception(payload['message'] ?? 'Failed to update status');
       }
     } on DioException catch (e) {
+      final data = e.response?.data;
+      if (data is Map) {
+        final errorData = data['error'] is Map
+            ? Map<String, dynamic>.from(data['error'] as Map)
+            : data;
+        final activeCount = errorData['activeOrderCount'];
+        if (activeCount != null) {
+          throw Exception(
+            data['message']?.toString() ??
+                'Cannot go offline with $activeCount active deliveries',
+          );
+        }
+      }
       throw Exception(
         'Failed to update status: ${e.response?.data?['message'] ?? e.message}',
+      );
+    }
+  }
+
+  Future<void> reportOperationalException(
+    String orderId,
+    String exceptionType, {
+    String? notes,
+  }) async {
+    try {
+      final res = await _api.post(
+        ApiDeliveryPaths.orderOperationalException(orderId),
+        data: {
+          'exceptionType': exceptionType,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        },
+      );
+      if (res.data['success'] != true) {
+        throw Exception(res.data['message'] ?? 'Failed to report exception');
+      }
+    } on DioException catch (e) {
+      throw Exception(
+        _extractApiMessage(e, 'Failed to report operational exception'),
       );
     }
   }
@@ -575,6 +627,47 @@ class RiderService {
     }
     _updateDeliveryState('DELIVERED');
     _invalidateOrdersCache();
+  }
+
+  Future<void> markFailedDelivery(
+    String orderId,
+    String reason,
+  ) async {
+    try {
+      final res = await _api.post(
+        ApiDeliveryPaths.orderFailedDelivery(orderId),
+        data: {'reason': reason},
+      );
+      if (res.data['success'] != true) {
+        throw Exception(res.data['message'] ?? 'Failed to mark failed delivery');
+      }
+      _locationService.stopSendingLocation();
+      _invalidateOrdersCache();
+    } on DioException catch (e) {
+      throw Exception(
+        _extractApiMessage(e, 'Failed to mark failed delivery'),
+      );
+    }
+  }
+
+  Future<void> confirmReturnToStore(
+    String orderId,
+    String returnCondition,
+  ) async {
+    try {
+      final res = await _api.post(
+        ApiDeliveryPaths.orderReturnToStore(orderId),
+        data: {'returnCondition': returnCondition},
+      );
+      if (res.data['success'] != true) {
+        throw Exception(res.data['message'] ?? 'Failed to confirm return');
+      }
+      _invalidateOrdersCache();
+    } on DioException catch (e) {
+      throw Exception(
+        _extractApiMessage(e, 'Failed to confirm return to store'),
+      );
+    }
   }
 
   Future<String> uploadDeliveryProof(String filePath) async {
@@ -832,5 +925,7 @@ class RiderService {
   void disposeRealtime() {
     unsubscribeFromOrderAssignments();
     _locationService.stopSendingLocation();
+    _ordersCache = null;
+    _ordersCacheAt = null;
   }
 }

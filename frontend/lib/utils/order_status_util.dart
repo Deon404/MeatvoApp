@@ -1,31 +1,40 @@
-/// Normalizes backend order status strings for UI filtering.
+/// Normalizes backend order status strings for customer UI.
 ///
-/// Live rider flow: assignment sets `order_assignments` while `orders.status`
-/// stays PACKED until accept (`/api/delivery/orders/:id/accept` → OUT_FOR_DELIVERY).
-/// `rider_assigned` / `rider_accepted` are kept as fallbacks for admin/API edge cases.
+/// Customers only see four steps:
+///   Confirmed → Preparing → Out for Delivery → Delivered
+///
+/// Internal states (QC, Ready, Dispatch Queue, rider assignment, etc.)
+/// are collapsed here and never shown as separate steps.
 String normalizeOrderStatus(String? status) {
-  if (status == null || status.trim().isEmpty) return 'pending';
+  if (status == null || status.trim().isEmpty) return 'confirmed';
   final raw = status.trim().toLowerCase().replaceAll('-', '_');
 
   switch (raw) {
     case 'payment_pending':
       return 'payment_pending';
     case 'payment_verified':
+    case 'placed':
+    case 'pending':
+    case 'confirmed':
       return 'confirmed';
     case 'packing_started':
     case 'packed':
-      return 'preparing';
+    case 'qc':
+    case 'ready':
+    case 'dispatch_queue':
+    case 'batch_ready':
     case 'rider_assigned':
     case 'rider_assigned_pending':
-      return 'assigned';
     case 'rider_accepted':
     case 'accepted':
-      return 'assigned';
+    case 'assigned':
+    case 'picked_up':
+      return 'preparing';
+    case 'out_for_delivery':
     case 'on_the_way':
     case 'on_way':
-      return 'out_for_delivery';
     case 'rider_nearby':
-      return 'rider_nearby';
+      return 'out_for_delivery';
     case 'failed_delivery':
       return 'failed_delivery';
     case 'refunded':
@@ -35,8 +44,31 @@ String normalizeOrderStatus(String? status) {
   }
 }
 
-/// Total steps in the horizontal tracking stepper.
-const int trackingStepCount = 6;
+/// Customer-visible label for a normalized status key.
+String customerStatusLabel(String? status) {
+  final s = normalizeOrderStatus(status);
+  switch (s) {
+    case 'payment_pending':
+      return 'Payment pending';
+    case 'confirmed':
+      return 'Confirmed';
+    case 'preparing':
+      return 'Preparing';
+    case 'out_for_delivery':
+      return 'Out for Delivery';
+    case 'delivered':
+      return 'Delivered';
+    case 'failed_delivery':
+      return 'Delivery Attempted';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return 'Confirmed';
+  }
+}
+
+/// Total steps in the horizontal tracking stepper (customer-facing).
+const int trackingStepCount = 4;
 
 /// In-progress orders (not delivered or cancelled).
 bool isOrderActive(String status) {
@@ -58,30 +90,19 @@ bool isOrderCancelled(String status) {
 bool isOrderTrackable(String status) {
   final s = normalizeOrderStatus(status);
   if (s == 'payment_pending') return false;
-  return s == 'placed' ||
-      s == 'pending' ||
-      s == 'confirmed' ||
-      s == 'accepted' ||
+  return s == 'confirmed' ||
       s == 'preparing' ||
-      s == 'packed' ||
-      s == 'assigned' ||
-      s == 'picked_up' ||
-      s == 'out_for_delivery' ||
-      s == 'on_way' ||
-      s == 'rider_nearby';
+      s == 'out_for_delivery';
 }
 
-/// Map index 0..5 for the 6-step horizontal stepper.
+/// Map index 0..3 for the 4-step horizontal stepper.
 int resolveTrackingStepIndex(String status) {
   final s = normalizeOrderStatus(status);
-  if (s == 'pending' || s == 'placed' || s == 'payment_pending') return 0;
-  if (s == 'confirmed') return 1;
-  if (s == 'preparing' || s == 'packed') return 2;
-  if (s == 'assigned' || s == 'picked_up') return 3;
-  if (s == 'out_for_delivery' || s == 'on_way' || s == 'rider_nearby') {
-    return 4;
-  }
-  if (s == 'delivered') return 5;
+  if (s == 'payment_pending') return 0;
+  if (s == 'confirmed') return 0;
+  if (s == 'preparing') return 1;
+  if (s == 'out_for_delivery') return 2;
+  if (s == 'delivered') return 3;
   return 0;
 }
 
@@ -105,35 +126,26 @@ bool shouldShowLiveMap(
       s == 'payment_pending') {
     return false;
   }
-  // Map-first UX: store → customer route for any active order with an address pin.
   if (hasDeliveryCoords) {
     return true;
   }
   if (hasRiderGps &&
-      (s == 'out_for_delivery' ||
-          s == 'on_way' ||
-          s == 'rider_nearby' ||
-          s == 'picked_up' ||
-          s == 'assigned')) {
+      (s == 'out_for_delivery' || s == 'preparing')) {
     return true;
   }
-  return s == 'out_for_delivery' ||
-      s == 'on_way' ||
-      s == 'rider_nearby' ||
-      s == 'picked_up';
+  return s == 'out_for_delivery';
 }
 
 /// Delivery OTP card visible during last-mile delivery.
 bool isDeliveryOtpVisible(String status) {
-  final s = normalizeOrderStatus(status);
-  return s == 'out_for_delivery' || s == 'on_way' || s == 'rider_nearby';
+  return normalizeOrderStatus(status) == 'out_for_delivery';
 }
 
 /// Grace-period cancel: placed/confirmed within 60 seconds of order creation.
 bool canCancelWithGrace(DateTime? createdAt, String status) {
   if (createdAt == null) return false;
   final s = normalizeOrderStatus(status);
-  if (s != 'placed' && s != 'confirmed' && s != 'pending') return false;
+  if (s != 'confirmed' && s != 'payment_pending') return false;
   final elapsed = DateTime.now().difference(createdAt).inSeconds;
   return elapsed <= 60;
 }
@@ -157,22 +169,12 @@ String trackingNotificationLabel(String status) {
   switch (s) {
     case 'payment_pending':
       return 'Payment pending';
-    case 'placed':
-    case 'pending':
-      return 'Order placed';
     case 'confirmed':
       return 'Order confirmed';
     case 'preparing':
-    case 'packed':
       return 'Preparing your order';
-    case 'assigned':
-    case 'picked_up':
-      return 'Rider assigned';
     case 'out_for_delivery':
-    case 'on_way':
-      return 'On the way to you';
-    case 'rider_nearby':
-      return 'Rider is nearby';
+      return 'Out for delivery';
     case 'delivered':
       return 'Delivered';
     case 'cancelled':

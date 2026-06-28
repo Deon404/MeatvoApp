@@ -509,7 +509,7 @@ const devLogin = asyncHandler(async (req, res) => {
   const requestedRole =
     requestedRoleRaw === 'user'
       ? ROLES.CUSTOMER
-      : [ROLES.ADMIN, ROLES.CUSTOMER, ROLES.DELIVERY, ROLES.STAFF].includes(requestedRoleRaw)
+      : [ROLES.ADMIN, ROLES.CUSTOMER, ROLES.DELIVERY].includes(requestedRoleRaw)
         ? requestedRoleRaw
         : undefined;
 

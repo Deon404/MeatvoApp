@@ -64,6 +64,10 @@ abstract final class ApiDeliveryPaths {
   /// Live rider accept — legacy delivery route (PACKED → OUT_FOR_DELIVERY).
   static String orderAccept(String id) => '/delivery/orders/$id/accept';
   static String orderReject(String id) => '/delivery/orders/$id/reject';
+  static String orderFailedDelivery(String id) => '/delivery/orders/$id/failed-delivery';
+  static String orderReturnToStore(String id) => '/delivery/orders/$id/return-to-store';
+  static String orderOperationalException(String id) =>
+      '/delivery/orders/$id/operational-exception';
   static String orderStatus(String id) => '/delivery/orders/$id/status';
   static const bulkAssign = '/delivery/orders/bulk-assign';
 }
@@ -92,6 +96,7 @@ abstract final class ApiAdminPaths {
   static const deliveryAssignRoutes = '/admin/delivery/assign-routes';
   static const coupons = '/admin/coupons';
   static const analytics = '/admin/analytics';
+  static const opsMetrics = '/admin/ops-metrics';
 
   static String couponById(int id) => '/admin/coupons/$id';
 
@@ -100,18 +105,22 @@ abstract final class ApiAdminPaths {
   static String userRole(String id) => '/admin/users/$id/role';
   static String deliveryPartnerById(String id) =>
       '/admin/delivery-partners/$id';
+  static String resolveFailedDelivery(String orderId) =>
+      '/admin/orders/$orderId/resolve-failed-delivery';
+  static String resolveAssignmentFailure(String orderId) =>
+      '/admin/orders/$orderId/resolve-assignment-failure';
+  static const adminTasks = '/admin/tasks';
+  static const operationalEvents = '/admin/operational-events';
+  static const capacitySuggestion = '/admin/store/capacity-suggestion';
+  static const capacitySuggestionDismiss = '/admin/store/capacity-suggestion/dismiss';
+
+  static String orderTimeline(String orderId) => '/admin/orders/$orderId/timeline';
 }
 
 abstract final class ApiRiderPaths {
   static const orders = ApiDeliveryPaths.orders;
   static const profile = ApiDeliveryPaths.profile;
   static String orderStatus(String id) => ApiDeliveryPaths.orderStatus(id);
-}
-
-abstract final class ApiStaffPaths {
-  static const orders = '/staff/orders';
-  static String startPacking(String id) => '/orders/enhanced/$id/start-packing';
-  static String markPacked(String id) => '/orders/enhanced/$id/mark-packed';
 }
 
 class ApiConfig {
@@ -173,12 +182,6 @@ class ApiConfig {
   static String get adminOrders => '$baseUrl${ApiAdminPaths.orders}';
   static String get adminProducts => '$baseUrl${ApiAdminPaths.products}';
   static String get adminUsers => '$baseUrl${ApiAdminPaths.users}';
-
-  static String get staffOrders => '$baseUrl${ApiStaffPaths.orders}';
-  static String staffStartPacking(String id) =>
-      '$baseUrl${ApiStaffPaths.startPacking(id)}';
-  static String staffMarkPacked(String id) =>
-      '$baseUrl${ApiStaffPaths.markPacked(id)}';
 
   static String get keyAccessToken => EnvConfig.secureStorageAccessTokenKey;
   static String get keyRefreshToken => EnvConfig.secureStorageRefreshTokenKey;

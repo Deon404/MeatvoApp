@@ -118,8 +118,8 @@ const validateOrderOwnership = async (req, res, next) => {
     const userId = req.user?.id;
     const userRole = req.user?.role;
 
-    // Admin and kitchen staff can access any order
-    if (userRole === 'admin' || userRole === 'staff') {
+    // Admin can access any order
+    if (userRole === 'admin') {
       return next();
     }
 

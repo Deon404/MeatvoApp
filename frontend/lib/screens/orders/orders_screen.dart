@@ -599,16 +599,25 @@ class _OrdersScreenState extends State<OrdersScreen>
         textColor = mv.error;
         label = 'Cancelled';
         break;
-      case 'placed':
-      case 'pending':
+      case 'confirmed':
         backgroundColor = MeatvoColors.warning.withValues(alpha: 0.15);
         textColor = MeatvoColors.warning;
-        label = 'Placed';
+        label = 'Confirmed';
+        break;
+      case 'preparing':
+        backgroundColor = MeatvoColors.primaryLight.withValues(alpha: 0.5);
+        textColor = mv.brandPrimary;
+        label = 'Preparing';
+        break;
+      case 'out_for_delivery':
+        backgroundColor = MeatvoColors.primaryLight.withValues(alpha: 0.5);
+        textColor = mv.brandPrimary;
+        label = 'Out for Delivery';
         break;
       default:
         backgroundColor = MeatvoColors.primaryLight.withValues(alpha: 0.5);
         textColor = mv.brandPrimary;
-        label = 'Active';
+        label = customerStatusLabel(order.status);
     }
 
     return _statusBadgeChip(

@@ -150,10 +150,6 @@ class SocketService {
         _socket?.emit('join_admin_room');
         _roleRoomJoined = true;
         debugPrint('[Socket] Joined admin_room');
-      } else if (role == 'staff') {
-        _socket?.emit('join_staff_room');
-        _roleRoomJoined = true;
-        debugPrint('[Socket] Joined staff_room');
       } else if (role == 'rider' ||
           role == 'delivery' ||
           role == 'delivery_partner') {
@@ -249,6 +245,19 @@ class SocketService {
   }
 
   void offAssignmentFailed() => _socket?.off('order:assignment_failed');
+
+  /// Backend emits `order:failed_delivery` to `admin_room`.
+  void onFailedDelivery(void Function(dynamic data) cb) {
+    _socket?.on('order:failed_delivery', cb);
+    _socket?.on('order:returned_to_store', cb);
+    _socket?.on('order:failed_delivery_resolved', cb);
+  }
+
+  void offFailedDelivery() {
+    _socket?.off('order:failed_delivery');
+    _socket?.off('order:returned_to_store');
+    _socket?.off('order:failed_delivery_resolved');
+  }
 
   /// Kitchen staff: new confirmed order or status change in kitchen queue.
   void onKitchenOrderUpdated(void Function(dynamic data) cb) {

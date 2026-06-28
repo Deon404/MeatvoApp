@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:audioplayers/audioplayers.dart';
 import '../../models/earnings_data.dart';
 import '../../services/push_notification_service.dart';
 import '../../services/rider_service.dart';
 import '../../services/socket_service.dart';
+import '../../providers/rider_provider.dart';
+import '../../config/store_config.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
@@ -19,14 +24,15 @@ import 'rider_order_detail_screen.dart';
 import 'widgets/rider_bottom_nav.dart';
 
 /// Rider Dashboard Screen - Main screen for riders
-class RiderDashboardScreen extends StatefulWidget {
+class RiderDashboardScreen extends ConsumerStatefulWidget {
   const RiderDashboardScreen({super.key});
 
   @override
-  State<RiderDashboardScreen> createState() => _RiderDashboardScreenState();
+  ConsumerState<RiderDashboardScreen> createState() =>
+      _RiderDashboardScreenState();
 }
 
-class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
+class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
   final RiderService _riderService = RiderService();
   final SocketService _socketService = SocketService();
   final MapsService _mapsService = MapsService();
@@ -37,15 +43,15 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   EarningsData? _earnings;
   List<Map<String, dynamic>> _activeOrders = [];
   bool _isLoading = true;
+  bool _isLoadingOrders = true;
   bool _isLoadingEarnings = true;
   String? _loadError;
+  String? _ordersError;
   String? _earningsError;
   int _currentIndex = 0;
   final List<GlobalKey<NavigatorState>> _tabNavigatorKeys =
       List.generate(3, (_) => GlobalKey<NavigatorState>());
   Future<void> Function()? _refreshOrdersTab;
-  final Set<int> _alertedOrderIds = {};
-  final Set<String> _alertedAssignmentKeys = {};
 
   @override
   void initState() {
@@ -63,14 +69,19 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       }
 
       await _loadDashboardData();
-      await _subscribeToOrderAssignments();
-      await _subscribeToAssignmentSocketEvents();
+      // Realtime setup must not block the home tab spinner.
+      unawaited(_subscribeToOrderAssignments());
+      unawaited(_subscribeToAssignmentSocketEvents());
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
         _loadError = e.toString();
       });
+    } finally {
+      if (mounted && _isLoading) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -80,7 +91,8 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     _socketService.offOrderAutoAccepted();
     _socketService.offRouteZoneAssigned();
     _socketService.offOrderAssignmentCancelled();
-    _riderService.unsubscribeFromOrderAssignments();
+    _riderService.disposeRealtime();
+    ref.read(riderAssignmentAlertsProvider.notifier).clear();
     _audioPlayer.dispose();
     super.dispose();
   }
@@ -202,7 +214,9 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     );
 
     final alertKey = _batchAlertKey(orderIds);
-    if (_alertedAssignmentKeys.contains(alertKey)) {
+    if (ref
+        .read(riderAssignmentAlertsProvider.notifier)
+        .containsAssignment(alertKey)) {
       return;
     }
 
@@ -266,8 +280,9 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
 
     final primaryOrderId = orderIds.first;
     final alertKey = _batchAlertKey(orderIds);
-    _alertedAssignmentKeys.add(alertKey);
-    _alertedOrderIds.add(primaryOrderId);
+    final alerts = ref.read(riderAssignmentAlertsProvider.notifier);
+    alerts.addAssignment(alertKey);
+    alerts.addOrder(primaryOrderId.toString());
 
     try {
       _audioPlayer.play(AssetSource('sounds/new_order.mp3'));
@@ -286,8 +301,9 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
         onTimeout: () => _handleAssignmentSheetTimeout(orderIds),
       ),
     ).whenComplete(() {
-      _alertedAssignmentKeys.remove(alertKey);
-      _alertedOrderIds.remove(primaryOrderId);
+      final alerts = ref.read(riderAssignmentAlertsProvider.notifier);
+      alerts.removeAssignment(alertKey);
+      alerts.removeOrder(primaryOrderId.toString());
     });
   }
 
@@ -397,7 +413,9 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
         });
       });
       if (reason == 'timeout' || reason == 'auto_reassigned') {
-        _alertedOrderIds.remove(orderId);
+        ref
+            .read(riderAssignmentAlertsProvider.notifier)
+            .removeOrder(orderId.toString());
       }
     }
     _loadDashboardData(force: true);
@@ -443,6 +461,30 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
 
   DateTime? _lastLoadTime;
 
+  List<Map<String, dynamic>> _filterActiveOrders(
+    List<Map<String, dynamic>> orders,
+  ) {
+    return orders
+        .where((assignment) {
+          final status = (assignment['status'] as String? ?? '').toLowerCase();
+          return status != 'delivered' && status != 'cancelled';
+        })
+        .toList()
+      ..sort((a, b) {
+        final aOrder = a['order'] as Map<String, dynamic>?;
+        final bOrder = b['order'] as Map<String, dynamic>?;
+        final aId = int.tryParse(
+              aOrder?['id']?.toString() ?? a['id']?.toString() ?? '0',
+            ) ??
+            0;
+        final bId = int.tryParse(
+              bOrder?['id']?.toString() ?? b['id']?.toString() ?? '0',
+            ) ??
+            0;
+        return bId.compareTo(aId);
+      });
+  }
+
   Future<void> _loadDashboardData({bool force = false}) async {
     // Debounce routine refreshes, but always reload on new assignments.
     final now = DateTime.now();
@@ -453,60 +495,63 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       return;
     }
     _lastLoadTime = now;
-    
+
+    final showFullScreenLoader = _riderProfile == null;
     setState(() {
-      _isLoading = true;
+      if (showFullScreenLoader) _isLoading = true;
+      _isLoadingOrders = true;
       _isLoadingEarnings = true;
       _loadError = null;
+      _ordersError = null;
       _earningsError = null;
     });
+
+    // Profile first — home tab should not stay blank while orders query runs.
     try {
-      final profile = await _riderService.getRiderProfile();
-      final orders = await _riderService.getRiderOrders();
+      final profile = await _riderService.getRiderProfile().timeout(
+        const Duration(seconds: 25),
+        onTimeout: () => throw TimeoutException(
+          'Rider profile request timed out. Check your internet connection.',
+        ),
+      );
 
       if (mounted) {
         setState(() {
           _riderProfile = profile;
           _loadError = null;
-          _activeOrders = orders
-              .where((assignment) {
-                final status =
-                    (assignment['status'] as String? ?? '').toLowerCase();
-                return status != 'delivered' && status != 'cancelled';
-              })
-              .toList()
-            ..sort((a, b) {
-              final aOrder = a['order'] as Map<String, dynamic>?;
-              final bOrder = b['order'] as Map<String, dynamic>?;
-              final aId = int.tryParse(
-                    aOrder?['id']?.toString() ?? a['id']?.toString() ?? '0',
-                  ) ??
-                  0;
-              final bId = int.tryParse(
-                    bOrder?['id']?.toString() ?? b['id']?.toString() ?? '0',
-                  ) ??
-                  0;
-              return bId.compareTo(aId);
-            });
           _isLoading = false;
         });
       }
 
-      await _loadEarnings(
-        lifetimeTotal: (profile['earnings'] as num?)?.toDouble(),
-      );
+      unawaited(_loadOrdersAndEarnings());
     } on RoleAccessException catch (e) {
       if (mounted) {
-        setState(() => _isLoading = false);
+        setState(() {
+          _isLoading = false;
+          _isLoadingOrders = false;
+          _isLoadingEarnings = false;
+        });
         await handleRoleAccessDenied(e);
+      }
+    } on TimeoutException catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingOrders = false;
+          _isLoadingEarnings = false;
+          _loadError = e.message ?? e.toString();
+        });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isLoading = false;
+          _isLoadingOrders = false;
+          _isLoadingEarnings = false;
           _loadError = e.toString();
         });
-        if (e.toString().contains('429') || e.toString().contains('Too many requests')) {
+        if (e.toString().contains('429') ||
+            e.toString().contains('Too many requests')) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('Too many requests. Please wait a moment.'),
@@ -526,7 +571,47 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
     }
   }
 
-  Future<void> _loadEarnings({double? lifetimeTotal}) async {
+  Future<void> _loadOrdersAndEarnings() async {
+    try {
+      final orders = await _riderService.getRiderOrders().timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException(
+          'Orders request timed out. Pull down to retry.',
+        ),
+      );
+      if (mounted) {
+        setState(() {
+          _activeOrders = _filterActiveOrders(orders);
+          _ordersError = null;
+          _isLoadingOrders = false;
+        });
+      }
+    } on RoleAccessException catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingOrders = false);
+        await handleRoleAccessDenied(e);
+      }
+      return;
+    } on TimeoutException catch (e) {
+      if (mounted) {
+        setState(() {
+          _ordersError = e.message ?? e.toString();
+          _isLoadingOrders = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _ordersError = e.toString();
+          _isLoadingOrders = false;
+        });
+      }
+    }
+
+    await _loadEarnings();
+  }
+
+  Future<void> _loadEarnings() async {
     if (mounted) {
       setState(() {
         _isLoadingEarnings = true;
@@ -534,10 +619,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
       });
     }
     try {
-      final earnings = await _riderService.getRiderEarnings(
-        lifetimeTotal: lifetimeTotal ??
-            (_riderProfile?['earnings'] as num?)?.toDouble(),
-      );
+      final earnings = await _riderService.getRiderEarnings();
       if (mounted) {
         setState(() {
           _earnings = earnings;
@@ -663,7 +745,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                   color: Color(0xFFC8102E),
                 ),
               )
-            : _loadError != null && _riderProfile == null
+            : _loadError != null && _riderProfile == null && _activeOrders.isEmpty
                 ? _buildLoadErrorState()
                 : Column(
                 children: [
@@ -680,7 +762,19 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                             const SizedBox(height: 12),
                             _buildStatsCard(),
                             const SizedBox(height: 20),
-                            if (_activeOrders.isEmpty)
+                            if (_isLoadingOrders)
+                              const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 32),
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    color: Color(0xFFC8102E),
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            else if (_ordersError != null)
+                              _buildOrdersErrorState()
+                            else if (_activeOrders.isEmpty)
                               _buildEmptyState(isOnline)
                             else ...[
                               const Text(
@@ -703,6 +797,46 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
                   _buildSwipeToggleBottom(isOnline),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildOrdersErrorState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 48,
+            color: Color(0xFF9E9E9E),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Could not load orders',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF1A1A1A),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _ordersError!,
+            style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF6B6B6B),
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: () => _loadOrdersAndEarnings(),
+            child: const Text('Retry orders'),
+          ),
+        ],
       ),
     );
   }
@@ -762,9 +896,17 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
   }
 
   Widget _buildRiderInfoCardSimple() {
-    final riderName = _riderProfile?['name']?.toString() ?? 'Rider';
-    final vehicleNumber = _riderProfile?['vehicleNumber']?.toString() ?? 
-                          _riderProfile?['vehicle_number']?.toString() ?? 
+    final user = _riderProfile?['user'] as Map<String, dynamic>?;
+    final rawName = _riderProfile?['name']?.toString().trim() ??
+        user?['name']?.toString().trim() ??
+        '';
+    final phone = _riderProfile?['phone']?.toString().trim() ??
+        user?['phone']?.toString().trim() ??
+        '';
+    final riderName =
+        rawName.isNotEmpty ? rawName : (phone.isNotEmpty ? phone : 'Rider');
+    final vehicleNumber = _riderProfile?['vehicleNumber']?.toString() ??
+                          _riderProfile?['vehicle_number']?.toString() ??
                           'N/A';
     final initial = riderName.isNotEmpty ? riderName[0].toUpperCase() : 'R';
 
@@ -912,7 +1054,7 @@ class _RiderDashboardScreenState extends State<RiderDashboardScreen> {
             children: [
               _earningsPill('This Week', '₹${weekEarnings.toStringAsFixed(0)}'),
               const SizedBox(width: 10),
-              _earningsPill('Deliveries', '$deliveries'),
+              _earningsPill('This Month', '$deliveries deliveries'),
             ],
           ),
         ],
@@ -1761,9 +1903,9 @@ class NewOrderAlertSheet extends StatelessWidget {
                           color: Color(0xFF6B6B6B),
                         ),
                       ),
-                      const Text(
-                        'Meatvo Store',
-                        style: TextStyle(
+                      Text(
+                        StoreConfig.storeName,
+                        style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: Color(0xFF1A1A1A),
@@ -1810,7 +1952,7 @@ class NewOrderAlertSheet extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     const Text(
-                      'Earnings',
+                      'Order Value',
                       style: TextStyle(
                         fontSize: 11,
                         color: Color(0xFF6B6B6B),

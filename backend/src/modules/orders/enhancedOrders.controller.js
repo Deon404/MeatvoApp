@@ -32,6 +32,9 @@ const {
   getCODVerification,
 } = require('../../services/deliveryProof.service');
 const { validateRiderProofUpload } = require('../../utils/uploadSigning');
+const {
+  packOrderWithWeightReconciliation,
+} = require('../../services/packingWeightReconciliation.service');
 
 /**
  * POST /api/orders/:id/transition
@@ -42,6 +45,23 @@ const transitionState = asyncHandler(async (req, res) => {
   const { newState, notes } = req.body;
 
   const io = req.app.get('io');
+
+  if (String(newState).toUpperCase() === ORDER_STATES.PACKED) {
+    try {
+      const result = await packOrderWithWeightReconciliation({
+        orderId,
+        lineWeights: req.body?.items ?? req.body?.lineWeights ?? [],
+        actor: req.user.id,
+        actorRole: req.actorRole,
+        context: { notes },
+        io,
+      });
+      return ok(res, result, 'Order marked as packed');
+    } catch (error) {
+      const statusCode = error.statusCode || 400;
+      return fail(res, statusCode, error.message || 'Packing failed');
+    }
+  }
 
   const result = await transitionOrderState({
     orderId,
@@ -111,16 +131,21 @@ const startPacking = asyncHandler(async (req, res) => {
 const markPacked = asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id);
   const io = req.app.get('io');
+  const lineWeights = req.body?.items ?? req.body?.lineWeights ?? [];
 
-  const result = await transitionOrderState({
-    orderId,
-    newState: ORDER_STATES.PACKED,
-    actor: req.user.id,
-    actorRole: req.user.role,
-    io,
-  });
-
-  return ok(res, result, 'Order marked as packed');
+  try {
+    const result = await packOrderWithWeightReconciliation({
+      orderId,
+      lineWeights,
+      actor: req.user.id,
+      actorRole: req.user.role,
+      io,
+    });
+    return ok(res, result, 'Order marked as packed');
+  } catch (error) {
+    const statusCode = error.statusCode || 400;
+    return fail(res, statusCode, error.message || 'Packing failed');
+  }
 });
 
 /**

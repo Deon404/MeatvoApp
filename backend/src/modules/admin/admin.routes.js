@@ -8,6 +8,9 @@ const { ROLES } = require('../../utils/roles');
 const {
   updateDeliveryZone,
   toggleStoreOpen,
+  setStoreAcceptanceMode,
+  getCapacitySuggestion,
+  dismissCapacitySuggestionHandler,
   getBanner,
   putBanner,
   getTheme,
@@ -27,6 +30,9 @@ const {
   listOrdersCompat,
   patchOrderCompat,
   assignRiderToOrder,
+  listAdminTasksHandler,
+  resolveAssignmentFailureOrder,
+  resolveFailedDeliveryOrder,
   listProducts,
   createProductCompat,
   patchProductCompat,
@@ -44,6 +50,9 @@ const {
   updateSettings,
   changeUserRole,
   getAnalytics,
+  getOpsMetricsHandler,
+  listOperationalEventsHandler,
+  getOrderTimelineHandler,
 } = require('./admin.controller');
 const {
   dashboardSchema,
@@ -55,6 +64,9 @@ const {
   listOrdersCompatSchema,
   patchOrderCompatSchema,
   assignRiderToOrderSchema,
+  listAdminTasksSchema,
+  resolveFailedDeliverySchema,
+  resolveAssignmentFailureSchema,
   listCompatSchema,
   upsertCategoryCompatSchema,
   upsertProductCompatSchema,
@@ -68,6 +80,12 @@ const {
   changeUserRoleSchema,
   updateDeliveryZoneSchema,
   toggleStoreOpenSchema,
+  setStoreAcceptanceModeSchema,
+  dismissCapacitySuggestionSchema,
+  listOperationalEventsSchema,
+  getOrderTimelineSchema,
+  opsMetricsSchema,
+  analyticsSchema,
 } = require('./admin.validation');
 const { updateOrderStatus, getOrder } = require('../orders/orders.controller');
 const { updateOrderStatusSchema, getOrderSchema } = require('../orders/orders.validation');
@@ -92,6 +110,9 @@ router.get('/orders', ...adminOnly, validate(listOrdersCompatSchema), listOrders
 router.get('/orders/:id', ...adminOnly, validate(getOrderSchema), getOrder);
 router.patch('/orders/:id', ...adminOnly, validate(patchOrderCompatSchema), patchOrderCompat);
 router.post('/orders/:id/assign-rider', ...adminOnly, validate(assignRiderToOrderSchema), assignRiderToOrder);
+router.post('/orders/:id/resolve-failed-delivery', ...adminOnly, validate(resolveFailedDeliverySchema), resolveFailedDeliveryOrder);
+router.post('/orders/:id/resolve-assignment-failure', ...adminOnly, validate(resolveAssignmentFailureSchema), resolveAssignmentFailureOrder);
+router.get('/tasks', ...adminOnly, validate(listAdminTasksSchema), listAdminTasksHandler);
 router.patch('/orders/:id/status', ...adminOnly, validate(updateOrderStatusSchema), updateOrderStatus);
 
 // PRODUCTS
@@ -124,7 +145,22 @@ router.put('/settings/theme', ...adminOnly, validate(putThemeSchema), putTheme);
 router.get('/settings/app-info', ...adminOnly, validate(getSchema), getAppInfo);
 router.put('/settings/app-info', ...adminOnly, validate(putAppInfoSchema), putAppInfo);
 
-router.get('/analytics', ...adminOnly, validate(listCompatSchema), getAnalytics);
+router.get('/analytics', ...adminOnly, validate(analyticsSchema), getAnalytics);
+
+router.get('/ops-metrics', ...adminOnly, validate(opsMetricsSchema), getOpsMetricsHandler);
+
+router.get(
+  '/operational-events',
+  ...adminOnly,
+  validate(listOperationalEventsSchema),
+  listOperationalEventsHandler
+);
+router.get(
+  '/orders/:id/timeline',
+  ...adminOnly,
+  validate(getOrderTimelineSchema),
+  getOrderTimelineHandler
+);
 
 router.get('/firebase-config', ...adminOnly, getAdminFirebaseConfig);
 
@@ -134,6 +170,23 @@ router.post('/upload/image', ...adminOnly, ...secureImageUploadMiddleware, uploa
 // Delivery zone + store open/close (TASK-002, TASK-005)
 router.put('/store/delivery-zone', ...adminOnly, validate(updateDeliveryZoneSchema), updateDeliveryZone);
 router.patch('/store/toggle', ...adminOnly, validate(toggleStoreOpenSchema), toggleStoreOpen);
+router.patch(
+  '/store/acceptance-mode',
+  ...adminOnly,
+  validate(setStoreAcceptanceModeSchema),
+  setStoreAcceptanceMode
+);
+router.get(
+  '/store/capacity-suggestion',
+  ...adminOnly,
+  getCapacitySuggestion
+);
+router.post(
+  '/store/capacity-suggestion/dismiss',
+  ...adminOnly,
+  validate(dismissCapacitySuggestionSchema),
+  dismissCapacitySuggestionHandler
+);
 
 // Route optimization for admins
 const { getAdminOptimizedRoute, assignMultiRiderRoutes } = require('../delivery/delivery.controller');

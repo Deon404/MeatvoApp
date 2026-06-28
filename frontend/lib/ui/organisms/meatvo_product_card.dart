@@ -782,7 +782,7 @@ class _ImageBlock extends StatelessWidget {
             color: Colors.black.withValues(alpha: 0.35),
             alignment: Alignment.center,
             child: Text(
-              'Ordering paused',
+              'Not accepting orders',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               softWrap: false,

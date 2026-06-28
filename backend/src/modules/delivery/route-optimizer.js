@@ -2,8 +2,10 @@
  * Nearest-neighbor TSP route optimizer for multi-stop delivery.
  */
 
-const AVG_SPEED_KMH = 20;
-const STOP_MINUTES = 5;
+const { ROUTING } = require('../../config/businessRules');
+
+const AVG_SPEED_KMH = ROUTING.avgSpeedKmh;
+const STOP_MINUTES = ROUTING.stopMinutes;
 
 /**
  * Haversine distance between two coordinates in kilometres.

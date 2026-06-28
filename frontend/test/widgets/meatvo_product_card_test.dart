@@ -80,7 +80,7 @@ void main() {
     );
 
     await tester.pumpAndSettle();
-    expect(find.text('Ordering paused'), findsOneWidget);
+    expect(find.text('Not accepting orders'), findsOneWidget);
     expect(find.text('Closed'), findsOneWidget);
   });
 }

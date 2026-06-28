@@ -26,6 +26,8 @@ const {
   updateRiderEarnings,
 } = require('./earnings.service');
 const { emitOrderLifecycleEvent } = require('../utils/orderSocketEmit');
+const { instrumentOrderStateTransition } = require('../utils/operationalEvents.util');
+const { assertWeightReconciliationForDispatch } = require('../utils/weightReconciliationDispatch.util');
 
 /**
  * Transition order to new state
@@ -96,6 +98,20 @@ async function transitionOrderState({
         newState,
         paymentStatus,
       });
+    }
+
+    // Weight reconciliation must complete before PACKED or dispatch (OUT_FOR_DELIVERY).
+    if (
+      newState === ORDER_STATES.PACKED ||
+      newState === ORDER_STATES.OUT_FOR_DELIVERY
+    ) {
+      const { rows: reconRows } = await query(
+        `SELECT weight_reconciliation_status FROM orders WHERE id = $1`,
+        [orderId]
+      );
+      assertWeightReconciliationForDispatch(
+        reconRows[0]?.weight_reconciliation_status
+      );
     }
 
     // Update order state
@@ -194,6 +210,23 @@ async function transitionOrderState({
 
     // Handle automatic state-based actions
     await handleStateActions(orderId, newState, io);
+
+    instrumentOrderStateTransition(io, {
+      orderId,
+      previousState: currentState,
+      newState,
+      actor,
+      actorRole,
+      metadata: context,
+    });
+
+    if (
+      newState === ORDER_STATES.PACKED ||
+      newState === ORDER_STATES.DELIVERED
+    ) {
+      const { scheduleCapacitySuggestionCheck } = require('./capacitySuggestion.service');
+      scheduleCapacitySuggestionCheck(io);
+    }
 
     return {
       success: true,

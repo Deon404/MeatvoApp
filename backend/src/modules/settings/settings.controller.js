@@ -12,6 +12,12 @@ const {
   scheduleSchemaRepair,
 } = require('../../utils/storeSettings.util');
 const { DEFAULT_FREE_DELIVERY_THRESHOLD } = require('../../utils/orderPricing.util');
+const { SCHEMA_DEFAULTS, STORE } = require('../../config/businessRules');
+const {
+  publishOperationalEventAsync,
+  OPERATIONAL_EVENT_TYPES,
+  ACTOR_TYPES,
+} = require('../../utils/operationalEvents.util');
 
 const DEFAULT_THEME = {
   colors: {
@@ -53,12 +59,13 @@ const resolveAppInfo = (raw) => {
 const APP_SETTINGS_DDL = `
   CREATE TABLE IF NOT EXISTS app_settings (
     id SERIAL PRIMARY KEY,
-    delivery_charge NUMERIC(10,2) DEFAULT 30,
-    min_order_amount NUMERIC(10,2) DEFAULT 150,
+    delivery_charge NUMERIC(10,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryFee},
+    min_order_amount NUMERIC(10,2) DEFAULT ${SCHEMA_DEFAULTS.minOrderAmount},
     store_open BOOLEAN DEFAULT true,
+    store_acceptance_mode VARCHAR(32) DEFAULT 'accepting',
     store_open_time TIME,
     store_close_time TIME,
-    delivery_radius_km NUMERIC(5,2) DEFAULT 8.0,
+    delivery_radius_km NUMERIC(5,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryRadiusKm},
     value JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )
@@ -206,14 +213,21 @@ const putAppInfo = asyncHandler(async (req, res) => {
  */
 const getStoreStatus = asyncHandler(async (req, res) => {
   const settings = await getStoreSettings();
+  const {
+    STORE_ACCEPTANCE_LABELS,
+  } = require('../../constants/storeAcceptanceMode.constants');
+  const acceptanceMode = settings.acceptance_mode;
   return ok(res, {
     isOpen: Boolean(settings.is_open),
     manualOpen: Boolean(settings.manual_open),
     withinHours: Boolean(settings.within_hours),
+    acceptanceMode,
+    acceptanceModeLabel: STORE_ACCEPTANCE_LABELS[acceptanceMode] || 'Accepting Orders',
     storeOpenTime: settings.store_open_time ?? null,
     storeCloseTime: settings.store_close_time ?? null,
     closedReason: settings.closed_reason ?? null,
     closedMessage: settings.closed_message ?? null,
+    capacityMessage: settings.capacity_message ?? null,
     nextOpenDisplay: settings.next_open_display ?? null,
     deliveryRadiusKm: Number(settings.delivery_radius_km || DEFAULT_STORE_SETTINGS.delivery_radius_km),
     centerLat: Number(settings.center_lat || 0),
@@ -363,8 +377,8 @@ const estimateDelivery = asyncHandler(async (req, res) => {
 const updateDeliveryZone = asyncHandler(async (req, res) => {
   const { radiusKm, centerLat, centerLng } = req.body;
 
-  if (typeof radiusKm !== 'number' || radiusKm < 0.5 || radiusKm > 100) {
-    return fail(res, 400, 'radiusKm must be a number between 0.5 and 100');
+  if (typeof radiusKm !== 'number' || radiusKm < STORE.minDeliveryRadiusKm || radiusKm > STORE.maxDeliveryRadiusKm) {
+    return fail(res, 400, `radiusKm must be a number between ${STORE.minDeliveryRadiusKm} and ${STORE.maxDeliveryRadiusKm}`);
   }
   if (typeof centerLat !== 'number' || typeof centerLng !== 'number') {
     return fail(res, 400, 'centerLat and centerLng are required numbers');
@@ -389,11 +403,11 @@ const updateDeliveryZone = asyncHandler(async (req, res) => {
       await query(
         `CREATE TABLE IF NOT EXISTS store_settings (
           id SERIAL PRIMARY KEY,
-          delivery_radius_km DECIMAL(5,2) DEFAULT 5.0,
+          delivery_radius_km DECIMAL(5,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryRadiusKm},
           center_lat DECIMAL(10,7) DEFAULT 0,
           center_lng DECIMAL(10,7) DEFAULT 0,
-          min_order_amount DECIMAL(10,2) DEFAULT 150.0,
-          delivery_fee DECIMAL(10,2) DEFAULT 30.0,
+          min_order_amount DECIMAL(10,2) DEFAULT ${SCHEMA_DEFAULTS.minOrderAmount},
+          delivery_fee DECIMAL(10,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryFee},
           is_open BOOLEAN DEFAULT true,
           updated_at TIMESTAMPTZ DEFAULT NOW()
         )`
@@ -427,16 +441,22 @@ const updateDeliveryZone = asyncHandler(async (req, res) => {
  */
 const toggleStoreOpen = asyncHandler(async (req, res) => {
   const { toggleManualStoreOpen } = require('../../utils/storeSettings.util');
+  const {
+    STORE_ACCEPTANCE_LABELS,
+  } = require('../../constants/storeAcceptanceMode.constants');
   const settings = await toggleManualStoreOpen();
 
   emitToAll('store:status_changed', {
     isOpen: settings.is_open,
     manualOpen: settings.manual_open,
+    acceptanceMode: settings.acceptance_mode,
     closedMessage: settings.closed_message,
+    capacityMessage: settings.capacity_message,
   });
   logger.info('store_toggle', {
     manualOpen: settings.manual_open,
     isOpen: settings.is_open,
+    acceptanceMode: settings.acceptance_mode,
     adminId: req.user?.id,
   });
 
@@ -445,12 +465,94 @@ const toggleStoreOpen = asyncHandler(async (req, res) => {
     {
       isOpen: settings.is_open,
       manualOpen: settings.manual_open,
+      acceptanceMode: settings.acceptance_mode,
+      acceptanceModeLabel: STORE_ACCEPTANCE_LABELS[settings.acceptance_mode],
       closedMessage: settings.closed_message,
+      capacityMessage: settings.capacity_message,
     },
-    settings.manual_open
-      ? 'Store manual switch is ON — orders allowed during open hours'
-      : 'Store manual switch is OFF — orders paused until reopened'
+    STORE_ACCEPTANCE_LABELS[settings.acceptance_mode] || 'Store status updated'
   );
+});
+
+/**
+ * PATCH /api/admin/store/acceptance-mode
+ * Body: { mode: 'accepting' | 'limited_capacity' | 'not_accepting' }
+ */
+const setStoreAcceptanceMode = asyncHandler(async (req, res) => {
+  const {
+    setStoreAcceptanceMode: applyMode,
+    readOperationalSettings,
+    resolveAcceptanceMode,
+  } = require('../../utils/storeSettings.util');
+  const {
+    STORE_ACCEPTANCE_LABELS,
+  } = require('../../constants/storeAcceptanceMode.constants');
+  const mode = req.validated?.body?.mode;
+  const previousOperational = await readOperationalSettings();
+  const previousMode = resolveAcceptanceMode(previousOperational);
+  const settings = await applyMode(mode);
+  const io = req.app.get('io');
+
+  publishOperationalEventAsync(io, {
+    eventType: OPERATIONAL_EVENT_TYPES.ACCEPTANCE_MODE_CHANGED,
+    orderId: null,
+    actorType: ACTOR_TYPES.ADMIN,
+    actorId: req.user?.id,
+    metadata: {
+      previousMode,
+      newMode: settings.acceptance_mode,
+      acceptanceModeLabel: STORE_ACCEPTANCE_LABELS[settings.acceptance_mode],
+    },
+  });
+
+  emitToAll('store:status_changed', {
+    isOpen: settings.is_open,
+    manualOpen: settings.manual_open,
+    acceptanceMode: settings.acceptance_mode,
+    closedMessage: settings.closed_message,
+    capacityMessage: settings.capacity_message,
+  });
+  logger.info('store_acceptance_mode_updated', {
+    acceptanceMode: settings.acceptance_mode,
+    adminId: req.user?.id,
+  });
+
+  const { scheduleCapacitySuggestionCheck } = require('../../services/capacitySuggestion.service');
+  scheduleCapacitySuggestionCheck(io);
+
+  return ok(
+    res,
+    {
+      isOpen: settings.is_open,
+      manualOpen: settings.manual_open,
+      acceptanceMode: settings.acceptance_mode,
+      acceptanceModeLabel: STORE_ACCEPTANCE_LABELS[settings.acceptance_mode],
+      closedMessage: settings.closed_message,
+      capacityMessage: settings.capacity_message,
+    },
+    STORE_ACCEPTANCE_LABELS[settings.acceptance_mode] || 'Store status updated'
+  );
+});
+
+/**
+ * GET /api/admin/store/capacity-suggestion
+ * Returns the latest active capacity recommendation (advisory only).
+ */
+const getCapacitySuggestion = asyncHandler(async (req, res) => {
+  const { getActiveCapacitySuggestion } = require('../../services/capacitySuggestion.service');
+  const result = await getActiveCapacitySuggestion();
+  return ok(res, result, 'Capacity suggestion');
+});
+
+/**
+ * POST /api/admin/store/capacity-suggestion/dismiss
+ * Body: { minutes: 30 }
+ */
+const dismissCapacitySuggestionHandler = asyncHandler(async (req, res) => {
+  const { dismissCapacitySuggestion } = require('../../services/capacitySuggestion.service');
+  const minutes = req.validated?.body?.minutes;
+  const result = await dismissCapacitySuggestion(minutes);
+  return ok(res, result, 'Suggestion dismissed');
 });
 
 module.exports = {
@@ -469,6 +571,9 @@ module.exports = {
   estimateDelivery,
   updateDeliveryZone,
   toggleStoreOpen,
+  setStoreAcceptanceMode,
+  getCapacitySuggestion,
+  dismissCapacitySuggestionHandler,
   // Helpers
   getStoreSettings,
 };

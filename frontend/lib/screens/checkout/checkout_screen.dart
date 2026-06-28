@@ -121,12 +121,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (!mounted) return;
       setState(() {
         _storeStatus = status;
-        _isStoreOpen = status.isOpen;
+        _isStoreOpen = status.isAcceptingOrders;
         _storeStatusError = false;
         _deliveryFeeAmount = status.deliveryFee;
         _freeDeliveryThreshold = status.freeDeliveryThreshold;
       });
-      if (showClosedSheet && !status.isOpen) {
+      if (showClosedSheet && !status.isAcceptingOrders) {
         await _showStoreClosedSheet();
       }
     } catch (_) {
@@ -139,7 +139,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   Future<void> _showStoreClosedSheet({bool force = false}) async {
-    if (!mounted || _storeStatus == null || _storeStatus!.isOpen) return;
+    if (!mounted || _storeStatus == null || _storeStatus!.isAcceptingOrders) return;
     if (!force && _storeClosedSheetShown) return;
     _storeClosedSheetShown = true;
     await StoreClosedSheet.show(context, _storeStatus!);
@@ -243,7 +243,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     if (raw.toLowerCase().contains('store is closed')) {
       return _storeStatus?.displayClosedMessage ??
-          'Store is closed — orders resume when we open.';
+          'We are not accepting orders right now — please check back soon.';
     }
     if (raw.toLowerCase().contains('payment service unavailable') ||
         raw.toLowerCase().contains('failed to initiate payment')) {
@@ -631,17 +631,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                     width: double.infinity,
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
-                                      color: AppTheme.warning.withValues(alpha: 0.12),
+                                      color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
-                                        color: AppTheme.warning.withValues(alpha: 0.35),
+                                        color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
                                       ),
                                     ),
                                     child: Row(
                                       children: [
                                         const Icon(
                                           Icons.warning_amber_rounded,
-                                          color: AppTheme.warning,
+                                          color: const Color(0xFFF59E0B),
                                           size: 20,
                                         ),
                                         const SizedBox(width: 10),
@@ -671,7 +671,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                   storeClosedMessage: _isStoreOpen
                                       ? null
                                       : (_storeStatus?.displayClosedMessage ??
-                                          'Store is closed — orders resume when we open.'),
+                                          'We are not accepting orders right now — please check back soon.'),
                                 ),
                               ],
                             ],

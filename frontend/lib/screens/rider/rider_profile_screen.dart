@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/earnings_data.dart';
 import '../../services/auth_service.dart';
+import '../../services/rider_location_service.dart';
 import '../../services/rider_service.dart';
 import '../../services/socket_service.dart';
+import '../../providers/rider_provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../auth/phone_screen.dart';
 import 'rider_analytics_screen.dart';
 
 /// Rider Profile Screen - Rider profile and settings
-class RiderProfileScreen extends StatefulWidget {
+class RiderProfileScreen extends ConsumerStatefulWidget {
   final VoidCallback? onBack;
 
   const RiderProfileScreen({
@@ -18,10 +21,11 @@ class RiderProfileScreen extends StatefulWidget {
   });
 
   @override
-  State<RiderProfileScreen> createState() => _RiderProfileScreenState();
+  ConsumerState<RiderProfileScreen> createState() =>
+      _RiderProfileScreenState();
 }
 
-class _RiderProfileScreenState extends State<RiderProfileScreen> {
+class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
   final RiderService _riderService = RiderService();
   Map<String, dynamic>? _riderProfile;
   EarningsData? _earnings;
@@ -42,9 +46,7 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
 
     try {
       final profile = await _riderService.getRiderProfile();
-      final earnings = await _riderService.getRiderEarnings(
-        lifetimeTotal: (profile['earnings'] as num?)?.toDouble(),
-      );
+      final earnings = await _riderService.getRiderEarnings();
       if (mounted) {
         setState(() {
           _riderProfile = profile;
@@ -182,11 +184,16 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
 
   Widget _buildProfileHeader() {
     final user = _riderProfile?['user'] as Map<String, dynamic>?;
-    final userName = _riderProfile?['name'] as String? ??
-        user?['name'] as String? ??
-        'Rider';
+    final rawName = _riderProfile?['name']?.toString().trim() ??
+        user?['name']?.toString().trim() ??
+        '';
     final userPhone =
-        _riderProfile?['phone'] as String? ?? user?['phone'] as String? ?? '';
+        _riderProfile?['phone']?.toString().trim() ??
+        user?['phone']?.toString().trim() ??
+        '';
+    final userName = rawName.isNotEmpty
+        ? rawName
+        : (userPhone.isNotEmpty ? userPhone : 'Rider');
     final userEmail = user?['email'] as String? ?? '';
     final profileImage = user?['profile_image'] as String?;
     final status = _riderProfile?['status'] as String? ??
@@ -782,6 +789,9 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
     if (confirmed != true || !mounted) return;
 
     try {
+      ref.read(riderServiceProvider).disposeRealtime();
+      ref.read(riderLocationServiceProvider).stopSendingLocation();
+      ref.read(riderAssignmentAlertsProvider.notifier).clear();
       SocketService().disconnect();
       await AuthService().signOut();
       if (!mounted) return;

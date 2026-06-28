@@ -2,24 +2,29 @@ const { query } = require('../db/postgres');
 const { haversineKm } = require('../modules/delivery/route-optimizer');
 const { addressToText } = require('../utils/address');
 const { logger } = require('../utils/logger');
+const {
+  instrumentBatchCreated,
+  instrumentRiderAssigned,
+} = require('../utils/operationalEvents.util');
+const { recordDeliveryBatch } = require('./operationalEvent.service');
+const { refreshPartnerOperationalState } = require('../utils/deliveryPartner.util');
+const {
+  assignableOrderStatuses,
+  activeAssignmentStatuses,
+} = require('./assignment.constants');
+const {
+  BATCHING,
+  resolveBatchWaitMs,
+} = require('../config/businessRules');
 
-const BATCH_RADIUS_KM = 2.0;
-const MAX_BATCH_SIZE = 4;
-const BATCH_WAIT_MS = 3 * 60 * 1000;
-/** Store→customer distance above this skips the batch wait (edge-of-zone orders). */
-const EDGE_ZONE_BATCH_SKIP_KM = 4;
-
-const assignableOrderStatuses = ['PACKED'];
-const activeAssignmentStatuses = ['ASSIGNED', 'ACCEPTED', 'PICKED'];
+const BATCH_RADIUS_KM = BATCHING.radiusKm;
+const MAX_BATCH_SIZE = BATCHING.maxBatchSize;
+const BATCH_WAIT_MS = BATCHING.waitMs;
+const EDGE_ZONE_BATCH_SKIP_KM = BATCHING.edgeZoneSkipKm;
+const BATCH_LOOKBACK_MINUTES = BATCHING.lookbackMinutes;
 
 /** @type {Map<number, { riderId: number, riderUserId: number, io: any, lat: number, lng: number, orderIds: Set<number>, timer: NodeJS.Timeout }>} */
 const pendingBatchWindows = new Map();
-
-function resolveBatchWaitMs() {
-  const env = Number(process.env.BATCH_WAIT_MS);
-  return Number.isFinite(env) && env >= 0 ? env : BATCH_WAIT_MS;
-}
-
 async function getOrderCoords(orderId) {
   const { rows } = await query(
     `SELECT (address->>'lat')::numeric AS lat,
@@ -129,8 +134,8 @@ async function tryJoinBatchWindow(orderId) {
  * @param {number} newOrderId
  * @returns {Promise<number[]>}
  */
-async function getBatchForRider(riderId, newOrderId) {
-  void riderId;
+async function getBatchForRider(riderId, newOrderId, maxBatchSize = MAX_BATCH_SIZE) {
+  const effectiveMax = Math.max(1, Math.min(maxBatchSize, MAX_BATCH_SIZE));
 
   const coords = await getOrderCoords(newOrderId);
   if (!coords) {
@@ -149,7 +154,7 @@ async function getBatchForRider(riderId, newOrderId) {
      WHERE o.status = ANY($3::order_status[])
        AND oa.id IS NULL
        AND o.id != $1
-       AND o.created_at > NOW() - INTERVAL '10 minutes'
+       AND o.created_at > NOW() - INTERVAL '${BATCH_LOOKBACK_MINUTES} minutes'
        AND (o.address->>'lat') IS NOT NULL
        AND (o.address->>'lng') IS NOT NULL`,
     [newOrderId, activeAssignmentStatuses, assignableOrderStatuses]
@@ -158,7 +163,7 @@ async function getBatchForRider(riderId, newOrderId) {
   const batchOrders = [Number(newOrderId)];
 
   for (const order of nearbyOrders.rows) {
-    if (batchOrders.length >= MAX_BATCH_SIZE) break;
+    if (batchOrders.length >= effectiveMax) break;
 
     const dist = haversineKm(newLat, newLng, Number(order.lat), Number(order.lng));
     if (dist <= BATCH_RADIUS_KM) {
@@ -229,8 +234,9 @@ function buildBatchSocketPayload(assignedOrderIds, orders) {
  * Persist batch assignments and notify rider + customers.
  * @returns {Promise<number[]>}
  */
-async function assignBatchToRider(riderId, riderUserId, orderIds, io) {
-  const normalizedIds = [...new Set(orderIds.map(Number))].slice(0, MAX_BATCH_SIZE);
+async function assignBatchToRider(riderId, riderUserId, orderIds, io, maxBatchSize = MAX_BATCH_SIZE) {
+  const cap = Math.max(1, Math.min(maxBatchSize, MAX_BATCH_SIZE));
+  const normalizedIds = [...new Set(orderIds.map(Number))].slice(0, cap);
   const batchJson = JSON.stringify(normalizedIds);
   const assignedOrderIds = [];
 
@@ -239,7 +245,12 @@ async function assignBatchToRider(riderId, riderUserId, orderIds, io) {
       `INSERT INTO order_assignments
          (order_id, delivery_partner_id, status, assigned_at, batch_ids)
        VALUES ($1, $2, 'ASSIGNED', NOW(), $3::jsonb)
-       ON CONFLICT (order_id) DO NOTHING`,
+       ON CONFLICT (order_id)
+       DO UPDATE SET
+         delivery_partner_id = EXCLUDED.delivery_partner_id,
+         status = 'ASSIGNED',
+         assigned_at = NOW(),
+         batch_ids = EXCLUDED.batch_ids`,
       [orderId, riderId, batchJson]
     );
     if (rowCount > 0) {
@@ -276,10 +287,51 @@ async function assignBatchToRider(riderId, riderUserId, orderIds, io) {
     batchSize: assignedOrderIds.length,
   });
 
+  if (assignedOrderIds.length > 1) {
+    const anchorOrderId = assignedOrderIds[0];
+    recordDeliveryBatch({
+      anchorOrderId,
+      orderIds: assignedOrderIds,
+      batchSize: assignedOrderIds.length,
+    }).then((batchRow) => {
+      instrumentBatchCreated(io, {
+        orderIds: assignedOrderIds,
+        anchorOrderId,
+        batchId: batchRow?.id ?? null,
+        batchSize: assignedOrderIds.length,
+        riderId,
+      });
+      for (const orderId of assignedOrderIds) {
+        instrumentRiderAssigned(io, {
+          orderId,
+          riderId,
+          riderUserId,
+          assignmentSuccess: true,
+          batchId: batchRow?.id ?? null,
+          batchSize: assignedOrderIds.length,
+        });
+      }
+    }).catch(() => {});
+  } else if (assignedOrderIds.length === 1) {
+    instrumentRiderAssigned(io, {
+      orderId: assignedOrderIds[0],
+      riderId,
+      riderUserId,
+      assignmentSuccess: true,
+      batchSize: 1,
+    });
+  }
+
+  refreshPartnerOperationalState({
+    deliveryPartnerId: riderId,
+    io,
+    reason: 'batch_assigned',
+  }).catch(() => {});
+
   return assignedOrderIds;
 }
 
-async function finalizeBatchWindow(anchorOrderId, onAssigned) {
+async function finalizeBatchWindow(anchorOrderId, onAssigned, maxBatchSize = MAX_BATCH_SIZE) {
   const window = pendingBatchWindows.get(Number(anchorOrderId));
   if (!window) return [];
 
@@ -287,10 +339,10 @@ async function finalizeBatchWindow(anchorOrderId, onAssigned) {
   clearTimeout(window.timer);
 
   try {
-    const scanned = await getBatchForRider(window.riderId, anchorOrderId);
+    const scanned = await getBatchForRider(window.riderId, anchorOrderId, maxBatchSize);
     const merged = [...window.orderIds];
     for (const id of scanned) {
-      if (!merged.includes(id) && merged.length < MAX_BATCH_SIZE) {
+      if (!merged.includes(id) && merged.length < maxBatchSize) {
         merged.push(id);
       }
     }
@@ -299,7 +351,8 @@ async function finalizeBatchWindow(anchorOrderId, onAssigned) {
       window.riderId,
       window.riderUserId,
       merged,
-      window.io
+      window.io,
+      maxBatchSize
     );
     if (onAssigned) {
       onAssigned(assigned);
@@ -324,14 +377,16 @@ async function scheduleBatchAssignment({
   riderUserId,
   io,
   onAssigned,
+  maxBatchSize = MAX_BATCH_SIZE,
 }) {
+  const effectiveMax = Math.max(1, Math.min(maxBatchSize, MAX_BATCH_SIZE));
   const { waitMs } = await resolveEffectiveBatchWaitMs(triggerOrderId);
   const coords = await getOrderCoords(triggerOrderId);
   const numericTriggerId = Number(triggerOrderId);
 
   if (!coords || waitMs <= 0) {
-    const batchOrderIds = await getBatchForRider(riderId, numericTriggerId);
-    const assigned = await assignBatchToRider(riderId, riderUserId, batchOrderIds, io);
+    const batchOrderIds = await getBatchForRider(riderId, numericTriggerId, effectiveMax);
+    const assigned = await assignBatchToRider(riderId, riderUserId, batchOrderIds, io, effectiveMax);
     if (onAssigned) onAssigned(assigned);
     return { immediate: true, assignedOrderIds: assigned };
   }
@@ -351,7 +406,7 @@ async function scheduleBatchAssignment({
   }
 
   const timer = setTimeout(() => {
-    finalizeBatchWindow(numericTriggerId, onAssigned).catch((err) => {
+    finalizeBatchWindow(numericTriggerId, onAssigned, effectiveMax).catch((err) => {
       logger.error('batch_window_timer_failed', {
         anchorOrderId: numericTriggerId,
         error: err.message,

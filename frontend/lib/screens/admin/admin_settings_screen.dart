@@ -4,6 +4,7 @@ import '../../services/store_status_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
+import '../../widgets/admin/capacity_suggestion_card.dart';
 
 class AdminSettingsScreen extends StatefulWidget {
   const AdminSettingsScreen({super.key});
@@ -23,9 +24,12 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
 
   bool _isLoading = true;
   bool _isSaving = false;
-  bool _manualStoreOpen = true;
-  bool _effectiveStoreOpen = true;
-  bool _isTogglingStore = false;
+  StoreAcceptanceMode _acceptanceMode = StoreAcceptanceMode.accepting;
+  StoreAcceptanceMode _effectiveAcceptanceMode = StoreAcceptanceMode.accepting;
+  bool _isUpdatingAcceptanceMode = false;
+  CapacitySuggestion? _capacitySuggestion;
+  bool _isApplyingSuggestion = false;
+  bool _isDismissingSuggestion = false;
 
   @override
   void initState() {
@@ -108,9 +112,11 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       final results = await Future.wait([
         _adminService.getStoreSettings(),
         _storeStatusService.fetchStatus(),
+        _adminService.getCapacitySuggestion(),
       ]);
       final s = results[0] as Map<String, dynamic>;
       final status = results[1] as StoreStatus;
+      final capacityResponse = results[2] as CapacitySuggestionResponse?;
       if (!mounted) return;
       setState(() {
         _deliveryChargeController.text =
@@ -125,8 +131,14 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           s['store_close_time']?.toString(),
           const TimeOfDay(hour: 21, minute: 0),
         );
-        _manualStoreOpen = s['store_open'] == true;
-        _effectiveStoreOpen = status.isOpen;
+        _acceptanceMode = StoreAcceptanceModeX.fromApi(
+          s['store_acceptance_mode']?.toString(),
+          isOpen: status.isOpen,
+        );
+        _effectiveAcceptanceMode = status.acceptanceMode;
+        _capacitySuggestion = capacityResponse?.active == true
+            ? capacityResponse?.suggestion
+            : null;
         _isLoading = false;
       });
     } catch (e) {
@@ -172,25 +184,72 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
     }
   }
 
-  Future<void> _toggleStoreOpen(bool value) async {
-    if (_isTogglingStore || value == _manualStoreOpen) return;
-    setState(() => _isTogglingStore = true);
+  Future<void> _setAcceptanceMode(StoreAcceptanceMode mode) async {
+    if (_isUpdatingAcceptanceMode || mode == _acceptanceMode) return;
+    setState(() => _isUpdatingAcceptanceMode = true);
     try {
-      final status = await _storeStatusService.toggleStoreOpen();
+      final status = await _storeStatusService.setAcceptanceMode(mode);
       if (!mounted) return;
       setState(() {
-        _manualStoreOpen = status.manualOpen;
-        _effectiveStoreOpen = status.isOpen;
+        _acceptanceMode = status.acceptanceMode;
+        _effectiveAcceptanceMode = status.acceptanceMode;
       });
-      _toast(
-        status.manualOpen
-            ? 'Store switch is ON — orders allowed during open hours'
-            : 'Store switch is OFF — orders paused until you reopen',
-      );
+      _toast('Store is now ${status.acceptanceMode.customerLabel}');
     } catch (e) {
       _toast(e.toString(), isError: true);
     } finally {
-      if (mounted) setState(() => _isTogglingStore = false);
+      if (mounted) setState(() => _isUpdatingAcceptanceMode = false);
+    }
+  }
+
+  Future<void> _applyCapacitySuggestion() async {
+    final suggestion = _capacitySuggestion;
+    if (suggestion == null || _isApplyingSuggestion) return;
+    setState(() => _isApplyingSuggestion = true);
+    try {
+      await _setAcceptanceMode(suggestion.suggestedAcceptanceMode);
+      if (!mounted) return;
+      setState(() => _capacitySuggestion = null);
+      await _load();
+    } finally {
+      if (mounted) setState(() => _isApplyingSuggestion = false);
+    }
+  }
+
+  Future<void> _dismissCapacitySuggestion() async {
+    if (_isDismissingSuggestion) return;
+    setState(() => _isDismissingSuggestion = true);
+    try {
+      await _adminService.dismissCapacitySuggestion(minutes: 30);
+      if (!mounted) return;
+      setState(() => _capacitySuggestion = null);
+      _toast('Recommendation dismissed for 30 minutes');
+    } catch (e) {
+      _toast(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _isDismissingSuggestion = false);
+    }
+  }
+
+  String _acceptanceModeDescription(StoreAcceptanceMode mode) {
+    switch (mode) {
+      case StoreAcceptanceMode.accepting:
+        return 'Customers can place COD and online orders during store hours.';
+      case StoreAcceptanceMode.limitedCapacity:
+        return 'Orders still accepted, but customers see longer delivery expectations.';
+      case StoreAcceptanceMode.notAccepting:
+        return 'Checkout is blocked until you switch back to accepting orders.';
+    }
+  }
+
+  Color _acceptanceModeColor(StoreAcceptanceMode mode) {
+    switch (mode) {
+      case StoreAcceptanceMode.accepting:
+        return AppColors.success;
+      case StoreAcceptanceMode.limitedCapacity:
+        return AppColors.warning;
+      case StoreAcceptanceMode.notAccepting:
+        return AppColors.primary;
     }
   }
 
@@ -220,62 +279,84 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (_capacitySuggestion != null) ...[
+                    CapacitySuggestionCard(
+                      suggestion: _capacitySuggestion!,
+                      onApply: _applyCapacitySuggestion,
+                      onDismiss: _dismissCapacitySuggestion,
+                      isApplying: _isApplyingSuggestion,
+                      isDismissing: _isDismissingSuggestion,
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: _effectiveStoreOpen
-                          ? AppColors.success.withValues(alpha: 0.08)
-                          : AppColors.primaryLight,
+                      color: _acceptanceModeColor(_effectiveAcceptanceMode)
+                          .withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _effectiveStoreOpen
-                            ? AppColors.success.withValues(alpha: 0.25)
-                            : AppColors.primary.withValues(alpha: 0.2),
+                        color: _acceptanceModeColor(_effectiveAcceptanceMode)
+                            .withValues(alpha: 0.25),
                       ),
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          _effectiveStoreOpen
-                              ? Icons.storefront_outlined
-                              : Icons.store_mall_directory_outlined,
-                          color: _effectiveStoreOpen
-                              ? AppColors.success
-                              : AppColors.primary,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _effectiveStoreOpen
-                                    ? 'Accepting orders now'
-                                    : 'Orders blocked right now',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 16,
-                                ),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.storefront_outlined,
+                              color: _acceptanceModeColor(_effectiveAcceptanceMode),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _effectiveAcceptanceMode.customerLabel,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _acceptanceModeDescription(_effectiveAcceptanceMode),
+                                    style: const TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                _effectiveStoreOpen
-                                    ? 'Customers can place COD and online orders during store hours.'
-                                    : (_manualStoreOpen
-                                        ? 'Outside store hours — checkout resumes when open.'
-                                        : 'Manual switch is OFF — checkout blocked until you reopen.'),
-                                style: const TextStyle(
-                                  color: AppColors.textSecondary,
-                                  fontSize: 13,
-                                ),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        Switch.adaptive(
-                          value: _manualStoreOpen,
-                          onChanged: _isTogglingStore ? null : _toggleStoreOpen,
-                          activeThumbColor: AppColors.success,
+                        const SizedBox(height: 16),
+                        SegmentedButton<StoreAcceptanceMode>(
+                          segments: const [
+                            ButtonSegment(
+                              value: StoreAcceptanceMode.accepting,
+                              label: Text('Accepting'),
+                            ),
+                            ButtonSegment(
+                              value: StoreAcceptanceMode.limitedCapacity,
+                              label: Text('Limited'),
+                            ),
+                            ButtonSegment(
+                              value: StoreAcceptanceMode.notAccepting,
+                              label: Text('Paused'),
+                            ),
+                          ],
+                          selected: {_acceptanceMode},
+                          onSelectionChanged: _isUpdatingAcceptanceMode
+                              ? null
+                              : (selection) {
+                                  if (selection.isEmpty) return;
+                                  _setAcceptanceMode(selection.first);
+                                },
                         ),
                       ],
                     ),

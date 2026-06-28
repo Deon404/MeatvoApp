@@ -1,29 +1,18 @@
 const { query } = require('../db/postgres');
 const { repairAppSettingsSchema } = require('../db/appSettings');
 const { resolveStoreAvailability } = require('./storeHours.util');
+const {
+  STORE_ACCEPTANCE_MODE,
+  normalizeAcceptanceMode,
+} = require('../constants/storeAcceptanceMode.constants');
+const {
+  DEFAULT_STORE_SETTINGS,
+  SCHEMA_DEFAULTS,
+  STORE,
+} = require('../config/businessRules');
 
-const DEFAULT_STORE_SETTINGS = {
-  delivery_radius_km: 8.0,
-  center_lat: 23.6583,
-  center_lng: 86.1764,
-  min_order_amount: 150.0,
-  delivery_fee: 30.0,
-  free_delivery_above: 500.0,
-  is_open: true,
-  manual_open: true,
-  within_hours: true,
-  store_open_time: '09:00',
-  store_close_time: '22:00',
-  closed_reason: null,
-  closed_message: null,
-  next_open_display: null,
-};
-
-const STORE_SETTINGS_CACHE_TTL_MS = Number(
-  process.env.STORE_SETTINGS_CACHE_TTL_MS || 60_000
-);
-
-const DB_READ_TIMEOUT_MS = 5000;
+const STORE_SETTINGS_CACHE_TTL_MS = STORE.cacheTtlMs;
+const DB_READ_TIMEOUT_MS = STORE.dbReadTimeoutMs;
 
 let cachedMergedSettings = null;
 let cachedMergedAt = 0;
@@ -57,8 +46,10 @@ const scheduleSchemaRepair = () => {
 
 const buildMergedSettings = (operational = {}, storeRow = null) => {
   const manualOpen = resolveManualOpen(operational, storeRow);
+  const acceptanceMode = resolveAcceptanceMode(operational);
   const availability = resolveStoreAvailability({
     manualOpen,
+    acceptanceMode,
     storeOpenTime: operational.store_open_time ?? null,
     storeCloseTime: operational.store_close_time ?? null,
   });
@@ -92,6 +83,8 @@ const buildMergedSettings = (operational = {}, storeRow = null) => {
     closed_reason: availability.closed_reason,
     closed_message: availability.closed_message,
     next_open_display: availability.next_open_display,
+    acceptance_mode: availability.acceptance_mode,
+    capacity_message: availability.capacity_message,
   };
 };
 
@@ -104,15 +97,9 @@ const parseNumericSettingValue = (raw) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-/** Reads free_delivery_above from app_settings (key-value row or JSONB blob). */
+/** Reads free_delivery_above from app_settings value JSONB. */
 const readFreeDeliveryAbove = async () => {
   try {
-    const { rows } = await queryWithTimeout(
-      `SELECT value FROM app_settings WHERE key = 'free_delivery_above' LIMIT 1`
-    );
-    const fromKeyRow = parseNumericSettingValue(rows[0]?.value);
-    if (fromKeyRow != null) return fromKeyRow;
-
     const { rows: blobRows } = await queryWithTimeout(
       `SELECT value->'free_delivery_above' AS value
        FROM app_settings
@@ -130,7 +117,7 @@ const readOperationalSettings = async () => {
   try {
     const { rows } = await queryWithTimeout(
       `SELECT delivery_charge, min_order_amount, store_open,
-              store_open_time, store_close_time, delivery_radius_km
+              store_acceptance_mode, store_open_time, store_close_time, delivery_radius_km
        FROM app_settings
        ORDER BY updated_at DESC NULLS LAST
        LIMIT 1`
@@ -150,11 +137,11 @@ const readOperationalSettings = async () => {
 const STORE_SETTINGS_DDL = `
   CREATE TABLE IF NOT EXISTS store_settings (
     id SERIAL PRIMARY KEY,
-    delivery_radius_km DECIMAL(5,2) DEFAULT 5.0,
+    delivery_radius_km DECIMAL(5,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryRadiusKm},
     center_lat DECIMAL(10,7) DEFAULT 0,
     center_lng DECIMAL(10,7) DEFAULT 0,
-    min_order_amount DECIMAL(10,2) DEFAULT 150.0,
-    delivery_fee DECIMAL(10,2) DEFAULT 30.0,
+    min_order_amount DECIMAL(10,2) DEFAULT ${SCHEMA_DEFAULTS.minOrderAmount},
+    delivery_fee DECIMAL(10,2) DEFAULT ${SCHEMA_DEFAULTS.deliveryFee},
     is_open BOOLEAN DEFAULT true,
     updated_at TIMESTAMPTZ DEFAULT NOW()
   )
@@ -193,6 +180,16 @@ const readStoreSettingsRow = async () => {
     if (err?.code === 'ETIMEOUT') return null;
     throw err;
   }
+};
+
+const resolveAcceptanceMode = (operational) => {
+  if (operational.store_acceptance_mode != null && operational.store_acceptance_mode !== '') {
+    return normalizeAcceptanceMode(operational.store_acceptance_mode);
+  }
+  if (operational.store_open === false) {
+    return STORE_ACCEPTANCE_MODE.NOT_ACCEPTING;
+  }
+  return DEFAULT_STORE_SETTINGS.acceptance_mode;
 };
 
 const resolveManualOpen = (operational, storeRow) => {
@@ -312,8 +309,17 @@ const syncOperationalToStoreSettings = async (operational = {}) => {
 const toggleManualStoreOpen = async () => {
   const operational = await readOperationalSettings();
   const storeRow = await readStoreSettingsRow();
-  const currentManual = resolveManualOpen(operational, storeRow);
-  const nextManual = !currentManual;
+  const currentMode = resolveAcceptanceMode(operational);
+  const nextMode =
+    currentMode === STORE_ACCEPTANCE_MODE.NOT_ACCEPTING
+      ? STORE_ACCEPTANCE_MODE.ACCEPTING
+      : STORE_ACCEPTANCE_MODE.NOT_ACCEPTING;
+  return setStoreAcceptanceMode(nextMode);
+};
+
+const setStoreAcceptanceMode = async (mode) => {
+  const normalizedMode = normalizeAcceptanceMode(mode);
+  const manualOpen = normalizedMode !== STORE_ACCEPTANCE_MODE.NOT_ACCEPTING;
 
   const { rows: existing } = await query(
     `SELECT ctid FROM app_settings
@@ -324,19 +330,24 @@ const toggleManualStoreOpen = async () => {
   if (existing[0]) {
     await query(
       `UPDATE app_settings
-       SET store_open = $1, updated_at = NOW()
-       WHERE ctid = $2`,
-      [nextManual, existing[0].ctid]
+       SET store_open = $1,
+           store_acceptance_mode = $2,
+           updated_at = NOW()
+       WHERE ctid = $3`,
+      [manualOpen, normalizedMode, existing[0].ctid]
     );
   } else {
     await query(
-      `INSERT INTO app_settings (store_open, updated_at)
-       VALUES ($1, NOW())`,
-      [nextManual]
+      `INSERT INTO app_settings (store_open, store_acceptance_mode, updated_at)
+       VALUES ($1, $2, NOW())`,
+      [manualOpen, normalizedMode]
     );
   }
 
-  await syncOperationalToStoreSettings({ store_open: nextManual });
+  await syncOperationalToStoreSettings({
+    store_open: manualOpen,
+    store_acceptance_mode: normalizedMode,
+  });
   return getMergedStoreSettings({ forceRefresh: true });
 };
 
@@ -351,5 +362,7 @@ module.exports = {
   invalidateStoreSettingsCache,
   syncOperationalToStoreSettings,
   toggleManualStoreOpen,
+  setStoreAcceptanceMode,
   resolveManualOpen,
+  resolveAcceptanceMode,
 };

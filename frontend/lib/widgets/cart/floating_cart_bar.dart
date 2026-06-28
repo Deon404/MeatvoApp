@@ -70,7 +70,7 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
       builder: (context, cart, _) {
         final visible = cart.isNotEmpty;
         final itemCount = cart.totalQuantity.toInt();
-        final isOpen = storeSettings.isOpen;
+        final canOrder = storeSettings.isAcceptingOrders;
 
         return AnimatedSlide(
           duration: const Duration(milliseconds: 280),
@@ -94,7 +94,7 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
                     shadowColor: mv.brandPrimary.withValues(alpha: 0.3),
                     child: InkWell(
                       onTap: () {
-                        if (!isOpen) {
+                        if (!canOrder) {
                           StoreClosedSheet.show(context, storeSettings);
                           return;
                         }
@@ -133,7 +133,7 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
-                                      isOpen ? 'View Cart' : 'Store closed',
+                                      canOrder ? 'View Cart' : 'Not accepting orders',
                                       style: Theme.of(context)
                                           .textTheme
                                           .labelLarge
@@ -181,7 +181,7 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
                                 width: 28,
                                 height: 28,
                                 decoration: BoxDecoration(
-                                  color: isOpen
+                                  color: canOrder
                                       ? mv.brandPrimaryDark
                                       : Colors.white.withValues(alpha: 0.15),
                                   shape: BoxShape.circle,
@@ -189,7 +189,7 @@ class _FloatingCartBarState extends ConsumerState<FloatingCartBar>
                                 child: Icon(
                                   Icons.chevron_right_rounded,
                                   color: Colors.white.withValues(
-                                    alpha: isOpen ? 1 : 0.7,
+                                    alpha: canOrder ? 1 : 0.7,
                                   ),
                                   size: 20,
                                 ),

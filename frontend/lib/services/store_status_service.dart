@@ -1,83 +1,114 @@
 import 'package:dio/dio.dart';
 
-
-
 import 'api_service.dart';
 import '../utils/store_time_util.dart';
 
+enum StoreAcceptanceMode {
+  accepting,
+  limitedCapacity,
+  notAccepting,
+}
+
+extension StoreAcceptanceModeX on StoreAcceptanceMode {
+  String get apiValue {
+    switch (this) {
+      case StoreAcceptanceMode.accepting:
+        return 'accepting';
+      case StoreAcceptanceMode.limitedCapacity:
+        return 'limited_capacity';
+      case StoreAcceptanceMode.notAccepting:
+        return 'not_accepting';
+    }
+  }
+
+  String get customerLabel {
+    switch (this) {
+      case StoreAcceptanceMode.accepting:
+        return 'Accepting Orders';
+      case StoreAcceptanceMode.limitedCapacity:
+        return 'Limited Capacity';
+      case StoreAcceptanceMode.notAccepting:
+        return 'Not Accepting Orders';
+    }
+  }
+
+  static StoreAcceptanceMode fromApi(String? raw, {required bool isOpen}) {
+    final value = (raw ?? '').trim().toLowerCase();
+    switch (value) {
+      case 'limited_capacity':
+      case 'busy':
+        return StoreAcceptanceMode.limitedCapacity;
+      case 'not_accepting':
+      case 'closed':
+        return StoreAcceptanceMode.notAccepting;
+      case 'accepting':
+      case 'open':
+        return StoreAcceptanceMode.accepting;
+      default:
+        return isOpen
+            ? StoreAcceptanceMode.accepting
+            : StoreAcceptanceMode.notAccepting;
+    }
+  }
+}
+
 class StoreStatus {
-
   const StoreStatus({
-
     required this.isOpen,
-
+    this.acceptanceMode = StoreAcceptanceMode.accepting,
     this.manualOpen = true,
-
     this.withinHours = true,
-
     this.storeOpenTime,
-
     this.storeCloseTime,
-
     this.closedReason,
-
     this.closedMessage,
-
+    this.capacityMessage,
     this.nextOpenDisplay,
-
     this.deliveryRadiusKm = 8,
-
     this.minOrderAmount = 150,
-
     this.deliveryFee = 30,
-
     this.freeDeliveryThreshold = 500,
-
   });
 
-
-
   final bool isOpen;
-
+  final StoreAcceptanceMode acceptanceMode;
   final bool manualOpen;
-
   final bool withinHours;
-
   final String? storeOpenTime;
-
   final String? storeCloseTime;
-
   final String? closedReason;
-
   final String? closedMessage;
-
+  final String? capacityMessage;
   final String? nextOpenDisplay;
-
   final double deliveryRadiusKm;
-
   final double minOrderAmount;
-
   final double deliveryFee;
-
   final double freeDeliveryThreshold;
 
+  bool get isAcceptingOrders =>
+      acceptanceMode != StoreAcceptanceMode.notAccepting && isOpen;
 
+  bool get isLimitedCapacity =>
+      acceptanceMode == StoreAcceptanceMode.limitedCapacity && isOpen;
+
+  String get displayStatusLabel => acceptanceMode.customerLabel;
 
   String get displayClosedMessage {
-
     if (closedMessage != null && closedMessage!.trim().isNotEmpty) {
-
       return closedMessage!.trim();
-
     }
-
     if (nextOpenDisplay != null && nextOpenDisplay!.trim().isNotEmpty) {
-
-      return "Store is closed right now. We'll take orders from ${nextOpenDisplay!.trim()}.";
-
+      return "We're not accepting orders right now. We'll resume from ${nextOpenDisplay!.trim()}.";
     }
+    return "We're not accepting orders right now. Please check back soon.";
+  }
 
-    return "Store is closed right now. We'll take orders when we're open again.";
+  String? get displayCapacityMessage {
+    if (!isLimitedCapacity) return null;
+    if (capacityMessage != null && capacityMessage!.trim().isNotEmpty) {
+      return capacityMessage!.trim();
+    }
+    return 'High demand right now — we are still accepting orders, but delivery may take a little longer.';
   }
 
   /// Store hours in 12-hour format, e.g. "8 AM – 11 PM".
@@ -87,54 +118,36 @@ class StoreStatus {
   }
 
   factory StoreStatus.fromJson(Map<String, dynamic> json) {
-
+    final isOpen = json['isOpen'] == true || json['is_open'] == true;
     return StoreStatus(
-
-      isOpen: json['isOpen'] == true || json['is_open'] == true,
-
+      isOpen: isOpen,
+      acceptanceMode: StoreAcceptanceModeX.fromApi(
+        json['acceptanceMode']?.toString() ?? json['acceptance_mode']?.toString(),
+        isOpen: isOpen,
+      ),
       manualOpen: json['manualOpen'] == true ||
-
           json['manual_open'] == true ||
-
           json['store_open'] == true ||
-
           (json['manualOpen'] == null &&
-
               json['manual_open'] == null &&
-
               json['store_open'] == null),
-
       withinHours: json['withinHours'] == true ||
-
           json['within_hours'] == true ||
-
           (json['withinHours'] == null && json['within_hours'] == null),
-
       storeOpenTime: _stringOrNull(json['storeOpenTime'] ?? json['store_open_time']),
-
       storeCloseTime: _stringOrNull(json['storeCloseTime'] ?? json['store_close_time']),
-
       closedReason: _stringOrNull(json['closedReason'] ?? json['closed_reason']),
-
       closedMessage: _stringOrNull(json['closedMessage'] ?? json['closed_message']),
-
+      capacityMessage: _stringOrNull(json['capacityMessage'] ?? json['capacity_message']),
       nextOpenDisplay:
-
           _stringOrNull(json['nextOpenDisplay'] ?? json['next_open_display']),
-
       deliveryRadiusKm: _toDouble(json['deliveryRadiusKm'] ?? json['delivery_radius_km']) ?? 8,
-
       minOrderAmount: _toDouble(json['minOrderAmount'] ?? json['min_order_amount']) ?? 150,
-
       deliveryFee: _toDouble(json['deliveryFee'] ?? json['delivery_fee']) ?? 30,
-
       freeDeliveryThreshold: (json['freeDeliveryThreshold'] as num?)
           ?.toDouble() ?? 500,
-
     );
-
   }
-
 
 
   static String? _stringOrNull(dynamic value) {
@@ -381,32 +394,40 @@ class StoreStatusService {
 
 
   Future<StoreStatus> toggleStoreOpen() async {
-
     try {
-
       final res = await _api.patch('/admin/store/toggle');
-
       final data = _extractData(res.data);
-
       if (data is Map<String, dynamic>) {
-
         return StoreStatus.fromJson(data);
-
       }
-
-      return const StoreStatus(isOpen: false, manualOpen: false);
-
-    } on DioException catch (e) {
-
-      throw Exception(
-
-        e.response?.data?['message']?.toString() ?? 'Could not toggle store status',
-
+      return const StoreStatus(
+        isOpen: false,
+        acceptanceMode: StoreAcceptanceMode.notAccepting,
+        manualOpen: false,
       );
-
+    } on DioException catch (e) {
+      throw Exception(
+        e.response?.data?['message']?.toString() ?? 'Could not update store status',
+      );
     }
-
   }
 
+  Future<StoreStatus> setAcceptanceMode(StoreAcceptanceMode mode) async {
+    try {
+      final res = await _api.patch(
+        '/admin/store/acceptance-mode',
+        data: {'mode': mode.apiValue},
+      );
+      final data = _extractData(res.data);
+      if (data is Map<String, dynamic>) {
+        return StoreStatus.fromJson(data);
+      }
+      throw Exception('Invalid store status response');
+    } on DioException catch (e) {
+      throw Exception(
+        e.response?.data?['message']?.toString() ?? 'Could not update store status',
+      );
+    }
+  }
 }
 

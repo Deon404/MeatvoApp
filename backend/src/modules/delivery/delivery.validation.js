@@ -41,6 +41,31 @@ const updateDeliveryOrderStatusSchema = z.object({
   query: z.object({}).optional(),
 });
 
+const markFailedDeliverySchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z.object({
+    reason: z.enum(['CUSTOMER_UNREACHABLE', 'WRONG_ADDRESS', 'CUSTOMER_REFUSED']),
+  }),
+  query: z.object({}).optional(),
+});
+
+const confirmReturnToStoreSchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z.object({
+    returnCondition: z.enum(['RESELLABLE', 'PARTIAL_SPOILAGE', 'DISCARD']),
+  }),
+  query: z.object({}).optional(),
+});
+
+const reportOperationalExceptionSchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z.object({
+    exceptionType: z.enum(['DELAYED_VEHICLE', 'COLD_CHAIN_ISSUE', 'NEED_ASSISTANCE']),
+    notes: z.string().trim().max(500).optional(),
+  }),
+  query: z.object({}).optional(),
+});
+
 const updateLocationSchema = z.object({
   body: z.object({
     lat: z.coerce.number(),
@@ -111,6 +136,9 @@ module.exports = {
   acceptOrderSchema,
   rejectOrderSchema,
   updateDeliveryOrderStatusSchema,
+  markFailedDeliverySchema,
+  confirmReturnToStoreSchema,
+  reportOperationalExceptionSchema,
   updateLocationSchema,
   getEarningsSchema,
   toggleOnlineSchema,

@@ -4,7 +4,6 @@ const { ok, fail } = require('../../utils/response');
 const { logger } = require('../../utils/logger');
 const phonepeService = require('./phonepe.service');
 const { reserveStockForPaidOrder } = require('./payment-stock');
-const { notifyStaffNewOrder } = require('../../services/notification.service');
 
 /**
  * Client-side payment verification after PhonePe redirect.
@@ -107,12 +106,6 @@ const verifyPayment = asyncHandler(async (req, res) => {
           createdAt: new Date().toISOString(),
         };
         io.to('admin_room').emit('order:new', payload);
-        io.to('staff_room').emit('order:new', payload);
-        await notifyStaffNewOrder({
-          orderId: payment.order_id,
-          totalAmount: Number(payment.amount || 0),
-          io,
-        });
       }
 
       logger.info('payment_verified', {

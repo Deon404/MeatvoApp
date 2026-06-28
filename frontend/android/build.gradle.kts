@@ -1,4 +1,4 @@
-import com.android.build.gradle.LibraryExtension
+import com.android.build.gradle.BaseExtension
 import org.gradle.api.JavaVersion
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -21,16 +21,13 @@ subprojects {
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
 subprojects {
-    project.evaluationDependsOn(":app")
-}
-
-// Flutter plugins often default to Java 8 — align all Android library modules with the app (Java 17).
-subprojects {
-    pluginManager.withPlugin("com.android.library") {
-        extensions.configure<LibraryExtension>("android") {
-            compileOptions {
-                sourceCompatibility = JavaVersion.VERSION_17
-                targetCompatibility = JavaVersion.VERSION_17
+    afterEvaluate {
+        if (extensions.findByName("android") != null) {
+            extensions.configure<BaseExtension>("android") {
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_17
+                    targetCompatibility = JavaVersion.VERSION_17
+                }
             }
         }
     }
@@ -39,6 +36,9 @@ subprojects {
             jvmTarget.set(JvmTarget.JVM_17)
         }
     }
+}
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {

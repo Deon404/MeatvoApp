@@ -15,6 +15,9 @@ const {
   listOrdersForDeliveryApp,
   acceptOrder,
   rejectOrder,
+  markOrderFailedDelivery,
+  confirmOrderReturnToStore,
+  reportOperationalException,
   updateDeliveryOrderStatus,
   updateLocation,
   getEarnings,
@@ -40,6 +43,9 @@ const {
   acceptOrderSchema,
   rejectOrderSchema,
   updateDeliveryOrderStatusSchema,
+  markFailedDeliverySchema,
+  confirmReturnToStoreSchema,
+  reportOperationalExceptionSchema,
   updateLocationSchema,
   getEarningsSchema,
   toggleOnlineSchema,
@@ -99,6 +105,13 @@ router.post('/orders/:id/claim', validate(acceptOrderSchema), acceptOrder);
 router.put('/orders/:id/accept', validate(acceptOrderSchema), acceptOrder); // legacy
 router.post('/orders/:id/accept', validate(acceptOrderSchema), acceptOrder);
 router.post('/orders/:id/reject', validate(rejectOrderSchema), rejectOrder);
+router.post('/orders/:id/failed-delivery', validate(markFailedDeliverySchema), markOrderFailedDelivery);
+router.post('/orders/:id/return-to-store', validate(confirmReturnToStoreSchema), confirmOrderReturnToStore);
+router.post(
+  '/orders/:id/operational-exception',
+  validate(reportOperationalExceptionSchema),
+  reportOperationalException
+);
 router.patch('/orders/:id/status', validate(updateDeliveryOrderStatusSchema), updateDeliveryOrderStatus);
 router.put('/orders/:id/status', validate(updateDeliveryOrderStatusSchema), updateDeliveryOrderStatus); // legacy
 router.post('/online', validate(toggleOnlineSchema), toggleOnline);

@@ -144,8 +144,8 @@ const STATE_NOTIFICATIONS = {
   },
   [ORDER_STATES.PACKED]: {
     customer: {
-      title: 'Order Packed',
-      body: 'Your order is packed and waiting for delivery partner',
+      title: 'Preparing Your Order',
+      body: 'Your order is being prepared',
       priority: 'normal',
     },
     admin: {
@@ -156,8 +156,8 @@ const STATE_NOTIFICATIONS = {
   },
   [ORDER_STATES.RIDER_ASSIGNED]: {
     customer: {
-      title: 'Delivery Partner Assigned',
-      body: '{riderName} will deliver your order',
+      title: 'Preparing Your Order',
+      body: 'Your order is being prepared',
       priority: 'high',
     },
     rider: {
@@ -173,8 +173,8 @@ const STATE_NOTIFICATIONS = {
   },
   [ORDER_STATES.RIDER_ACCEPTED]: {
     customer: {
-      title: 'Delivery Partner Accepted',
-      body: '{riderName} is preparing to pick up your order',
+      title: 'Preparing Your Order',
+      body: 'Your order is being prepared',
       priority: 'high',
     },
     admin: {
@@ -192,8 +192,8 @@ const STATE_NOTIFICATIONS = {
   },
   [ORDER_STATES.OUT_FOR_DELIVERY]: {
     customer: {
-      title: 'Order On The Way',
-      body: '{riderName} is on the way with your order',
+      title: 'Out for Delivery',
+      body: 'Your order is on the way',
       priority: 'high',
     },
     admin: {
@@ -204,8 +204,8 @@ const STATE_NOTIFICATIONS = {
   },
   [ORDER_STATES.RIDER_NEARBY]: {
     customer: {
-      title: 'Rider is Nearby',
-      body: '{riderName} will reach in 5 minutes',
+      title: 'Out for Delivery',
+      body: 'Your order is almost there',
       priority: 'urgent',
     },
   },
