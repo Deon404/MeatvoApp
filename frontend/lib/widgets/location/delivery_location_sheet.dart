@@ -87,14 +87,11 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
           ));
       return;
     }
-    await _runVoid(() async {
-      await _coordinator.openMapPin(
-        latitude: latitude,
-        longitude: longitude,
-        geocodedAddress: geocodedAddress,
-      );
-      if (mounted) Navigator.of(context).pop();
-    });
+    await _runVoid(() => _coordinator.openMapPin(
+          latitude: latitude,
+          longitude: longitude,
+          geocodedAddress: geocodedAddress,
+        ));
   }
 
   void _onAddNewAddressTap() {
@@ -297,10 +294,7 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
                       if (_isPicker) {
                         _run(() => _coordinator.useCurrentLocation());
                       } else {
-                        _runVoid(() async {
-                          await _coordinator.useCurrentLocation();
-                          if (mounted) Navigator.of(context).pop();
-                        });
+                        _runVoid(() => _coordinator.useCurrentLocation());
                       }
                     },
             ),
@@ -359,10 +353,8 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
                               _run(() =>
                                   _coordinator.selectSavedAddress(address));
                             } else {
-                              _runVoid(() async {
-                                await _coordinator.selectSavedAddress(address);
-                                if (mounted) Navigator.of(context).pop();
-                              });
+                              _runVoid(() =>
+                                  _coordinator.selectSavedAddress(address));
                             }
                           },
                     onEdit: () => _editAddress(address),

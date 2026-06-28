@@ -188,24 +188,36 @@ class DeliveryLocationCoordinator {
     return saved;
   }
 
-  Future<void> _completeFlow({required String snackbarMessage}) async {
-    if (mode == DeliveryLocationFlowMode.picker) return;
+  /// Returns true when the app navigated to [MyHomePage] (caller must not pop).
+  Future<bool> _completeFlow({required String snackbarMessage}) async {
+    if (mode == DeliveryLocationFlowMode.picker) return false;
 
     DeliveryLocationSession.markSetupCompleted();
     await ref.read(homeViewModelProvider.notifier).refresh();
-    if (!context.mounted) return;
+    if (!context.mounted) return false;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(snackbarMessage)),
-    );
+    final messenger = ScaffoldMessenger.maybeOf(context);
 
     if (navigateHomeOnComplete) {
-      Navigator.of(context).pushAndRemoveUntil(
+      _navigator.pushAndRemoveUntil(
         MaterialPageRoute<void>(
           builder: (_) => const MyHomePage(title: 'Meatvo'),
         ),
         (_) => false,
       );
+      final rootMessenger =
+          appNavigatorKey.currentContext != null
+              ? ScaffoldMessenger.maybeOf(appNavigatorKey.currentContext!)
+              : null;
+      (rootMessenger ?? messenger)?.showSnackBar(
+        SnackBar(content: Text(snackbarMessage)),
+      );
+      return true;
     }
+
+    messenger?.showSnackBar(
+      SnackBar(content: Text(snackbarMessage)),
+    );
+    return false;
   }
 }
