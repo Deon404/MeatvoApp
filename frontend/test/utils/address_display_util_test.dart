@@ -66,5 +66,16 @@ void main() {
       expect(result, contains('827015'));
       expect(result, isNot(contains('Jharkhand')));
     });
+
+    test('recovers address from Dart map toString corruption', () {
+      final result = formatAddressForDisplay(
+        '{text: 103, 831001, Bharra Basti, Bokaro Steel City, formatted: 103, 831001, Bharra Basti, Bokaro Steel City}',
+      );
+
+      expect(result, contains('103'));
+      expect(result, contains('Bharra Basti'));
+      expect(result, contains('831001'));
+      expect(result, isNot(startsWith('{')));
+    });
   });
 }

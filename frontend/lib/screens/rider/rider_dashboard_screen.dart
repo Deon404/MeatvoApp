@@ -176,10 +176,24 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
 
   String _extractAddressText(dynamic addr) => formatAddressForDisplay(addr);
 
+  Map<String, dynamic> _normalizeAssignmentAlertData(Map<String, dynamic> data) {
+    final normalized = Map<String, dynamic>.from(data);
+    final addr = normalized['customerAddress'] ??
+        normalized['delivery_address'] ??
+        normalized['address'];
+    final formatted = formatAddressForDisplay(addr);
+    normalized['customerAddress'] = formatted;
+    normalized['address'] = formatted;
+    normalized['delivery_address'] = formatted;
+    return normalized;
+  }
+
   Map<String, dynamic> _assignmentToAlertData(Map<String, dynamic> assignment) {
     final order = assignment['order'] as Map<String, dynamic>? ?? {};
     return {
       'orderId': assignment['id'] ?? order['id'],
+      'orderStatus': order['status'],
+      'status': order['status'],
       'totalAmount': order['total_amount'] ?? order['totalAmount'] ?? order['total_price'],
       'total_amount': order['total_amount'] ?? order['totalAmount'],
       'total_price': order['total_price'] ?? order['total_amount'],
@@ -218,7 +232,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
     }
 
     final alertData = data is Map
-        ? Map<String, dynamic>.from(data)
+        ? _normalizeAssignmentAlertData(Map<String, dynamic>.from(data))
         : <String, dynamic>{'orderId': primaryOrderId};
     alertData.putIfAbsent('orderId', () => primaryOrderId);
     alertData.putIfAbsent('orderIds', () => orderIds);
@@ -292,7 +306,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => NewOrderAlertSheet(
         orderData: orderData,
-        onAccept: () => _acceptOrders(orderIds),
+        onAccept: () => _acceptOrders(orderIds, orderData: orderData),
         onReject: () => _rejectOrders(orderIds, 'Declined from alert'),
         onTimeout: () => _handleAssignmentSheetTimeout(orderIds),
       ),
@@ -302,8 +316,64 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
     });
   }
 
-  Future<void> _acceptOrders(List<int> orderIds) async {
+  Future<void> _acceptOrders(
+    List<int> orderIds, {
+    Map<dynamic, dynamic>? orderData,
+  }) async {
     if (!mounted || orderIds.isEmpty) return;
+
+    final unprepared = <int>[];
+    for (final id in orderIds) {
+      var isPacked = false;
+
+      if (orderData != null) {
+        final status = (orderData['orderStatus'] ??
+                orderData['status'] ??
+                '')
+            .toString()
+            .toUpperCase();
+        if (status == 'PACKED') {
+          isPacked = true;
+        } else if (status.isNotEmpty && status != 'PACKED') {
+          unprepared.add(id);
+          continue;
+        }
+      }
+
+      if (!isPacked) {
+        for (final assignment in _activeOrders) {
+          final order = assignment['order'] as Map<String, dynamic>?;
+          if (order?['id']?.toString() != id.toString()) continue;
+          final status = (order['status'] as String? ?? '').toUpperCase();
+          if (status == 'PACKED') {
+            isPacked = true;
+          } else if (status.isNotEmpty) {
+            unprepared.add(id);
+          }
+          break;
+        }
+      }
+
+      if (!isPacked && !unprepared.contains(id)) {
+        final ready = await _riderService.isOrderReadyForAccept(
+          id.toString(),
+          forceRefresh: true,
+        );
+        if (!ready) unprepared.add(id);
+      }
+    }
+
+    if (unprepared.isNotEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This order is still being prepared. You can accept it once it is packed.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     try {
       final stringIds = orderIds.map((id) => id.toString()).toList();
@@ -986,7 +1056,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
   Widget _buildStatsCard() {
     final todayEarnings = _earnings?.today ?? 0.0;
     final weekEarnings = _earnings?.thisWeek ?? 0.0;
-    final deliveries = _earnings?.completedDeliveries ?? 0;
+    final monthEarnings = _earnings?.thisMonth ?? 0.0;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1050,7 +1120,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
             children: [
               _earningsPill('This Week', '₹${weekEarnings.toStringAsFixed(0)}'),
               const SizedBox(width: 10),
-              _earningsPill('This Month', '$deliveries deliveries'),
+              _earningsPill('This Month', '₹${monthEarnings.toStringAsFixed(0)}'),
             ],
           ),
         ],
@@ -1200,6 +1270,11 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
     if (order == null) return const SizedBox.shrink();
 
     final status = assignment['status'] as String? ?? 'assigned';
+    final orderStatus = (order['status'] as String? ?? '').toLowerCase();
+    final displayStatus = status == 'assigned' &&
+            (orderStatus == 'confirmed' || orderStatus == 'packing_started')
+        ? 'preparing'
+        : status;
     final orderId = order['id']?.toString() ?? '';
     final customerName = order['user'] is Map 
         ? (order['user'] as Map)['name']?.toString() ?? 'Customer'
@@ -1208,8 +1283,9 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
     final addressText = formatAddressForDisplay(address);
     final totalPrice = (order['total_price'] as num?)?.toDouble() ?? 0.0;
 
-    final accentColor = switch (status) {
+    final accentColor = switch (displayStatus) {
       'assigned' => const Color(0xFFE53935),
+      'preparing' => const Color(0xFFF39C12),
       'accepted' => const Color(0xFF2ECC71),
       'picked_up' => const Color(0xFFF39C12),
       'delivered' => const Color(0xFF9E9E9E),
@@ -1237,7 +1313,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
                 ),
               ),
               const Spacer(),
-              _buildStatusBadgeSimple(status),
+              _buildStatusBadgeSimple(displayStatus),
             ],
           ),
           const SizedBox(height: 8),
@@ -1310,6 +1386,10 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
       case 'assigned':
         color = Colors.blue;
         label = 'New';
+        break;
+      case 'preparing':
+        color = const Color(0xFFF39C12);
+        label = 'Preparing';
         break;
       case 'accepted':
         color = const Color(0xFF2ECC71);
@@ -1674,6 +1754,9 @@ class NewOrderAlertSheet extends StatelessWidget {
           orderData['delivery_address'] ??
           orderData['address'],
     );
+    final orderStatus =
+        (orderData['orderStatus'] ?? orderData['status'] ?? '').toString().toUpperCase();
+    final canAccept = orderStatus.isEmpty || orderStatus == 'PACKED';
     final rawDistance = orderData['distance'];
     final distance = (rawDistance != null &&
             double.tryParse(rawDistance.toString()) != null)
@@ -1967,6 +2050,33 @@ class NewOrderAlertSheet extends StatelessWidget {
               ],
             ),
           ],
+          if (!canAccept) ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFFFE082)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.inventory_2_outlined, color: Color(0xFFF39C12), size: 18),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Order is still being prepared. Accept will be available once it is packed.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF6B6B6B),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 20),
           Row(
             children: [
@@ -1996,19 +2106,24 @@ class NewOrderAlertSheet extends StatelessWidget {
               Expanded(
                 flex: 2,
                 child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pop(context);
-                    onAccept();
-                  },
+                  onPressed: canAccept
+                      ? () {
+                          Navigator.pop(context);
+                          onAccept();
+                        }
+                      : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF2ECC71),
+                    disabledBackgroundColor: const Color(0xFFBDBDBD),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
                   child: Text(
-                    isBatch ? 'Accept $batchCount Orders' : 'Accept Trip',
+                    canAccept
+                        ? (isBatch ? 'Accept $batchCount Orders' : 'Accept Trip')
+                        : 'Waiting to Pack',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,

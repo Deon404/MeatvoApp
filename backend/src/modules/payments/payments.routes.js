@@ -7,6 +7,7 @@ const { validate } = require('../../middlewares/validate.middleware');
 const { initiatePayment, getPaymentStatus, handlePhonePeWebhook } = require('./payments.controller');
 const { verifyPayment } = require('./phonepe.controller');
 const cashfreeController = require('./cashfree.controller');
+const paymentSecurity = require('../../security/payment.security');
 const {
   initiatePaymentSchema,
   getPaymentStatusSchema,
@@ -53,13 +54,13 @@ router.post('/initiate', protect, validate(initiatePaymentSchema), paymentRateLi
 router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
 router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
 
-router.post('/cashfree/initiate', protect, paymentRateLimit, cashfreeController.initiatePayment);
+router.post('/cashfree/initiate', protect, paymentRateLimit, paymentSecurity.fraudDetection.bind(paymentSecurity), cashfreeController.initiatePayment);
 router.post('/cashfree/abandon', protect, paymentRateLimit, cashfreeController.abandonPayment);
 router.post('/cashfree/webhook', webhookRateLimit, cashfreeController.handleWebhook);
-router.get('/cashfree/:orderId/status', protect, cashfreeController.getPaymentStatus);
+router.get('/cashfree/:orderId/status', protect, paymentRateLimit, cashfreeController.getPaymentStatus);
 router.post('/cashfree/verify', protect, paymentRateLimit, cashfreeController.verifyPayment);
 
-router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), getPaymentStatus);
+router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), paymentRateLimit, getPaymentStatus);
 
 // Public webhook route with rate limiting
 router.post('/phonepe/webhook', webhookRateLimit, handlePhonePeWebhook);

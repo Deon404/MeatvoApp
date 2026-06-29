@@ -249,19 +249,14 @@ const listAvailableOrders = asyncHandler(async (req, res) => {
     `SELECT o.id, o.customer_id, o.status, o.total_amount, o.address, o.payment_mode, o.created_at
      FROM orders o
      LEFT JOIN order_assignments oa ON oa.order_id = o.id
-     WHERE oa.id IS NULL AND o.status IN ('CONFIRMED','PACKED')
+     WHERE oa.id IS NULL AND o.status = 'PACKED'
      ORDER BY o.created_at ASC
      LIMIT 100`
   );
   return ok(res, { orders: rows }, 'Available orders');
 });
 
-const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
-  const userId = Number(req.user.id);
-  const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
-  if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
-
-  const baseSelect = `
+const DELIVERY_APP_ORDER_SELECT = `
     SELECT o.id, o.customer_id, cu.phone AS phone, cu.name AS customer_name, o.status, o.total_amount, o.address, o.payment_mode,
            o.failed_delivery_reason, o.failed_delivery_resolution, o.returned_at, o.return_condition,
            oa.delivery_partner_id, oa.status AS assignment_status,
@@ -287,65 +282,139 @@ const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
     LEFT JOIN products p ON p.id = oi.product_id
   `;
 
-  const groupBy = ' GROUP BY o.id, cu.phone, cu.name, oa.delivery_partner_id, oa.status, oa.assigned_at ';
+const DELIVERY_APP_ORDER_GROUP_BY =
+  ' GROUP BY o.id, cu.phone, cu.name, oa.delivery_partner_id, oa.status, oa.assigned_at ';
+
+const mapDeliveryAppOrderRow = (o) => {
+  const addressObj = addressToObject(o.address) || { text: '', formatted: '' };
+  return {
+    id: String(o.id),
+    customerUid: String(o.customer_id),
+    customerName: String(o.customer_name || '').trim(),
+    phone: o.phone || '',
+    status: o.status,
+    assignment_status: o.assignment_status || null,
+    failed_delivery_reason: o.failed_delivery_reason || null,
+    failed_delivery_resolution: o.failed_delivery_resolution || null,
+    returned_at: o.returned_at || null,
+    return_condition: o.return_condition || null,
+    assigned_at: o.assigned_at || null,
+    totalAmount: Number(o.total_amount || 0),
+    address: addressObj,
+    paymentMethod: o.payment_mode || 'COD',
+    createdAt: Number(o.created_at_ms || 0),
+    updatedAt: Number(o.created_at_ms || 0),
+    items: Array.isArray(o.items) ? o.items : [],
+  };
+};
+
+const IN_FLIGHT_ORDER_STATUSES = new Set([
+  'OUT_FOR_DELIVERY',
+  'PICKED_UP',
+  'ON_THE_WAY',
+  'RIDER_NEARBY',
+  'RIDER_ACCEPTED',
+]);
+
+const PREPARING_ORDER_STATUSES = new Set([
+  'PLACED',
+  'PAYMENT_PENDING',
+  'PAYMENT_VERIFIED',
+  'CONFIRMED',
+  'PACKING_STARTED',
+]);
+
+const listOrdersForDeliveryApp = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.id);
+  const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
+  if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
+
+  const { rows: pending } = await query(
+    `${DELIVERY_APP_ORDER_SELECT}
+     WHERE oa.delivery_partner_id = $1
+       AND oa.status = 'ASSIGNED'
+       AND o.status IN ('PLACED', 'CONFIRMED', 'PACKING_STARTED', 'RIDER_ASSIGNED')
+     ${DELIVERY_APP_ORDER_GROUP_BY}
+     ORDER BY o.created_at ASC
+     LIMIT 100`,
+    [deliveryPartnerId]
+  );
 
   const { rows: available } = await query(
-    `${baseSelect}
-     WHERE o.status IN ('CONFIRMED','PACKED')
+    `${DELIVERY_APP_ORDER_SELECT}
+     WHERE o.status = 'PACKED'
        AND (oa.id IS NULL OR oa.delivery_partner_id = $1)
-     ${groupBy}
+     ${DELIVERY_APP_ORDER_GROUP_BY}
      ORDER BY o.created_at ASC
      LIMIT 100`,
     [deliveryPartnerId]
   );
 
   const { rows: active } = await query(
-    `${baseSelect}
+    `${DELIVERY_APP_ORDER_SELECT}
      WHERE oa.delivery_partner_id = $1
        AND (
          o.status IN ('OUT_FOR_DELIVERY', 'PICKED_UP', 'ON_THE_WAY', 'RIDER_NEARBY')
          OR (o.status = 'FAILED_DELIVERY' AND o.failed_delivery_resolution = 'PENDING')
        )
-     ${groupBy}
+     ${DELIVERY_APP_ORDER_GROUP_BY}
      ORDER BY o.created_at DESC
      LIMIT 100`,
     [deliveryPartnerId]
   );
 
   const { rows: delivered } = await query(
-    `${baseSelect}
+    `${DELIVERY_APP_ORDER_SELECT}
      WHERE oa.delivery_partner_id = $1
        AND o.status = 'DELIVERED'
-     ${groupBy}
+     ${DELIVERY_APP_ORDER_GROUP_BY}
      ORDER BY o.created_at DESC
      LIMIT 200`,
     [deliveryPartnerId]
   );
 
-  const mapRow = (o) => {
-    const addressObj = addressToObject(o.address) || { text: '', formatted: '' };
-    return {
-      id: String(o.id),
-      customerUid: String(o.customer_id),
-      customerName: String(o.customer_name || '').trim(),
-      phone: o.phone || '',
-      status: o.status,
-      assignment_status: o.assignment_status || null,
-      failed_delivery_reason: o.failed_delivery_reason || null,
-      failed_delivery_resolution: o.failed_delivery_resolution || null,
-      returned_at: o.returned_at || null,
-      return_condition: o.return_condition || null,
-      assigned_at: o.assigned_at || null,
-      totalAmount: Number(o.total_amount || 0),
-      address: addressObj,
-      paymentMethod: o.payment_mode || 'COD',
-      createdAt: Number(o.created_at_ms || 0),
-      updatedAt: Number(o.created_at_ms || 0),
-      items: Array.isArray(o.items) ? o.items : [],
-    };
-  };
+  return ok(
+    res,
+    {
+      pending: pending.map(mapDeliveryAppOrderRow),
+      available: available.map(mapDeliveryAppOrderRow),
+      active: active.map(mapDeliveryAppOrderRow),
+      delivered: delivered.map(mapDeliveryAppOrderRow),
+    },
+    'Orders'
+  );
+});
 
-  return ok(res, { available: available.map(mapRow), active: active.map(mapRow), delivered: delivered.map(mapRow) }, 'Orders');
+const getOrderForDelivery = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.id);
+  const orderId = Number(req.validated.params.id);
+  const deliveryPartnerId = await getDeliveryPartnerIdForUser(userId);
+  if (!deliveryPartnerId) return fail(res, 400, 'Delivery partner profile not found');
+
+  const { rows } = await query(
+    `${DELIVERY_APP_ORDER_SELECT}
+     WHERE o.id = $1
+     ${DELIVERY_APP_ORDER_GROUP_BY}`,
+    [orderId]
+  );
+  const row = rows[0];
+  if (!row) return fail(res, 404, 'Order not found');
+
+  const assignedPartnerId = row.delivery_partner_id != null
+    ? Number(row.delivery_partner_id)
+    : null;
+  const assignmentStatus = String(row.assignment_status || '').toUpperCase();
+  const orderStatus = String(row.status || '').toUpperCase();
+  const isAssignedToRider = assignedPartnerId === deliveryPartnerId;
+  const isCancelledAssignment = assignmentStatus === 'CANCELLED';
+  const isClaimablePacked =
+    orderStatus === 'PACKED' && (assignedPartnerId == null || isCancelledAssignment);
+
+  if (!isAssignedToRider && !isClaimablePacked) {
+    return fail(res, 403, 'Not allowed');
+  }
+
+  return ok(res, mapDeliveryAppOrderRow(row), 'Order');
 });
 
 const acceptOrder = asyncHandler(async (req, res) => {
@@ -357,7 +426,7 @@ const acceptOrder = asyncHandler(async (req, res) => {
 
   const updatedOrder = await withTransaction(async (client) => {
     const { rows: orderRows } = await client.query(
-      'SELECT id, status, weight_reconciliation_status FROM orders WHERE id = $1 FOR UPDATE',
+      'SELECT id, customer_id, status, weight_reconciliation_status, total_amount, coupon_id, address, payment_mode, created_at FROM orders WHERE id = $1 FOR UPDATE',
       [orderId]
     );
     const order = orderRows[0];
@@ -366,7 +435,35 @@ const acceptOrder = asyncHandler(async (req, res) => {
       err.statusCode = 404;
       throw err;
     }
-    if (order.status !== 'PACKED') {
+
+    const { rows: existing } = await client.query(
+      'SELECT id, delivery_partner_id, status FROM order_assignments WHERE order_id = $1 FOR UPDATE',
+      [orderId]
+    );
+    const assignment = existing[0];
+    if (assignment && Number(assignment.delivery_partner_id) !== deliveryPartnerId) {
+      const err = new Error('Order already assigned');
+      err.statusCode = 409;
+      throw err;
+    }
+
+    const orderStatus = String(order.status || '').toUpperCase();
+    if (orderStatus !== 'PACKED') {
+      const assignmentStatus = String(assignment?.status || '').toUpperCase();
+      if (
+        assignment &&
+        ['ACCEPTED', 'PICKED'].includes(assignmentStatus) &&
+        IN_FLIGHT_ORDER_STATUSES.has(orderStatus)
+      ) {
+        return { ...order, alreadyAccepted: true };
+      }
+      if (PREPARING_ORDER_STATUSES.has(orderStatus)) {
+        const err = new Error(
+          'Order is still being prepared at the store. You can accept once it is packed.'
+        );
+        err.statusCode = 400;
+        throw err;
+      }
       const err = new Error('Only packed orders can be accepted by a rider');
       err.statusCode = 400;
       throw err;
@@ -379,17 +476,7 @@ const acceptOrder = asyncHandler(async (req, res) => {
       throw err;
     }
 
-    const { rows: existing } = await client.query(
-      'SELECT id, delivery_partner_id FROM order_assignments WHERE order_id = $1 FOR UPDATE',
-      [orderId]
-    );
-    if (existing[0] && Number(existing[0].delivery_partner_id) !== deliveryPartnerId) {
-      const err = new Error('Order already assigned');
-      err.statusCode = 409;
-      throw err;
-    }
-
-    if (existing[0]) {
+    if (assignment) {
       await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['ACCEPTED', orderId]);
     } else {
       await client.query(
@@ -407,6 +494,10 @@ const acceptOrder = asyncHandler(async (req, res) => {
 
     return updatedRows[0];
   });
+
+  if (updatedOrder.alreadyAccepted) {
+    return ok(res, { order: updatedOrder }, 'Order already accepted');
+  }
 
   clearAssignmentTimeout(orderId);
 
@@ -1338,9 +1429,9 @@ const bulkAssignZones = asyncHandler(async (req, res) => {
           err.statusCode = 404;
           throw err;
         }
-        if (!['CONFIRMED', 'PACKED'].includes(order.status)) {
+        if (order.status !== 'PACKED') {
           const err = new Error(
-            `Order ${orderId} is not assignable (status: ${order.status})`
+            `Order ${orderId} is not assignable (status: ${order.status}). Only packed orders can be assigned.`
           );
           err.statusCode = 400;
           throw err;
@@ -1452,6 +1543,7 @@ module.exports = {
   getMe,
   listAvailableOrders,
   listOrdersForDeliveryApp,
+  getOrderForDelivery,
   acceptOrder,
   rejectOrder,
   markOrderFailedDelivery,

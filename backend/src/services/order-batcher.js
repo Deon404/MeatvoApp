@@ -186,7 +186,7 @@ async function getBatchForRider(riderId, newOrderId, maxBatchSize = MAX_BATCH_SI
 async function fetchOrdersForBatch(orderIds) {
   if (!orderIds.length) return [];
   const { rows } = await query(
-    `SELECT id, customer_id, total_amount, payment_mode, address
+    `SELECT id, customer_id, status, total_amount, payment_mode, address
      FROM orders
      WHERE id = ANY($1::bigint[])`,
     [orderIds]
@@ -207,6 +207,8 @@ function buildBatchSocketPayload(assignedOrderIds, orders) {
     orderId: assignedOrderIds[0],
     isBatch: assignedOrderIds.length > 1,
     batchCount: assignedOrderIds.length,
+    orderStatus: primary?.status,
+    status: primary?.status,
     message:
       assignedOrderIds.length > 1
         ? `${assignedOrderIds.length} nearby orders — deliver together!`

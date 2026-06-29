@@ -189,6 +189,9 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     if (message.contains('429') || message.toLowerCase().contains('too many requests')) {
       return 'Server is busy (too many requests). Please wait a few seconds and tap Retry.';
     }
+    if (message.contains('Not allowed') || message.contains('not assigned')) {
+      return 'You do not have access to this order. It may have been reassigned or is still being prepared.';
+    }
     return 'Failed to load order details: $error';
   }
 
@@ -216,6 +219,23 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     );
 
     if (confirmed != true) return;
+
+    final orderId = _getActualOrderId();
+    final ready = await _riderService.isOrderReadyForAccept(
+      orderId,
+      forceRefresh: true,
+    );
+    if (!ready && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'This order is still being prepared. You can accept it once it is packed.',
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
 
     setState(() => _isProcessing = true);
     try {
@@ -245,7 +265,6 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         return;
       }
 
-      final orderId = _getActualOrderId();
       debugPrint('[RiderOrderDetail] Accepting order: $orderId');
       await _riderService.acceptOrder(orderId);
       if (mounted) {
@@ -1398,6 +1417,10 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     if (orderStatus == 'out_for_delivery' && assignmentStatus == 'accepted') {
       return 'accepted';
     }
+    if (assignmentStatus == 'assigned' &&
+        (orderStatus == 'confirmed' || orderStatus == 'packing_started')) {
+      return 'preparing';
+    }
     return assignmentStatus;
   }
 
@@ -1424,6 +1447,46 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
   }
 
   Widget _buildActionButtonsNew(String status) {
+    if (status == 'preparing') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF8E1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFFFE082)),
+            ),
+            child: const Text(
+              'This order is still being prepared at the store. You can accept it once it is packed.',
+              style: TextStyle(fontSize: 13, color: Color(0xFF6B6B6B)),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton(
+            onPressed: _isProcessing ? null : _rejectOrder,
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Color(0xFFC8102E)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              _isProcessing ? 'Processing...' : 'Decline Assignment',
+              style: const TextStyle(
+                color: Color(0xFFC8102E),
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     if (status == 'assigned') {
       return Row(
         children: [

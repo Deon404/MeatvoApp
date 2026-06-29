@@ -293,6 +293,8 @@ const buildPartnerAssignmentPayload = (order, partner) => {
 
   return {
     orderId: Number(order.id),
+    orderStatus: order.status,
+    status: order.status,
     totalAmount,
     amount: totalAmount,
     total_amount: totalAmount,
@@ -920,6 +922,8 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
 
       const broadcastPayload = {
         orderId: Number(order.id),
+        orderStatus: order.status,
+        status: order.status,
         totalAmount: order.total_amount ? Number(order.total_amount) : undefined,
         amount: order.total_amount ? Number(order.total_amount) : undefined,
         total_amount: order.total_amount ? Number(order.total_amount) : undefined,

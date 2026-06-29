@@ -583,13 +583,27 @@ const logout = asyncHandler(async (req, res) => {
     await query('UPDATE users SET refresh_token_hash = NULL WHERE id = $1', [userId]);
   }
 
+  const { blacklistToken } = require('../../middlewares/enhancedAuth.middleware');
+
   if (token) {
-    const { blacklistToken } = require('../../middlewares/enhancedAuth.middleware');
     try {
       await blacklistToken(token);
     } catch (err) {
       logger.error('Logout blacklist failed:', err);
       return fail(res, 503, 'Logout service temporarily unavailable');
+    }
+  }
+
+  // Blacklist refresh token if provided
+  const refreshToken = req.body?.refreshToken ||
+    req.cookies?.refreshToken;
+  if (refreshToken) {
+    try {
+      await blacklistToken(refreshToken);
+    } catch (err) {
+      logger.warn('refresh_token_blacklist_failed', {
+        error: err.message
+      });
     }
   }
 

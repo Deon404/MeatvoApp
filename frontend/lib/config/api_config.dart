@@ -55,6 +55,7 @@ abstract final class ApiPaymentPaths {
 abstract final class ApiDeliveryPaths {
   static const slots = '/delivery/slots';
   static const orders = '/delivery/orders';
+  static String orderById(String id) => '/delivery/orders/$id';
   static const profile = '/delivery/me';
   static const earnings = '/delivery/earnings';
   static const updateProfile = '/delivery/profile';

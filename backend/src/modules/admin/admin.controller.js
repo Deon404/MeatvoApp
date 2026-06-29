@@ -897,9 +897,14 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
   if (String(orderStatus || '').toUpperCase() === 'PACKED') {
     const io = req.app.get('io');
     try {
+      const incomingWeights = req.body?.items ?? req.body?.lineWeights ?? [];
+      const isAdminSkipWeights =
+        req.user.role === 'admin' && incomingWeights.length === 0;
+
       const packResult = await packOrderWithWeightReconciliation({
         orderId,
-        lineWeights: req.body?.items ?? req.body?.lineWeights ?? [],
+        lineWeights: incomingWeights,
+        skipWeightValidation: isAdminSkipWeights,
         actor: req.user.id,
         actorRole: req.user.role,
         io,

@@ -105,9 +105,7 @@ function emitOperationalEvent(io, { eventType, orderId, payload = {} }) {
     timestamp: payload.timestamp || new Date().toISOString(),
   };
   io.to('admin_room').emit('operational:event', envelope);
-  io.to('staff_room').emit('operational:event', envelope);
   io.to('admin:orders').emit('operational:event', envelope);
-  io.to('staff:orders').emit('operational:event', envelope);
 }
 
 async function publishOperationalEvent(io, params) {

@@ -14,6 +14,12 @@ const getMeSchema = z.object({
   body: z.object({}).optional(),
 });
 
+const getDeliveryOrderSchema = z.object({
+  params: z.object({ id: idParam }),
+  body: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
 const acceptOrderSchema = z.object({
   params: z.object({ id: idParam }),
   body: z.object({}).optional(),
@@ -148,6 +154,7 @@ const bulkAssignZonesSchema = z.object({
 module.exports = {
   listAvailableOrdersSchema,
   getMeSchema,
+  getDeliveryOrderSchema,
   acceptOrderSchema,
   rejectOrderSchema,
   updateDeliveryOrderStatusSchema,

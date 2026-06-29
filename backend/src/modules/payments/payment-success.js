@@ -30,12 +30,6 @@ const confirmOrderAfterPayment = async (client, { orderId, customerId, io }) => 
 
   if (io && orderUpdateResult.rows.length) {
     const order = orderUpdateResult.rows[0];
-    io.to('staff_room').emit('order:new', {
-      orderId: order.id,
-      customerPhone: order.customer_phone,
-      totalAmount: Number(order.total_amount),
-      createdAt: new Date().toISOString(),
-    });
     instrumentOrderConfirmed(io, {
       orderId: order.id,
       actorRole: 'system',

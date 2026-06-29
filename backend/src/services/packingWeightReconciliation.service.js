@@ -108,6 +108,7 @@ async function executePackingWeightReconciliation({
   lineWeights,
   actor,
   io = null,
+  skipWeightValidation = false,
 }) {
   const weightByItemId = normalizeLineWeights(lineWeights);
 
@@ -202,19 +203,24 @@ async function executePackingWeightReconciliation({
       }
 
       hasWeightLines = true;
-      const actualWeightG = weightByItemId.get(Number(item.id));
-      if (!Number.isFinite(actualWeightG) || actualWeightG < 0) {
-        const err = new Error(
-          `Actual weight is required for weight-based item ${item.id} (${item.name})`
-        );
-        err.statusCode = 400;
-        throw err;
-      }
 
       const orderedWeightG =
         Number(item.ordered_weight_g) > 0
           ? Number(item.ordered_weight_g)
           : orderedWeightGramsForLine(product, item.quantity);
+
+      let actualWeightG = weightByItemId.get(Number(item.id));
+      if (!Number.isFinite(actualWeightG) || actualWeightG < 0) {
+        if (skipWeightValidation) {
+          actualWeightG = orderedWeightG;
+        } else {
+          const err = new Error(
+            `Actual weight is required for weight-based item ${item.id} (${item.name})`
+          );
+          err.statusCode = 400;
+          throw err;
+        }
+      }
 
       const unitPricePerKg =
         Number(item.base_price_per_kg) > 0
@@ -453,12 +459,14 @@ async function packOrderWithWeightReconciliation({
   actorRole,
   io = null,
   context = {},
+  skipWeightValidation = false,
 }) {
   const reconciliation = await executePackingWeightReconciliation({
     orderId,
     lineWeights,
     actor,
     io,
+    skipWeightValidation,
   });
 
   const { transitionOrderState } = require('./orderLifecycle.service');

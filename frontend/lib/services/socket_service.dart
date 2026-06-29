@@ -259,17 +259,6 @@ class SocketService {
     _socket?.off('order:failed_delivery_resolved');
   }
 
-  /// Kitchen staff: new confirmed order or status change in kitchen queue.
-  void onKitchenOrderUpdated(void Function(dynamic data) cb) {
-    _socket?.on('order:updated', cb);
-    _socket?.on('order:new', cb);
-  }
-
-  void offKitchenOrderUpdated() {
-    _socket?.off('order:updated');
-    _socket?.off('order:new');
-  }
-
   // ── Rider location events ─────────────────────────────────────────────────
 
   /// Listen for rider location updates (customer-facing order tracking).

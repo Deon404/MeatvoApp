@@ -13,6 +13,7 @@ const {
   getMe,
   listAvailableOrders,
   listOrdersForDeliveryApp,
+  getOrderForDelivery,
   acceptOrder,
   rejectOrder,
   markOrderFailedDelivery,
@@ -40,6 +41,7 @@ const {
 const {
   getMeSchema,
   listAvailableOrdersSchema,
+  getDeliveryOrderSchema,
   acceptOrderSchema,
   rejectOrderSchema,
   updateDeliveryOrderStatusSchema,
@@ -101,6 +103,7 @@ router.use(protect, requireDeliveryPartner);
 router.get('/me', validate(getMeSchema), getMe);
 router.get('/orders', validate(listAvailableOrdersSchema), listOrdersForDeliveryApp);
 router.get('/orders/available', validate(listAvailableOrdersSchema), listAvailableOrders);
+router.get('/orders/:id', validate(getDeliveryOrderSchema), getOrderForDelivery);
 router.post('/orders/:id/claim', validate(acceptOrderSchema), acceptOrder);
 router.put('/orders/:id/accept', validate(acceptOrderSchema), acceptOrder); // legacy
 router.post('/orders/:id/accept', validate(acceptOrderSchema), acceptOrder);

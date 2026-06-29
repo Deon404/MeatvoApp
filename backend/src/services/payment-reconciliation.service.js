@@ -42,8 +42,6 @@ async function cancelOrderForPaymentFailure(orderId, customerId, io, reason = 'p
   }
   io.to('admin:orders').emit('order:updated', payload);
   io.to('admin_room').emit('order:updated', payload);
-  io.to('staff:orders').emit('order:updated', payload);
-  io.to('staff_room').emit('order:updated', payload);
 }
 
 async function reconcileStalePayments(io = null) {

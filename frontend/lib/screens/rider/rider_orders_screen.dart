@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/constants/app_constants.dart';
 import '../../services/rider_service.dart';
+import '../../services/socket_service.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../widgets/skeletons/shimmer_base.dart';
@@ -41,10 +42,19 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
     });
     widget.onRegisterRefresh?.call(_loadOrders);
     _loadOrders();
+    _subscribeToOrderUpdates();
+  }
+
+  void _subscribeToOrderUpdates() {
+    SocketService().onOrderUpdate((data) {
+      if (!mounted) return;
+      _loadOrders();
+    });
   }
 
   @override
   void dispose() {
+    SocketService().offOrderUpdate();
     _tabController.dispose();
     super.dispose();
   }

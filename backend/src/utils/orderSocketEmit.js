@@ -20,8 +20,6 @@ function emitOrderLifecycleEvent(io, {
 
   io.to('admin:orders').emit('order:updated', payload);
   io.to('admin_room').emit('order:updated', payload);
-  io.to('staff:orders').emit('order:updated', payload);
-  io.to('staff_room').emit('order:updated', payload);
 
   if (riderUserId) {
     io.to(`rider:${riderUserId}`).emit(event, payload);

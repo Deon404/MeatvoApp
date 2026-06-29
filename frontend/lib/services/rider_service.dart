@@ -120,7 +120,7 @@ class RiderService {
 
       final groupedLists = <Map<String, dynamic>>[];
       final seenIds = <String>{};
-      for (final key in const ['available', 'active', 'delivered']) {
+      for (final key in const ['pending', 'available', 'active', 'delivered']) {
         final value = map[key];
         if (value is List) {
           for (final entry in value) {
@@ -789,23 +789,69 @@ class RiderService {
 
   // ── Assignment detail ──────────────────────────────────────────────────────
 
+  /// Whether the order is packed and ready for rider acceptance.
+  Future<bool> isOrderReadyForAccept(
+    String orderId, {
+    bool forceRefresh = false,
+  }) async {
+    try {
+      final assignment = await getOrderAssignment(
+        orderId,
+        forceRefresh: forceRefresh,
+      );
+      final order = assignment['order'] as Map<String, dynamic>?;
+      final status = _normalizeStatus(order?['status'], fallback: '');
+      return status == 'packed';
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<Map<String, dynamic>> getOrderAssignment(
     String assignmentId, {
     bool forceRefresh = false,
   }) async {
+    try {
+      final raw = _extractMap(
+        await _api.get(ApiDeliveryPaths.orderById(assignmentId)),
+        'Failed to fetch order',
+      );
+      return _toLegacyAssignment(_normalizeOrder(raw));
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 404 && e.response?.statusCode != 403) {
+        _throwDeliveryApiError(e, 'Failed to fetch order');
+      }
+    } on RoleAccessException {
+      rethrow;
+    } catch (e) {
+      if (e is Exception && e.toString().contains('Failed to fetch order')) {
+        rethrow;
+      }
+    }
+
     final orders = await _fetchAssignedOrdersRaw(forceRefresh: forceRefresh);
-    final matchedOrder = orders.where((o) => o['id']?.toString() == assignmentId);
+    final matchedOrder =
+        orders.where((o) => o['id']?.toString() == assignmentId);
     if (matchedOrder.isNotEmpty) {
       return _toLegacyAssignment(matchedOrder.first);
     }
-    return {
-      'id': assignmentId,
-      'status': 'assigned',
-      'order': {'id': assignmentId},
-    };
+
+    throw Exception('Order not found or not assigned to you');
   }
 
   // ── Realtime polling ──────────────────────────────────────────────────────
+
+  Stream<List<Map<String, dynamic>>> watchNewOrdersRaw() {
+    return Stream.periodic(const Duration(seconds: 10)).asyncMap((_) async {
+      try {
+        return await _fetchAssignedOrdersRaw();
+      } on RoleAccessException {
+        rethrow;
+      } catch (_) {
+        return <Map<String, dynamic>>[];
+      }
+    });
+  }
 
   Stream<List<OrderModel>> watchNewOrders() {
     return Stream.periodic(const Duration(seconds: 10)).asyncMap((_) async {
@@ -827,15 +873,19 @@ class RiderService {
     await _newOrdersSubscription?.cancel();
 
     final seenOrderIds = <String>{};
-    void handleOrders(List<OrderModel> orders) {
-      final currentIds = orders.map((order) => order.id).toSet();
+    void handleOrders(List<Map<String, dynamic>> orders) {
+      final currentIds = orders
+          .map((order) => order['id']?.toString())
+          .whereType<String>()
+          .toSet();
       final hasChanges =
           seenOrderIds.isNotEmpty && !setEquals(seenOrderIds, currentIds);
 
       if (seenOrderIds.isNotEmpty) {
-        for (final order
-            in orders.where((item) => !seenOrderIds.contains(item.id))) {
-          onNewAssignment(_toLegacyAssignment(order.toJson()));
+        for (final order in orders.where(
+          (item) => !seenOrderIds.contains(item['id']?.toString()),
+        )) {
+          onNewAssignment(_toLegacyAssignment(order));
         }
         if (hasChanges) {
           onAssignmentUpdated?.call();
@@ -848,7 +898,7 @@ class RiderService {
     }
 
     try {
-      final initialOrders = await getAssignedOrders();
+      final initialOrders = await _fetchAssignedOrdersRaw();
       handleOrders(initialOrders);
     } on RoleAccessException catch (error) {
       onRoleAccessDenied?.call(error);
@@ -857,7 +907,7 @@ class RiderService {
       debugPrint('Initial order assignment sync failed: $error');
     }
 
-    _newOrdersSubscription = watchNewOrders().listen(
+    _newOrdersSubscription = watchNewOrdersRaw().listen(
       handleOrders,
       onError: (Object error) {
         if (error is RoleAccessException) {

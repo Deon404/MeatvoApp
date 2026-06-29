@@ -376,6 +376,17 @@ String formatAddressForDisplay(dynamic addressData) {
   if (addressData == null) return 'Address not available';
 
   if (addressData is String) {
+    final trimmed = addressData.trim();
+    if (trimmed.startsWith('{') && trimmed.contains(':')) {
+      final textMatch = RegExp(
+        r'(?:text|formatted):\s*([^}]+?)(?:,\s*(?:formatted|text|raw|lat|lng):|$)',
+      ).firstMatch(trimmed);
+      if (textMatch != null) {
+        final extracted = formatRawAddressString(textMatch.group(1)!.trim());
+        if (extracted.isNotEmpty) return extracted;
+      }
+    }
+
     final formatted = formatRawAddressString(addressData);
     if (formatted.isEmpty) return 'Address not available';
     return formatted;

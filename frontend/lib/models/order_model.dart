@@ -1,3 +1,5 @@
+import '../utils/address_display_util.dart';
+
 double _toDouble(dynamic value, {double fallback = 0.0}) {
   if (value == null) return fallback;
   if (value is num) return value.toDouble();
@@ -24,6 +26,14 @@ int? _parseIntOrNull(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value.toString());
+}
+
+String? _parseDeliveryAddress(Map<String, dynamic> json) {
+  final raw = json['delivery_address'] ?? json['deliveryAddress'] ?? json['address'];
+  if (raw == null) return null;
+  final formatted = formatAddressForDisplay(raw);
+  if (formatted == 'Address not available') return null;
+  return formatted;
 }
 
 /// Order model representing customer orders
@@ -124,7 +134,7 @@ class OrderModel {
       paymentMethodDetails: json['payment_method_details'] != null
           ? Map<String, dynamic>.from(json['payment_method_details'] as Map)
           : null,
-      deliveryAddress: json['delivery_address']?.toString(),
+      deliveryAddress: _parseDeliveryAddress(json),
       deliveryLatitude: json['delivery_latitude'] != null
           ? _toDouble(json['delivery_latitude'], fallback: 0)
           : null,

@@ -13,6 +13,7 @@ const {
   notifyRiderAssignmentCancelled,
 } = require('../../services/assignment.service');
 const { createParamBinder, joinWhere } = require('../../utils/sqlParams');
+const { getDeliveryPartnerIdForUser } = require('../../utils/deliveryPartner.util');
 
 // Enhanced lifecycle imports
 const {
@@ -42,6 +43,7 @@ const {
   restoreStockForOrder,
   shouldRestoreStockOnCancel,
 } = require('../payments/payment-stock');
+const { processFailedDeliveryRefund } = require('../../services/cashfreeRefund.service');
 const {
   packOrderWithWeightReconciliation,
 } = require('../../services/packingWeightReconciliation.service');
@@ -431,7 +433,6 @@ const createOrder = asyncHandler(async (req, res) => {
     };
     io.to('admin_room').emit('order:new', newOrderPayload);
     if (result.order.status === 'CONFIRMED') {
-      io.to('staff_room').emit('order:new', newOrderPayload);
       instrumentOrderConfirmed(io, {
         orderId: result.order.id,
         actorId: customerId,
@@ -510,15 +511,28 @@ const getOrder = asyncHandler(async (req, res) => {
   const isOwner = Number(order.customer_id) === Number(req.user.id);
 
   let isDeliveryAssigned = false;
-  if (req.user.role === ROLES.DELIVERY) {
+  const deliveryPartnerId = await getDeliveryPartnerIdForUser(Number(req.user.id));
+  if (deliveryPartnerId) {
     const { rows } = await query(
       `SELECT oa.id
        FROM order_assignments oa
-       JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
-       WHERE oa.order_id = $1 AND dp.user_id = $2`,
-      [orderId, Number(req.user.id)]
+       WHERE oa.order_id = $1 AND oa.delivery_partner_id = $2`,
+      [orderId, deliveryPartnerId]
     );
     isDeliveryAssigned = Boolean(rows[0]);
+
+    if (!isDeliveryAssigned) {
+      const { rows: claimableRows } = await query(
+        `SELECT o.id
+         FROM orders o
+         LEFT JOIN order_assignments oa ON oa.order_id = o.id
+         WHERE o.id = $1
+           AND o.status = 'PACKED'
+           AND (oa.id IS NULL OR oa.status::text = 'CANCELLED')`,
+        [orderId]
+      );
+      isDeliveryAssigned = Boolean(claimableRows[0]);
+    }
   }
 
   if (!isAdmin && !isOwner && !isDeliveryAssigned) return fail(res, 403, 'Not allowed');
@@ -707,9 +721,14 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
 
   try {
     if (String(status).toUpperCase() === 'PACKED') {
+      const incomingWeights = req.body?.items ?? req.body?.lineWeights ?? [];
+      const isAdminSkipWeights =
+        req.user.role === ROLES.ADMIN && incomingWeights.length === 0;
+
       const result = await packOrderWithWeightReconciliation({
         orderId,
-        lineWeights: req.body?.items ?? req.body?.lineWeights ?? [],
+        lineWeights: incomingWeights,
+        skipWeightValidation: isAdminSkipWeights,
         actor: req.user.id,
         actorRole,
         context: { notes: req.body.notes },
@@ -780,7 +799,10 @@ const cancelOrder = asyncHandler(async (req, res) => {
   const customerId = Number(req.user.id);
 
   const { rows } = await query(
-    'SELECT id, status, customer_id, address FROM orders WHERE id = $1',
+    `SELECT o.id, o.status, o.customer_id, o.address,
+            o.payment_mode, o.payment_status, o.total_amount
+     FROM orders o
+     WHERE o.id = $1`,
     [orderId]
   );
   const order = rows[0];
@@ -809,6 +831,25 @@ const cancelOrder = asyncHandler(async (req, res) => {
     });
     cancelledPartnerUserId = assignmentResult.partnerUserId;
   });
+
+  // Trigger refund for online payments
+  const isOnlinePaid =
+    order.payment_mode === 'ONLINE' &&
+    order.payment_status === 'PAID';
+
+  if (isOnlinePaid) {
+    // Fire-and-forget refund (do not block cancel response)
+    processFailedDeliveryRefund({
+      orderId,
+      amount: Number(order.total_amount),
+      paymentMode: 'ONLINE',
+    }).catch((err) => {
+      logger.error('cancel_refund_failed', {
+        orderId,
+        error: err.message,
+      });
+    });
+  }
 
   logger.info('order_cancelled', { orderId, customerId });
 
@@ -843,7 +884,6 @@ const cancelOrder = asyncHandler(async (req, res) => {
     io.to(`customer_${customerId}`).emit('order:status_update', payload);
     io.to(`customer_${customerId}`).emit('order:status_updated', payload);
     io.to('admin_room').emit('order:updated', payload);
-    io.to('staff_room').emit('order:updated', payload);
   }
 
   return ok(
