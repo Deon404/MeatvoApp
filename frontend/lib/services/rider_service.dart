@@ -21,6 +21,16 @@ final riderServiceProvider = Provider<RiderService>((ref) {
   );
 });
 
+class OrderNoLongerAvailableException implements Exception {
+  final String message;
+  OrderNoLongerAvailableException([
+    this.message =
+        'This order is no longer available. It may have been reassigned or completed.',
+  ]);
+  @override
+  String toString() => message;
+}
+
 class RiderService {
   final ApiService _api;
   final RiderLocationService _locationService;
@@ -836,7 +846,7 @@ class RiderService {
       return _toLegacyAssignment(matchedOrder.first);
     }
 
-    throw Exception('Order not found or not assigned to you');
+    throw OrderNoLongerAvailableException();
   }
 
   // ── Realtime polling ──────────────────────────────────────────────────────

@@ -14,6 +14,8 @@ import '../../screens/orders/orders_screen.dart';
 import '../../screens/profile/profile_edit_screen.dart';
 import '../../screens/settings/privacy_policy_screen.dart';
 import '../../screens/settings/terms_of_service_screen.dart';
+import '../settings/about_meatvo_screen.dart';
+import '../settings/faq_screen.dart';
 import '../../screens/wishlist/wishlist_screen.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
@@ -601,6 +603,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             icon: Icons.policy_outlined,
                             title: 'Terms & Privacy',
                             onTap: _showTermsPrivacySheet,
+                          ),
+                          _menuTile(
+                            icon: Icons.quiz_outlined,
+                            title: 'FAQ',
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const FaqScreen(),
+                                ),
+                              );
+                            },
+                          ),
+                          _menuTile(
+                            icon: Icons.storefront_outlined,
+                            title: 'About Meatvo',
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const AboutMeatvoScreen(),
+                                ),
+                              );
+                            },
                             showDivider: false,
                           ),
                           const SizedBox(height: 4),

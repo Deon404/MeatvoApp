@@ -193,6 +193,12 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<bool> _onWillPop() async {
     if (!context.mounted) return false;
 
+    // If on a non-Home tab, go to Home tab first
+    if (_selectedIndex != 0) {
+      setState(() => _selectedIndex = 0);
+      return false; // Don't exit, don't pop
+    }
+
     final now = DateTime.now();
     
     // Check if there's a navigation stack to pop

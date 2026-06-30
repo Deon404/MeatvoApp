@@ -41,6 +41,7 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
   bool _isLoading = true;
   String? _errorMessage;
   bool _isProcessing = false;
+  bool _isCancelDialogShowing = false;
 
   @override
   void initState() {
@@ -53,6 +54,7 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     try {
       await _socketService.connect();
       _socketService.on('order:assignment_cancelled', (data) {
+        if (_isCancelDialogShowing) return;
         if (!mounted) return;
         final cancelledOrderId =
             data is Map ? data['orderId']?.toString() : null;
@@ -62,17 +64,21 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         }
 
         _locationService.stopSendingLocation();
+        _isCancelDialogShowing = true;
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (_) => AlertDialog(
+          builder: (dialogContext) => AlertDialog(
             title: const Text('Order Cancelled'),
             content: const Text('Customer has cancelled this order.'),
             actions: [
               ElevatedButton(
                 onPressed: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).pop();
+                  _isCancelDialogShowing = false;
+                  Navigator.of(dialogContext, rootNavigator: true).pop();
+                  if (mounted) {
+                    Navigator.of(context, rootNavigator: true).pop();
+                  }
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFC8102E),
@@ -175,7 +181,16 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         _syncLocationTracking();
       }
     } catch (e) {
-      if (mounted) {
+      if (!mounted) return;
+      if (e is OrderNoLongerAvailableException) {
+        setState(() {
+          _errorMessage = e.message;
+          _isLoading = false;
+        });
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) Navigator.of(context).pop();
+        });
+      } else {
         setState(() {
           _errorMessage = _friendlyLoadError(e);
           _isLoading = false;
@@ -955,6 +970,13 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
 
   Widget _buildTopCard() {
     final status = _assignment?['status'] as String? ?? 'assigned';
+    final resolvedStatus = _resolveActionStatus();
+    final topLabel = resolvedStatus == 'preparing'
+        ? 'Order Being Prepared'
+        : 'Ongoing Trip';
+    final badgeText = resolvedStatus == 'preparing'
+        ? 'PREPARING'
+        : status.replaceAll('_', ' ').toUpperCase();
     final order = _assignment?['order'] as Map<String, dynamic>?;
     final orderId = order?['id']?.toString() ?? widget.assignmentId;
     final user = order?['user'] as Map<String, dynamic>?;
@@ -975,9 +997,9 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         children: [
           Row(
             children: [
-              const Text(
-                'Ongoing Trip',
-                style: TextStyle(
+              Text(
+                topLabel,
+                style: const TextStyle(
                   fontSize: 12,
                   color: Color(0xFF6B6B6B),
                 ),
@@ -990,7 +1012,7 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  status.replaceAll('_', ' ').toUpperCase(),
+                  badgeText,
                   style: const TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w700,
@@ -1417,9 +1439,20 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     if (orderStatus == 'out_for_delivery' && assignmentStatus == 'accepted') {
       return 'accepted';
     }
-    if (assignmentStatus == 'assigned' &&
-        (orderStatus == 'confirmed' || orderStatus == 'packing_started')) {
-      return 'preparing';
+    if (assignmentStatus == 'assigned') {
+      const inFlightStatuses = {
+        'out_for_delivery',
+        'picked_up',
+        'on_the_way',
+        'rider_nearby',
+        'rider_accepted',
+      };
+      if (orderStatus == 'packed') {
+        return assignmentStatus; // Ready to accept
+      }
+      if (!inFlightStatuses.contains(orderStatus)) {
+        return 'preparing';
+      }
     }
     return assignmentStatus;
   }

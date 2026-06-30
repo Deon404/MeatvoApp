@@ -102,6 +102,8 @@ class OrderService {
         order['subtotal'] ??= pricing['subtotal'];
         order['delivery_charge'] ??=
             pricing['deliveryCharge'] ?? pricing['delivery_charge'];
+        order['discount_amount'] ??=
+            pricing['discountAmount'] ?? pricing['discount_amount'];
         order['final_amount'] ??=
             pricing['totalAmount'] ?? pricing['finalAmount'] ?? pricing['final_amount'];
         order['total_price'] ??= order['final_amount'];
@@ -138,6 +140,8 @@ class OrderService {
             .toString();
     m['total_price'] ??= m['totalPrice'] ?? m['total'];
     m['total_price'] ??= m['final_amount'] ?? m['total_amount'];
+    m['delivery_charge'] ??= m['deliveryCharge'];
+    m['discount_amount'] ??= m['discountAmount'];
     m['payment_method'] ??= m['paymentMethod'];
     m['payment_method'] ??= m['payment_mode'];
     if (m['payment_method'] != null) {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../design_system/tokens/meatvo_colors.dart';
@@ -17,31 +18,15 @@ class AuthLogoHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
-    final width = compact ? 100.0 : 120.0;
 
     return Center(
-      child: Image.asset(
-        'assets/images/meatvo_logo.png',
-        width: width,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Image.asset(
-          'assets/icons/logo.png',
-          width: compact ? 76 : 92,
-          height: compact ? 76 : 92,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => Container(
-            width: compact ? 76 : 92,
-            height: compact ? 76 : 92,
-            decoration: BoxDecoration(
-              color: AppColors.primaryLight,
-              borderRadius: BorderRadius.circular(mv.radii.xl),
-            ),
-            child: Icon(
-              Icons.kebab_dining_outlined,
-              color: mv.brandPrimary,
-              size: 40,
-            ),
-          ),
+      child: Text(
+        'MEATVO',
+        style: GoogleFonts.poppins(
+          fontSize: compact ? 32 : 40,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -0.5,
+          color: mv.brandPrimary,
         ),
       ),
     );

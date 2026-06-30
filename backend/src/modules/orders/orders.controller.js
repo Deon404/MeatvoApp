@@ -32,7 +32,10 @@ const {
 } = require('../../services/notification.service');
 const { createDeliveryOTP } = require('../../services/deliveryProof.service');
 const { signStoredImageUrl } = require('../../utils/uploadSigning');
-const { validateCouponForOrder } = require('../coupons/coupons.service');
+const {
+  validateCouponForOrder,
+  computeDiscountAmount,
+} = require('../coupons/coupons.service');
 const { haversineKm } = require('../delivery/route-optimizer');
 const { getStoreSettings } = require('../settings/settings.controller');
 const { withCustomerStatus } = require('../../utils/customerOrderStatus.util');
@@ -49,6 +52,36 @@ const {
   packOrderWithWeightReconciliation,
 } = require('../../services/packingWeightReconciliation.service');
 const { orderedWeightGramsForLine, isWeightBasedProduct } = require('../../utils/weightBasedProduct.util');
+
+/** Derive pricing breakdown for orders (subtotal/delivery not persisted on orders table). */
+async function buildOrderPricingFields(order, items, storeSettings = {}) {
+  const subtotal = items.reduce(
+    (sum, item) => sum + Number(item.quantity || 0) * Number(item.price || 0),
+    0
+  );
+  const totalAmount = Number(order.total_amount || 0);
+  let discountAmount = 0;
+  let deliveryCharge = Math.max(0, totalAmount - subtotal);
+
+  if (order.coupon_id) {
+    const { rows } = await query(
+      `SELECT id, discount_type, discount_value FROM coupons WHERE id = $1`,
+      [order.coupon_id]
+    );
+    const coupon = rows[0];
+    if (coupon) {
+      const estimatedDelivery = resolveDeliveryCharge(subtotal, storeSettings);
+      discountAmount = computeDiscountAmount(coupon, subtotal + estimatedDelivery);
+      deliveryCharge = Math.max(0, totalAmount - subtotal + discountAmount);
+    }
+  }
+
+  return {
+    subtotal,
+    delivery_charge: deliveryCharge,
+    discount_amount: discountAmount,
+  };
+}
 
 /** Push/SMS/OTP after checkout — must not block the HTTP response (FCM can take 8s+ per user). */
 function schedulePostOrderSideEffects({
@@ -651,12 +684,20 @@ const getOrder = asyncHandler(async (req, res) => {
     });
   }
 
+  const storeSettings = await getStoreSettings();
+  const pricing = await buildOrderPricingFields(orderWithRider, signedItems, storeSettings);
+  const orderForResponse = {
+    ...orderWithRider,
+    ...pricing,
+  };
+
   return ok(
     res,
     {
-      order: isOwner ? withCustomerStatus(orderWithRider) : orderWithRider,
+      order: isOwner ? withCustomerStatus(orderForResponse) : orderForResponse,
       items: signedItems,
       assignment,
+      pricing,
     },
     'Order'
   );

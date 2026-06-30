@@ -16,7 +16,6 @@ import '../../utils/order_payment_util.dart';
 import '../../utils/eta_display_util.dart';
 import '../../services/maps_service.dart';
 import '../../widgets/maps/delivery_tracking_map.dart';
-import '../../widgets/order/order_cancel_grace_banner.dart';
 import '../../widgets/order/order_delivery_otp_card.dart';
 import '../../widgets/order/order_tracking_bottom_sheet.dart';
 import '../../widgets/order/order_tracking_header.dart';
@@ -741,20 +740,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             ),
             graceBanner: awaitingPayment
                 ? _buildPaymentPendingBanner()
-                : Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      OrderCancelGraceBanner(
-                        createdAt: order.createdAt,
-                        status: order.status,
-                        isCancelling: _isCancelling,
-                        onCancel: _cancelOrder,
-                      ),
-                      if (_shouldShowRiderAssignedBanner())
-                        _buildRiderAssignedBanner(),
-                    ],
-                  ),
+                : (_shouldShowRiderAssignedBanner()
+                    ? _buildRiderAssignedBanner()
+                    : null),
             otpCard: isDeliveryOtpVisible(order.status)
                 ? OrderDeliveryOtpCard(
                     otp: _deliveryOtp,
@@ -1030,15 +1018,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             '₹${_order!.totalAmount.toStringAsFixed(0)}',
           ),
           const SizedBox(height: 8),
-          if (_order!.deliveryCharge != null)
-            _buildPriceRow(
-              'Delivery',
-              isFreeDelivery
-                  ? 'FREE'
-                  : '₹${deliveryCharge.toStringAsFixed(0)}',
-              valueColor:
-                  isFreeDelivery ? MeatvoColors.success : null,
-            ),
+          _buildPriceRow(
+            'Delivery',
+            isFreeDelivery
+                ? 'FREE'
+                : '₹${deliveryCharge.toStringAsFixed(0)}',
+            valueColor: isFreeDelivery ? MeatvoColors.success : null,
+          ),
           if (discount > 0) ...[
             const SizedBox(height: 8),
             _buildPriceRow(

@@ -48,11 +48,6 @@ class HomeSearchBar extends StatelessWidget {
                   ),
                 ),
               ),
-              Icon(
-                Icons.mic_none_rounded,
-                color: Colors.grey.shade500,
-                size: 20,
-              ),
               const SizedBox(width: 12),
             ],
           ),

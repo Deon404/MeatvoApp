@@ -9,6 +9,8 @@ import '../../models/address_model.dart';
 import '../../services/delivery_service.dart';
 import '../../services/maps_service.dart';
 import '../../utils/address_display_util.dart';
+import '../../widgets/location/location_error_dialog.dart';
+import '../../widgets/location/location_flow_helper.dart';
 import '../../widgets/location/serviceability_banner.dart';
 import 'address_details_screen.dart';
 
@@ -108,6 +110,33 @@ class _MapPinScreenState extends State<MapPinScreen> {
         _fields = GeocodedAddressFields.fromMap(address);
       }
     });
+  }
+
+  Future<void> _useCurrentLocation() async {
+    setState(() => _isResolving = true);
+    try {
+      final position = await resolveDeliveryLocation(context);
+      if (!mounted) return;
+      if (position == null) {
+        setState(() => _isResolving = false);
+        return;
+      }
+
+      final location = LatLng(position.latitude, position.longitude);
+      await _controller?.animateCamera(
+        CameraUpdate.newLatLngZoom(location, 16),
+      );
+    } on LocationException catch (e) {
+      if (!mounted) return;
+      setState(() => _isResolving = false);
+      await showLocationErrorDialog(context, e);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isResolving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not get current location')),
+      );
+    }
   }
 
   Future<void> _openDetails() async {
@@ -243,6 +272,18 @@ class _MapPinScreenState extends State<MapPinScreen> {
                         strokeWidth: 2,
                         color: AppColors.primary,
                       ),
+                    ),
+                  ),
+                if (_mapError == null)
+                  Positioned(
+                    right: 16,
+                    bottom: 16,
+                    child: FloatingActionButton.small(
+                      heroTag: 'gps_button',
+                      backgroundColor: Colors.white,
+                      foregroundColor: AppColors.primary,
+                      onPressed: _isResolving ? null : _useCurrentLocation,
+                      child: const Icon(Icons.my_location),
                     ),
                   ),
               ],
