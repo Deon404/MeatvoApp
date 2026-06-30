@@ -760,6 +760,29 @@ class RiderService {
     }
   }
 
+  Future<void> updateRiderName(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
+      throw Exception('Name cannot be empty');
+    }
+    try {
+      final res = await _api.patch(
+        ApiDeliveryPaths.updateProfile,
+        data: {
+          'name': trimmed,
+        },
+      );
+      final payload = res.data;
+      if (payload is Map && payload['success'] == false) {
+        throw Exception(payload['message'] ?? 'Failed to update name');
+      }
+    } on DioException catch (e) {
+      throw Exception(
+        'Failed to update name: ${e.response?.data?['message'] ?? e.message}',
+      );
+    }
+  }
+
   Future<void> updateRiderLocation({
     required double latitude,
     required double longitude,

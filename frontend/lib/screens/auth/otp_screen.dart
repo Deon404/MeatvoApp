@@ -312,7 +312,7 @@ class _OtpScreenState extends State<OtpScreen> with CodeAutoFill {
     return AuthScreenShell(
       bottomFooter: const AuthLegalFooter(),
       children: [
-        const AuthLogoHeader(compact: true),
+        AuthLogoHeader(compact: true),
         SizedBox(height: mv.spacing.xl),
         Text(
           '4 digit OTP verification sent on $_maskedPhone',

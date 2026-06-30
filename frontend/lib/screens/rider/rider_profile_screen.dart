@@ -9,7 +9,6 @@ import '../../providers/rider_provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../auth/phone_screen.dart';
-import 'rider_analytics_screen.dart';
 
 /// Rider Profile Screen - Rider profile and settings
 class RiderProfileScreen extends ConsumerStatefulWidget {
@@ -100,7 +99,7 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                 ? _buildErrorState()
                 : _riderProfile == null
                     ? _buildEmptyState()
-                    :                       RefreshIndicator(
+                    : RefreshIndicator(
                         onRefresh: _loadProfile,
                         color: AppColors.primary,
                         child: SingleChildScrollView(
@@ -115,8 +114,6 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                               _buildVehicleDetails(),
                               SizedBox(height: R.sh(2, context)),
                               _buildEarningsSummary(),
-                              SizedBox(height: R.sh(2, context)),
-                              _buildAnalyticsLink(),
                               SizedBox(height: R.sh(2, context)),
                               _buildKYCStatus(),
                               SizedBox(height: R.sh(3, context)),
@@ -209,11 +206,11 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
         side: BorderSide(color: AppColors.divider, width: 1),
       ),
       child: Padding(
-        padding: EdgeInsets.all(R.sw(4, context)),
+        padding: EdgeInsets.all(R.sw(3.5, context)),
         child: Column(
           children: [
             CircleAvatar(
-              radius: 50,
+              radius: 40,
               backgroundColor: AppColors.surface,
               backgroundImage: profileImage != null && profileImage.isNotEmpty
                   ? NetworkImage(profileImage)
@@ -222,23 +219,43 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                   ? Text(
                       userName.isNotEmpty ? userName[0].toUpperCase() : 'R',
                       style: TextStyle(
-                        fontSize: R.fontSize(32, context),
+                        fontSize: R.fontSize(28, context),
                         fontWeight: FontWeight.bold,
                         color: AppColors.textPrimary,
                       ),
                     )
                   : null,
             ),
-            SizedBox(height: R.sh(2, context)),
-            Text(
-              userName,
-              style: TextStyle(
-                fontSize: R.fontSize(20, context),
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+            SizedBox(height: R.sh(1.25, context)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    userName,
+                    textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: R.fontSize(18, context),
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                SizedBox(width: R.sw(2, context)),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                  icon: const Icon(Icons.edit, size: 18),
+                  color: AppColors.textSecondary,
+                  tooltip: 'Edit name',
+                  onPressed: () => _showEditNameDialog(initialName: rawName),
+                ),
+              ],
             ),
-            SizedBox(height: R.sh(1, context)),
+            SizedBox(height: R.sh(0.75, context)),
             Container(
               padding: EdgeInsets.symmetric(
                 horizontal: R.sw(3, context),
@@ -268,7 +285,7 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                 ],
               ),
             ),
-            SizedBox(height: R.sh(2, context)),
+            SizedBox(height: R.sh(1.5, context)),
             if (userPhone.isNotEmpty)
               _buildInfoRow(Icons.phone, userPhone),
             if (userEmail.isNotEmpty) ...[
@@ -598,39 +615,6 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                 Icons.account_balance_wallet,
                 isTotal: true),
           ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAnalyticsLink() {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: () {
-          Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => const RiderAnalyticsScreen(),
-            ),
-          );
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: EdgeInsets.all(R.sw(4, context)),
-          child: Row(
-            children: [
-              const Icon(Icons.insights_outlined, color: AppColors.primary),
-              SizedBox(width: R.sw(3, context)),
-              const Expanded(
-                child: Text(
-                  'View earnings analytics',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
-            ],
-          ),
         ),
       ),
     );
@@ -987,6 +971,101 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
     } finally {
       vehicleNumberController.dispose();
       licenseNumberController.dispose();
+    }
+  }
+
+  Future<void> _showEditNameDialog({required String initialName}) async {
+    final controller = TextEditingController(text: initialName);
+    final formKey = GlobalKey<FormState>();
+    bool isSaving = false;
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            title: const Text('Edit Name'),
+            content: Form(
+              key: formKey,
+              child: TextFormField(
+                controller: controller,
+                autofocus: true,
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) {
+                    return 'Please enter your name';
+                  }
+                  return null;
+                },
+                onFieldSubmitted: (_) {},
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed:
+                    isSaving ? null : () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) {
+                          return;
+                        }
+                        setDialogState(() => isSaving = true);
+                        try {
+                          await _riderService
+                              .updateRiderName(controller.text.trim());
+                          if (!dialogContext.mounted) return;
+                          Navigator.of(dialogContext).pop();
+
+                          if (!mounted) return;
+                          await _loadProfile();
+
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Name updated successfully'),
+                              backgroundColor: AppColors.success,
+                            ),
+                          );
+                        } catch (e) {
+                          if (!dialogContext.mounted) return;
+                          setDialogState(() => isSaving = false);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Failed to update: $e'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                child: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Save'),
+              ),
+            ],
+          ),
+        ),
+      );
+    } finally {
+      controller.dispose();
     }
   }
 }

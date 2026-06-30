@@ -119,7 +119,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
     return AuthScreenShell(
       bottomFooter: const AuthLegalFooter(),
       children: [
-        const AuthLogoHeader(),
+        AuthLogoHeader(),
         SizedBox(height: mv.spacing.xxl * 2),
         AuthPhoneField(
           controller: _phoneController,
