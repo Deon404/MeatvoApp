@@ -233,8 +233,10 @@ class _NewOrderAlertBannerOverlayState extends State<_NewOrderAlertBannerOverlay
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).padding.top;
+    final topOffset = topInset + kToolbarHeight;
     return Positioned(
-      top: 0,
+      top: topOffset,
       left: 0,
       right: 0,
       child: SlideTransition(
