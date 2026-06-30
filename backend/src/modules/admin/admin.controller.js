@@ -2119,33 +2119,77 @@ const changeUserRole = asyncHandler(async (req, res) => {
 
   const userId = Number(id);
 
-  const { rows: prevRows } = await query('SELECT role FROM users WHERE id = $1', [userId]);
-  if (prevRows.length === 0) {
-    return fail(res, 404, 'User not found');
-  }
-  const previousRole =
-    prevRows[0].role === 'delivery' ? 'delivery_partner' : prevRows[0].role;
+  let previousRole;
+  let rows;
 
-  // Update user role in database
-  const { rows } = await query(
-    'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, phone, name, role',
-    [dbRole, userId]
-  );
+  const result = await withTransaction(async (client) => {
+    const { rows: prevRows } = await client.query('SELECT role FROM users WHERE id = $1', [userId]);
+    if (prevRows.length === 0) {
+      const err = new Error('User not found');
+      err.statusCode = 404;
+      throw err;
+    }
+    const prevRole =
+      prevRows[0].role === 'delivery' ? 'delivery_partner' : prevRows[0].role;
 
-  if (rows.length === 0) {
-    return fail(res, 404, 'User not found');
-  }
-
-  if (dbRole === 'delivery') {
-    await query(
-      `INSERT INTO delivery_partners (user_id, is_online, approved)
-       VALUES ($1, false, false)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [userId]
+    const { rows: updatedRows } = await client.query(
+      'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, phone, name, role',
+      [dbRole, userId]
     );
-  } else {
-    await query('DELETE FROM delivery_partners WHERE user_id = $1', [userId]);
-  }
+
+    if (updatedRows.length === 0) {
+      const err = new Error('User not found');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (dbRole === 'delivery') {
+      await client.query(
+        `INSERT INTO delivery_partners (user_id, is_online, approved)
+         VALUES ($1, false, false)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId]
+      );
+    } else {
+      const { rows: existing } = await client.query(
+        'SELECT id FROM delivery_partners WHERE user_id = $1',
+        [userId]
+      );
+      if (existing.length > 0) {
+        const partnerId = existing[0].id;
+        const { rows: assignmentCheck } = await client.query(
+          'SELECT COUNT(*)::int AS count FROM order_assignments WHERE delivery_partner_id = $1',
+          [partnerId]
+        );
+        const hasAssignments = Number(assignmentCheck[0].count) > 0;
+
+        if (hasAssignments) {
+          await client.query(
+            `UPDATE delivery_partners SET approved = false, is_online = false WHERE user_id = $1`,
+            [userId]
+          );
+        } else {
+          try {
+            await client.query('DELETE FROM delivery_partners WHERE user_id = $1', [userId]);
+          } catch (deleteErr) {
+            if (deleteErr?.code === '23503') {
+              await client.query(
+                `UPDATE delivery_partners SET approved = false, is_online = false WHERE user_id = $1`,
+                [userId]
+              );
+            } else {
+              throw deleteErr;
+            }
+          }
+        }
+      }
+    }
+
+    return { rows: updatedRows, previousRole: prevRole };
+  });
+
+  previousRole = result.previousRole;
+  rows = result.rows;
 
   // Return the updated user with frontend role format
   const updatedUser = {
