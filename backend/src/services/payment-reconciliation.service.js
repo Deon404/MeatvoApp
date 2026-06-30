@@ -8,6 +8,8 @@ const { logger } = require('../utils/logger');
 const phonepeService = require('../modules/payments/phonepe.service');
 const cashfreeService = require('../modules/payments/cashfree.service');
 const { applyPaymentSuccess } = require('../modules/payments/payment-success');
+const { resolveSuccessfulCashfreePayment } = require('../modules/payments/cashfree.controller');
+const { releaseCouponForOrder } = require('../utils/couponRelease.util');
 
 const DEFAULT_TIMEOUT_MINUTES = Number(process.env.PAYMENT_RECONCILE_TIMEOUT_MINUTES || 15);
 const RECONCILE_INTERVAL_MS = Number(process.env.PAYMENT_RECONCILE_INTERVAL_MS || 5 * 60 * 1000);
@@ -25,6 +27,8 @@ async function cancelOrderForPaymentFailure(orderId, customerId, io, reason = 'p
      WHERE id = $1 AND status IN ('PLACED', 'PAYMENT_PENDING')`,
     [orderId]
   );
+
+  await releaseCouponForOrder(null, orderId);
 
   if (!io) return;
 
@@ -125,7 +129,7 @@ async function reconcileStalePayments(io = null) {
   }
 
   const { rows: cashfreeRows } = await query(
-    `SELECT pt.id, pt.order_id, pt.gateway_order_id, pt.status,
+    `SELECT pt.id, pt.order_id, pt.amount, pt.gateway_order_id, pt.status,
             o.customer_id, o.payment_mode, o.status AS order_status
      FROM payment_transactions pt
      JOIN orders o ON o.id = pt.order_id
@@ -158,6 +162,18 @@ async function reconcileStalePayments(io = null) {
       const orderStatus = String(liveStatus.order_status || '').toUpperCase();
 
       if (CASHFREE_SUCCESS_STATUSES.has(orderStatus)) {
+        const gatewayPaymentId = await resolveSuccessfulCashfreePayment(
+          payment.order_id,
+          payment.amount
+        );
+
+        if (!gatewayPaymentId) {
+          logger.warn('reconciliation_amount_verify_failed', {
+            orderId: payment.order_id,
+          });
+          continue;
+        }
+
         const client = await getClient();
         try {
           await client.query('BEGIN');
@@ -166,7 +182,7 @@ async function reconcileStalePayments(io = null) {
             orderId: payment.order_id,
             customerId: payment.customer_id,
             io,
-            gatewayResponse: liveStatus,
+            gatewayPaymentId,
           });
           if (result.applied) {
             await client.query('COMMIT');

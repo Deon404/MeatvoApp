@@ -308,6 +308,18 @@ const { PACK_AGE } = require('./src/config/businessRules');
 app.set('io', socketIo);
 startPaymentReconciliation(socketIo);
 
+const { retryAllFailedRefunds } = require('./src/services/cashfreeRefund.service');
+
+const REFUND_RETRY_INTERVAL_MS =
+  Number(process.env.REFUND_RETRY_INTERVAL_MS || 30 * 60 * 1000); // 30 min
+
+const refundRetryTimer = setInterval(() => {
+  retryAllFailedRefunds().catch((err) => {
+    logger.warn('refund_retry_tick_failed', { message: err?.message });
+  });
+}, REFUND_RETRY_INTERVAL_MS);
+refundRetryTimer.unref();
+
 const packAgeMonitor = setInterval(() => {
   monitorPackAge(socketIo).catch((err) => {
     logger.warn('pack_age_monitor_tick_failed', { message: err?.message });

@@ -2482,6 +2482,22 @@ const getOrderTimelineHandler = asyncHandler(async (req, res) => {
   return ok(res, timeline, 'Order operational timeline');
 });
 
+const getFailedRefunds = asyncHandler(async (req, res) => {
+  const { rows } = await query(
+    `SELECT pr.id, pr.order_id, pr.amount, pr.reason,
+            pr.status, pr.metadata, pr.created_at,
+            o.customer_id, u.phone
+     FROM order_partial_refunds pr
+     JOIN orders o ON o.id = pr.order_id
+     JOIN users u ON u.id = o.customer_id
+     WHERE pr.status = 'FAILED'
+       AND pr.gateway_refund_id IS NULL
+     ORDER BY pr.created_at DESC
+     LIMIT 100`
+  );
+  return ok(res, { refunds: rows }, 'Failed refunds');
+});
+
 module.exports = {
   dashboard,
   customers,
@@ -2523,4 +2539,5 @@ module.exports = {
   getOpsMetricsHandler,
   listOperationalEventsHandler,
   getOrderTimelineHandler,
+  getFailedRefunds,
 };

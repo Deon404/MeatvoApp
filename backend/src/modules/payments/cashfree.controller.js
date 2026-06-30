@@ -8,6 +8,7 @@ const {
 } = require('../../utils/cashfreeWebhook');
 const { applyPaymentSuccess } = require('./payment-success');
 const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
+const { releaseCouponForOrder } = require('../../utils/couponRelease.util');
 const sentry = require('../../utils/sentry');
 
 const getReturnUrl = () =>
@@ -73,6 +74,8 @@ const applyPaymentFailure = async (client, { paymentId, orderId, customerId, io 
      WHERE id = $1`,
     [orderId]
   );
+
+  await releaseCouponForOrder(client, orderId);
 
   emitOrderLifecycleEvent(io, {
     orderId,
@@ -766,4 +769,5 @@ module.exports = {
   getPaymentStatus,
   verifyPayment,
   abandonPayment,
+  resolveSuccessfulCashfreePayment,
 };

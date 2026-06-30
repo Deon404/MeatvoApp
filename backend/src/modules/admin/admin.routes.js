@@ -53,6 +53,7 @@ const {
   getOpsMetricsHandler,
   listOperationalEventsHandler,
   getOrderTimelineHandler,
+  getFailedRefunds,
 } = require('./admin.controller');
 const {
   dashboardSchema,
@@ -114,6 +115,8 @@ router.post('/orders/:id/resolve-failed-delivery', ...adminOnly, validate(resolv
 router.post('/orders/:id/resolve-assignment-failure', ...adminOnly, validate(resolveAssignmentFailureSchema), resolveAssignmentFailureOrder);
 router.get('/tasks', ...adminOnly, validate(listAdminTasksSchema), listAdminTasksHandler);
 router.patch('/orders/:id/status', ...adminOnly, validate(updateOrderStatusSchema), updateOrderStatus);
+
+router.get('/refunds/failed', ...adminOnly, getFailedRefunds);
 
 // PRODUCTS
 router.get('/products', ...adminOnly, validate(listCompatSchema), listProducts);

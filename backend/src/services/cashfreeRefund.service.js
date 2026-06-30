@@ -226,6 +226,40 @@ const processPendingRefundsForOrder = async (orderId) => {
 };
 
 /**
+ * Retry all FAILED gateway refunds from the last 7 days (one pass per order).
+ */
+const retryAllFailedRefunds = async () => {
+  const { rows } = await query(
+    `SELECT DISTINCT order_id
+     FROM order_partial_refunds
+     WHERE payment_mode = 'ONLINE'
+       AND gateway_refund_id IS NULL
+       AND status = $1
+       AND created_at > NOW() - INTERVAL '7 days'`,
+    [PARTIAL_REFUND_STATUS.FAILED]
+  );
+
+  let retried = 0;
+  let succeeded = 0;
+
+  for (const row of rows) {
+    try {
+      const results = await processPendingRefundsForOrder(row.order_id);
+      retried++;
+      if (results?.some((r) => r.submitted)) succeeded++;
+    } catch (err) {
+      logger.error('refund_retry_failed', {
+        orderId: row.order_id,
+        error: err.message,
+      });
+    }
+  }
+
+  logger.info('refund_retry_cycle_complete', { retried, succeeded });
+  return { retried, succeeded };
+};
+
+/**
  * Record and submit a full refund for failed-delivery resolution (ONLINE only).
  */
 const processFailedDeliveryRefund = async ({ orderId, amount, paymentMode, client = null }) => {
@@ -307,4 +341,5 @@ module.exports = {
   submitPartialRefundToGateway,
   processPendingRefundsForOrder,
   processFailedDeliveryRefund,
+  retryAllFailedRefunds,
 };

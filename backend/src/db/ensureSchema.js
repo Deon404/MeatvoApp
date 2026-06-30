@@ -485,6 +485,10 @@ const ensureSchema = async () => {
       sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     },
     {
+      name: 'orders.coupon_released_at',
+      sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_released_at TIMESTAMPTZ`,
+    },
+    {
       name: 'delivery_partners.updated_at',
       sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     },

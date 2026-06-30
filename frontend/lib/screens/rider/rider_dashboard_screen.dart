@@ -344,7 +344,7 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
         for (final assignment in _activeOrders) {
           final order = assignment['order'] as Map<String, dynamic>?;
           if (order?['id']?.toString() != id.toString()) continue;
-          final status = (order['status'] as String? ?? '').toUpperCase();
+          final status = (order?['status'] as String? ?? '').toUpperCase();
           if (status == 'PACKED') {
             isPacked = true;
           } else if (status.isNotEmpty) {

@@ -29,7 +29,7 @@ class RiderService {
       : _api = api ?? ApiService(),
         _locationService = locationService ?? RiderLocationService();
 
-  StreamSubscription<List<OrderModel>>? _newOrdersSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _newOrdersSubscription;
   String? _activeOrderId;
   bool _isOnDelivery = false;
   final MapsService _mapsService = MapsService();

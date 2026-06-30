@@ -43,6 +43,7 @@ const {
   restoreStockForOrder,
   shouldRestoreStockOnCancel,
 } = require('../payments/payment-stock');
+const { releaseCouponForOrder } = require('../../utils/couponRelease.util');
 const { processFailedDeliveryRefund } = require('../../services/cashfreeRefund.service');
 const {
   packOrderWithWeightReconciliation,
@@ -824,6 +825,8 @@ const cancelOrder = asyncHandler(async (req, res) => {
       'UPDATE orders SET status = $1 WHERE id = $2',
       ['CANCELLED', orderId]
     );
+
+    await releaseCouponForOrder(client, orderId);
 
     const assignmentResult = await cancelRiderAssignmentForOrder({
       orderId,
