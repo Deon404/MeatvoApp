@@ -4,8 +4,7 @@ const router = express.Router();
 
 const { protect } = require('../../middlewares/auth.middleware');
 const { validate } = require('../../middlewares/validate.middleware');
-const { initiatePayment, getPaymentStatus, handlePhonePeWebhook } = require('./payments.controller');
-const { verifyPayment } = require('./phonepe.controller');
+const { initiatePayment, handlePhonePeWebhook } = require('./payments.controller');
 const cashfreeController = require('./cashfree.controller');
 const paymentSecurity = require('../../security/payment.security');
 const {
@@ -51,8 +50,8 @@ const webhookRateLimit = rateLimit({
 // Protected payment routes
 router.post('/phonepe/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
 router.post('/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
-router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
-router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, verifyPayment);
+router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, cashfreeController.verifyPayment);
+router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, cashfreeController.verifyPayment);
 
 router.post('/cashfree/initiate', protect, paymentRateLimit, paymentSecurity.fraudDetection.bind(paymentSecurity), cashfreeController.initiatePayment);
 router.post('/cashfree/abandon', protect, paymentRateLimit, cashfreeController.abandonPayment);
@@ -60,7 +59,7 @@ router.post('/cashfree/webhook', webhookRateLimit, cashfreeController.handleWebh
 router.get('/cashfree/:orderId/status', protect, paymentRateLimit, cashfreeController.getPaymentStatus);
 router.post('/cashfree/verify', protect, paymentRateLimit, cashfreeController.verifyPayment);
 
-router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), paymentRateLimit, getPaymentStatus);
+router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), paymentRateLimit, cashfreeController.getPaymentStatus);
 
 // Public webhook route with rate limiting
 router.post('/phonepe/webhook', webhookRateLimit, handlePhonePeWebhook);

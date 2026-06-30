@@ -5,21 +5,18 @@ const { ok, fail } = require('../../utils/response');
 const { emitToAll } = require('../../socket/socket');
 const { syncOperationalToStoreSettings, getMergedStoreSettings } = require('../../utils/storeSettings.util');
 const { addressToText } = require('../../utils/address');
-const { canTransition } = require('../../utils/orderStateMachine');
-const { assertWeightReconciliationForDispatch } = require('../../utils/weightReconciliationDispatch.util');
+const {
+  transitionOrderState,
+  cancelOrderLifecycle,
+} = require('../../services/orderLifecycle.service');
 const {
   emitAssignmentSuccess,
-  emitAssignmentCancelled,
   retryAssignOrderToPartner,
   manualAssignOrderToPartner,
   assignOrderToPartner,
 } = require('../../services/assignment.service');
 const { signStoredImageUrl, normalizeStoredImageUrl } = require('../../utils/uploadSigning');
 const { logger } = require('../../utils/logger');
-const {
-  restoreStockForOrder,
-  shouldRestoreStockOnCancel,
-} = require('../payments/payment-stock');
 const {
   listOpenAdminTasks,
   resolveFailedDelivery,
@@ -133,6 +130,14 @@ const dashboard = asyncHandler(async (req, res) => {
     [ADMIN_TASK_TYPES.ASSIGNMENT_FAILED]
   );
 
+  const { rows: awaitingPaymentRows } = await query(
+    `SELECT COUNT(*)::int AS total
+     FROM orders
+     WHERE status = 'PLACED'
+       AND UPPER(COALESCE(payment_mode, '')) = 'ONLINE'
+       AND UPPER(COALESCE(payment_status, 'PENDING')) NOT IN ('PAID', 'PAYMENT_VERIFIED')`
+  );
+
   return ok(
     res,
     {
@@ -149,6 +154,7 @@ const dashboard = asyncHandler(async (req, res) => {
         packAgeWarningCount: packAgeWarningRows[0].total,
         packAgeCriticalCount: packAgeCriticalRows[0].total,
         openAssignmentFailureTasks: openAssignmentTasks[0].total,
+        awaitingPaymentCount: awaitingPaymentRows[0].total,
       },
     },
     'Dashboard'
@@ -930,6 +936,60 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
     }
   }
 
+  if (String(orderStatus || '').toUpperCase() === 'CANCELLED') {
+    const io = req.app.get('io');
+    try {
+      const cancelResult = await cancelOrderLifecycle({
+        orderId,
+        actor: req.user.id,
+        actorRole: 'admin',
+        context: { reason: req.body?.reason || 'Admin cancelled' },
+        io,
+        triggerRefund: true,
+      });
+      logger.info('admin_action', {
+        adminId: req.user.id,
+        action: 'force_cancel',
+        targetId: orderId,
+        before: cancelResult.oldState,
+        after: 'CANCELLED',
+        timestamp: new Date().toISOString(),
+      });
+      const { rows } = await query(
+        `SELECT o.id, o.customer_id, u.phone, o.total_amount, o.status,
+                oa.delivery_partner_id,
+                (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
+         FROM orders o
+         JOIN users u ON u.id = o.customer_id
+         LEFT JOIN order_assignments oa ON oa.order_id = o.id
+         WHERE o.id = $1`,
+        [orderId]
+      );
+      const row = rows[0] || { id: orderId, status: 'CANCELLED' };
+      const createdAt = Number(row.created_at_ms || 0);
+      return ok(
+        res,
+        {
+          id: String(row.id),
+          customerUid: String(row.customer_id || ''),
+          phone: row.phone || '',
+          totalAmount: Number(row.total_amount || 0),
+          status: 'CANCELLED',
+          deliveryUid: row.delivery_partner_id ? String(row.delivery_partner_id) : '',
+          createdAt,
+          updatedAt: createdAt,
+        },
+        'Order cancelled'
+      );
+    } catch (error) {
+      const statusCode = error.statusCode || 400;
+      return fail(res, statusCode, error.message || 'Cancel failed');
+    }
+  }
+
+  let pendingStatusTransition = null;
+  let confirmPlacedOrder = false;
+
   const result = await withTransaction(async (client) => {
     const db = client;
     const { rows: oRows } = await client.query(
@@ -948,47 +1008,7 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
       throw err;
     }
 
-    if (orderStatus === 'CANCELLED') {
-      const { rows: partnerRows } = await client.query(
-        `SELECT dp.user_id
-         FROM order_assignments oa
-         JOIN delivery_partners dp ON dp.id = oa.delivery_partner_id
-         WHERE oa.order_id = $1`,
-        [orderId]
-      );
-      const cancelledPartnerUserId = partnerRows[0]?.user_id ?? null;
-
-      const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [orderId]);
-      const currentStatus = rows[0]?.status;
-      const newStatus = 'CANCELLED';
-      if (!canTransition(currentStatus, newStatus)) {
-        const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
-        err.statusCode = 400;
-        throw err;
-      }
-      if (shouldRestoreStockOnCancel(currentStatus)) {
-        await restoreStockForOrder(client, orderId);
-      }
-      await client.query('UPDATE orders SET status = $1 WHERE id = $2', ['CANCELLED', orderId]);
-      await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['CANCELLED', orderId]);
-
-      const { rows: updatedRows } = await client.query(
-        `SELECT o.id, o.customer_id, u.phone, o.total_amount, o.status,
-                oa.delivery_partner_id,
-                (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
-         FROM orders o
-         JOIN users u ON u.id = o.customer_id
-         LEFT JOIN order_assignments oa ON oa.order_id = o.id
-         WHERE o.id = $1`,
-        [orderId]
-      );
-
-      return {
-        ...(updatedRows[0] || {}),
-        cancelledPartnerUserId,
-        previousStatus: currentStatus,
-      };
-    } else if (orderStatus === 'ASSIGNED') {
+    if (orderStatus === 'ASSIGNED') {
       const partnerId = Number(deliveryUserId);
       if (!partnerId) {
         const err = new Error('deliveryUserId is required for ASSIGNED');
@@ -1014,34 +1034,10 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
       );
 
       if (order.status === 'PLACED') {
-        const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [orderId]);
-        const currentStatus = rows[0]?.status;
-        const newStatus = 'CONFIRMED';
-        if (!canTransition(currentStatus, newStatus)) {
-          const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
-          err.statusCode = 400;
-          throw err;
-        }
-        await client.query('UPDATE orders SET status = $1 WHERE id = $2', ['CONFIRMED', orderId]);
+        confirmPlacedOrder = true;
       }
     } else if (orderStatus) {
-      const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [orderId]);
-      const currentStatus = rows[0]?.status;
-      const newStatus = orderStatus;
-      if (!canTransition(currentStatus, newStatus)) {
-        const err = new Error(`Cannot change order from ${currentStatus} to ${newStatus}`);
-        err.statusCode = 400;
-        throw err;
-      }
-      if (String(newStatus).toUpperCase() === 'OUT_FOR_DELIVERY') {
-        try {
-          assertWeightReconciliationForDispatch(order.weight_reconciliation_status);
-        } catch (reconErr) {
-          reconErr.statusCode = 400;
-          throw reconErr;
-        }
-      }
-      await client.query('UPDATE orders SET status = $1 WHERE id = $2', [orderStatus, orderId]);
+      pendingStatusTransition = orderStatus;
     }
 
     const { rows } = await client.query(
@@ -1055,63 +1051,50 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
       [orderId]
     );
 
-    // Emit to customer and admin rooms
-    const io = req.app.get('io');
-    if (io && rows[0]) {
-      io.to(`customer_${rows[0].customer_id}`).emit('order:status_updated', {
-        orderId: orderId,
-        status: orderStatus || rows[0].status,
-        updatedAt: new Date().toISOString()
-      });
-
-      io.to('admin_room').emit('order:updated', {
-        orderId: orderId,
-        status: orderStatus || rows[0].status,
-        updatedAt: new Date().toISOString()
-      });
-    }
-
     return rows[0] || null;
   });
 
   if (!result) return fail(res, 404, 'Order not found');
 
-  if (orderStatus === 'CANCELLED') {
-    logger.info('admin_action', {
-      adminId: req.user.id,
-      action: 'force_cancel',
-      targetId: orderId,
-      before: result.previousStatus,
-      after: 'CANCELLED',
-      timestamp: new Date().toISOString(),
-    });
+  const io = req.app.get('io');
+  try {
+    if (confirmPlacedOrder) {
+      await transitionOrderState({
+        orderId,
+        newState: 'CONFIRMED',
+        actor: req.user.id,
+        actorRole: 'admin',
+        io,
+      });
+    }
+    if (pendingStatusTransition) {
+      await transitionOrderState({
+        orderId,
+        newState: pendingStatusTransition,
+        actor: req.user.id,
+        actorRole: 'admin',
+        io,
+      });
+    }
+  } catch (error) {
+    const statusCode = error.statusCode || 400;
+    return fail(res, statusCode, error.message || 'Status update failed');
   }
 
-  const io = req.app.get('io');
+  const { rows: refreshedRows } = await query(
+    `SELECT o.id, o.customer_id, u.phone, o.total_amount, o.status,
+            oa.delivery_partner_id,
+            (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
+     FROM orders o
+     JOIN users u ON u.id = o.customer_id
+     LEFT JOIN order_assignments oa ON oa.order_id = o.id
+     WHERE o.id = $1`,
+    [orderId]
+  );
+  const latest = refreshedRows[0] || result;
+
   if (io) {
-    if (orderStatus === 'CANCELLED') {
-      if (result.cancelledPartnerUserId) {
-        emitAssignmentCancelled(
-          io,
-          orderId,
-          result.cancelledPartnerUserId,
-          'order_cancelled'
-        );
-      }
-      if (result.customer_id) {
-        io.to(`customer_${result.customer_id}`).emit('order:status_updated', {
-          orderId,
-          status: 'CANCELLED',
-          updatedAt: new Date().toISOString(),
-        });
-        io.to('admin_room').emit('order:updated', {
-          orderId,
-          status: 'CANCELLED',
-          updatedAt: new Date().toISOString(),
-        });
-      }
-    }
-    if (orderStatus === 'ASSIGNED' && result.delivery_partner_id) {
+    if (orderStatus === 'ASSIGNED' && latest.delivery_partner_id) {
       const [{ rows: orderRows }, { rows: partnerRows }] = await Promise.all([
         query(
           `SELECT id, customer_id, total_amount, address, payment_mode
@@ -1123,7 +1106,7 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
            FROM delivery_partners dp
            JOIN users u ON u.id = dp.user_id
            WHERE dp.id = $1`,
-          [result.delivery_partner_id]
+          [latest.delivery_partner_id]
         ),
       ]);
       if (orderRows[0] && partnerRows[0]) {
@@ -1140,9 +1123,9 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
   }
 
   const ioAfterPatch = req.app.get('io');
-  const finalStatus = String(result.status || '').toUpperCase();
+  const finalStatus = String(latest.status || '').toUpperCase();
   if (
-    !result.delivery_partner_id &&
+    !latest.delivery_partner_id &&
     finalStatus === 'PACKED'
   ) {
     assignOrderToPartner({ orderId, io: ioAfterPatch }).catch((err) => {
@@ -1153,20 +1136,20 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
     });
   }
 
-  const hasAssignment = Boolean(result.delivery_partner_id);
+  const hasAssignment = Boolean(latest.delivery_partner_id);
   const status =
-    hasAssignment && ['CONFIRMED', 'PACKED'].includes(result.status) ? 'ASSIGNED' : result.status;
-  const createdAt = Number(result.created_at_ms || 0);
+    hasAssignment && ['CONFIRMED', 'PACKED'].includes(latest.status) ? 'ASSIGNED' : latest.status;
+  const createdAt = Number(latest.created_at_ms || 0);
 
   return ok(
     res,
     {
-      id: String(result.id),
-      customerUid: String(result.customer_id),
-      phone: result.phone || '',
-      totalAmount: Number(result.total_amount || 0),
+      id: String(latest.id),
+      customerUid: String(latest.customer_id),
+      phone: latest.phone || '',
+      totalAmount: Number(latest.total_amount || 0),
       status,
-      deliveryUid: result.delivery_partner_id ? String(result.delivery_partner_id) : '',
+      deliveryUid: latest.delivery_partner_id ? String(latest.delivery_partner_id) : '',
       createdAt,
       updatedAt: createdAt,
     },

@@ -131,4 +131,5 @@ async function sendPushToUser(userId, { title, body, data = {} }) {
 module.exports = {
   sendPushToUser,
   getUserFcmToken,
+  isPushConfigured: isFirebaseAdminReady,
 };

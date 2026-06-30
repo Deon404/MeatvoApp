@@ -146,66 +146,26 @@ const customerAppExists = fs.existsSync(customerHtmlPath);
 const adminHtmlPath = path.join(__dirname, '../admin/admin.html');
 const adminAppExists = fs.existsSync(adminHtmlPath);
 
+const sendDeprecatedWebSpa = (res, role) =>
+  res.status(410).json({
+    success: false,
+    message: `Web ${role} SPA is deprecated. Use the Meatvo Flutter mobile app.`,
+    docs: 'Flutter admin/customer/rider flows are in frontend/',
+    api: '/api',
+  });
+
 const sendAdminPage = (res) => {
   if (adminAppExists) {
     return res.sendFile(adminHtmlPath);
   }
-
-  return res
-    .status(200)
-    .type('html')
-    .send(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Meatvo Admin</title>
-    <style>
-      body { font-family: Arial, sans-serif; background: #f8f8f8; color: #222; margin: 0; padding: 40px 20px; }
-      .card { max-width: 640px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
-      h1 { margin-top: 0; color: #b71c1c; }
-      code { background: #f4f4f4; padding: 2px 6px; border-radius: 6px; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1>Meatvo admin panel</h1>
-      <p>The web admin bundle is not available in this workspace, so <code>/admin</code> cannot serve a static SPA here.</p>
-      <p>Use the Flutter mobile app admin dashboard or <code>/api/admin/*</code> APIs for admin operations.</p>
-    </div>
-  </body>
-</html>`);
+  return sendDeprecatedWebSpa(res, 'admin');
 };
 
 const sendCustomerPage = (res) => {
   if (customerAppExists) {
     return res.sendFile(customerHtmlPath);
   }
-
-  return res
-    .status(200)
-    .type('html')
-    .send(`<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Meatvo Backend</title>
-    <style>
-      body { font-family: Arial, sans-serif; background: #f8f8f8; color: #222; margin: 0; padding: 40px 20px; }
-      .card { max-width: 640px; margin: 0 auto; background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
-      h1 { margin-top: 0; color: #b71c1c; }
-      code { background: #f4f4f4; padding: 2px 6px; border-radius: 6px; }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <h1>Meatvo backend is running</h1>
-      <p>The customer web app bundle is not available in this workspace, so <code>/customer</code> cannot serve a static SPA here.</p>
-      <p>Use <code>/health</code> for status checks and the mobile app or frontend dev server for customer UI testing.</p>
-    </div>
-  </body>
-</html>`);
+  return sendDeprecatedWebSpa(res, 'customer');
 };
 
 app.get('/', (req, res) => {
@@ -261,20 +221,14 @@ app.get('/customer', (req, res) => {
 
 const sendDeliveryPage = (res) => {
   const deliveryHtmlPath = path.join(__dirname, '../delivery/delivery.html');
-  if (!fs.existsSync(deliveryHtmlPath)) {
-    return res.type('html').send(`<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Meatvo Delivery</title></head>
-<body style="font-family:sans-serif;padding:2rem;text-align:center;">
-<h1>Delivery web app unavailable</h1>
-<p>Use the Meatvo Flutter app for rider delivery.</p>
-</body></html>`);
+  if (fs.existsSync(deliveryHtmlPath)) {
+    const mapsKey = String(process.env.GOOGLE_MAPS_API_KEY || '');
+    const escapedMapsKey = mapsKey.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const html = fs.readFileSync(deliveryHtmlPath, 'utf8')
+      .replace('<meta name="gmap-key" content="">', `<meta name="gmap-key" content="${escapedMapsKey}">`);
+    return res.type('html').send(html);
   }
-  const mapsKey = String(process.env.GOOGLE_MAPS_API_KEY || '');
-  const escapedMapsKey = mapsKey.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-  const html = fs.readFileSync(deliveryHtmlPath, 'utf8')
-    .replace('<meta name="gmap-key" content="">', `<meta name="gmap-key" content="${escapedMapsKey}">`);
-
-  res.type('html').send(html);
+  return sendDeprecatedWebSpa(res, 'delivery/rider');
 };
 
 app.get('/delivery', (req, res) => {
@@ -342,6 +296,16 @@ startCapacitySuggestionMonitor(socketIo);
   server.listen(PORT, HOST, () => {
     console.log(`Server running on ${HOST}:${PORT}`);
     logger.info('server_started', { host: HOST, port: PORT });
+    const { isPushConfigured } = require('./src/utils/fcm');
+    const pushReady = isPushConfigured();
+    if (process.env.NODE_ENV === 'production' && !pushReady) {
+      logger.warn('fcm_not_configured', {
+        message:
+          'Push notifications disabled — set FIREBASE_SERVICE_ACCOUNT_JSON on the server for FCM delivery.',
+      });
+    } else if (pushReady) {
+      logger.info('fcm_ready', { transport: 'firebase_admin' });
+    }
   }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       logger.error('port_in_use', {

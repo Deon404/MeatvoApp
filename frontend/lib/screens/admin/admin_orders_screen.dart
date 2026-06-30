@@ -35,6 +35,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
 
   final List<Map<String, String?>> _statusFilters = const [
     {'label': 'All', 'value': null},
+    {'label': 'Awaiting payment', 'value': 'AWAITING_PAYMENT'},
     {'label': 'Placed', 'value': 'PLACED'},
     {'label': 'Accepted', 'value': 'CONFIRMED'},
     {'label': 'Packed', 'value': 'PACKED'},
@@ -270,19 +271,25 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       });
     }
     try {
+      final statusFilter =
+          _selectedStatus == 'AWAITING_PAYMENT' ? 'PLACED' : _selectedStatus;
       final orders = await _adminService.getAllOrders(
-        status: _selectedStatus,
+        status: statusFilter,
         fromDate: _selectedDateRange?.start,
         toDate: _selectedDateRange?.end,
       );
 
+      final filteredOrders = _selectedStatus == 'AWAITING_PAYMENT'
+          ? orders.where(_isAwaitingPayment).toList()
+          : orders;
+
       if (!mounted) return;
-      debugPrint('AdminOrdersScreen: loaded ${orders.length} orders');
+      debugPrint('AdminOrdersScreen: loaded ${filteredOrders.length} orders');
       setState(() {
-        _orders = orders;
+        _orders = filteredOrders;
         _isLoading = false;
         _loadError = null;
-        _syncUnassignedWarnings(orders);
+        _syncUnassignedWarnings(filteredOrders);
       });
     } catch (e, stackTrace) {
       debugPrint('AdminOrdersScreen: failed to load orders: $e');
@@ -836,6 +843,40 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                               ),
                             ),
                           ),
+                          if (_isAwaitingPayment(order))
+                            Container(
+                              margin: const EdgeInsets.only(right: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: AppColors.primary.withValues(alpha: 0.4),
+                                ),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.payments_outlined,
+                                    size: 14,
+                                    color: AppColors.primary,
+                                  ),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'Awaiting payment',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           if (_isUnassignedOrder(order['id']))
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -1070,6 +1111,18 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
         ),
       ),
     );
+  }
+
+  bool _isAwaitingPayment(Map<String, dynamic> order) {
+    final status = _normalizedStatus(order['status']);
+    if (status != 'placed') return false;
+    final paymentMode =
+        (order['payment_mode'] ?? order['paymentMode'] ?? '').toString().toUpperCase();
+    if (paymentMode != 'ONLINE') return false;
+    final paymentStatus = (order['payment_status'] ?? order['paymentStatus'] ?? 'PENDING')
+        .toString()
+        .toUpperCase();
+    return !{'PAID', 'PAYMENT_VERIFIED'}.contains(paymentStatus);
   }
 
   String _normalizedStatus(dynamic status) =>

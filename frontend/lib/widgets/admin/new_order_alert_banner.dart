@@ -10,14 +10,18 @@ class NewOrderAlertData {
     required this.orderId,
     required this.customerLabel,
     required this.totalAmount,
+    this.awaitingPayment = false,
   });
 
   final int orderId;
   final String customerLabel;
   final double totalAmount;
+  final bool awaitingPayment;
 
-  String get displayText =>
-      'New Order #$orderId — ₹${_formatAmount(totalAmount)} — $customerLabel';
+  String get displayText {
+    final paymentHint = awaitingPayment ? ' (awaiting payment)' : '';
+    return 'New Order #$orderId — ₹${_formatAmount(totalAmount)} — $customerLabel$paymentHint';
+  }
 
   static String _formatAmount(double amount) {
     if (amount == amount.roundToDouble()) {
@@ -33,10 +37,20 @@ class NewOrderAlertData {
       map['totalAmount'] ?? map['total_amount'] ?? map['amount'],
     );
     final customerLabel = _resolveCustomerLabel(map);
+    final status = (map['status'] ?? map['orderStatus'] ?? '').toString().toUpperCase();
+    final paymentMode =
+        (map['paymentMode'] ?? map['payment_mode'] ?? '').toString().toUpperCase();
+    final paymentStatus = (map['paymentStatus'] ?? map['payment_status'] ?? 'PENDING')
+        .toString()
+        .toUpperCase();
+    final awaitingPayment = status == 'PLACED' &&
+        paymentMode == 'ONLINE' &&
+        !{'PAID', 'PAYMENT_VERIFIED'}.contains(paymentStatus);
     return NewOrderAlertData(
       orderId: orderId,
       customerLabel: customerLabel,
       totalAmount: totalAmount,
+      awaitingPayment: awaitingPayment,
     );
   }
 

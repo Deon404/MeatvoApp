@@ -214,6 +214,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       'pack_age_critical_count',
       'packAgeCriticalCount',
     ]);
+    final awaitingPayment = _readStatInt([
+      'awaiting_payment_count',
+      'awaitingPaymentCount',
+    ]);
     
     // Responsive font sizes
     final statValueFontSize = isSmallScreen ? 20.0 : (isTablet ? 28.0 : 24.0);
@@ -301,6 +305,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       statValueFontSize: statValueFontSize,
                       statIconSize: statIconSize,
                     ),
+                    if (awaitingPayment > 0) ...[
+                      SizedBox(height: gridSpacing),
+                      _buildStatCard(
+                        'Awaiting Payment',
+                        '$awaitingPayment',
+                        Icons.payments_outlined,
+                        AppColors.primary,
+                        fullWidth: true,
+                        statValueFontSize: statValueFontSize,
+                        statIconSize: statIconSize,
+                      ),
+                    ],
                     if (dispatchQueue > 0 || packAgeWarnings > 0 || packAgeCritical > 0) ...[
                       SizedBox(height: gridSpacing),
                       Row(

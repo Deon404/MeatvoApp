@@ -77,6 +77,8 @@ abstract final class ApiUserPaths {
   static const addresses = '/addresses';
   static const profile = '/users/profile';
   static const notifications = '/users/notifications';
+  static const notificationsReadAll = '/users/notifications/read-all';
+  static String notificationRead(String id) => '/users/notifications/$id/read';
   static const wishlist = '/users/wishlist';
   static const reviews = '/users/reviews';
   static String reviewForOrder(String orderId) => '/users/reviews/order/$orderId';

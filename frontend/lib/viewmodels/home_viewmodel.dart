@@ -16,6 +16,7 @@ import '../services/cart_sync_subscription.dart';
 import '../services/delivery_service.dart';
 import '../services/notification_service.dart';
 import '../services/product_service.dart';
+import '../services/socket_service.dart';
 import 'home_state.dart';
 
 export 'home_state.dart';
@@ -29,6 +30,8 @@ class HomeViewModel extends StateNotifier<HomeState> {
   final NotificationService _notificationService;
   bool _initialized = false;
   late final CartSyncSubscription _cartSync;
+  final SocketService _socketService = SocketService();
+  late final void Function(dynamic data) _catalogChangeHandler;
 
   HomeViewModel({
     required ProductService productService,
@@ -47,6 +50,17 @@ class HomeViewModel extends StateNotifier<HomeState> {
     _cartSync = CartSyncSubscription((cart) {
       state = state.copyWith(cart: cart);
     });
+    _catalogChangeHandler = (_) {
+      loadHome(forceRefresh: true);
+    };
+    _socketService.onCatalogChange(_catalogChangeHandler);
+  }
+
+  @override
+  void dispose() {
+    _cartSync.dispose();
+    _socketService.offCatalogChange(_catalogChangeHandler);
+    super.dispose();
   }
 
   Future<void> initialize() async {
@@ -449,11 +463,5 @@ class HomeViewModel extends StateNotifier<HomeState> {
 
   String _friendlyError(Object error, String fallback) {
     return ErrorMessageMapper.userMessage(error, fallback: fallback);
-  }
-
-  @override
-  void dispose() {
-    _cartSync.dispose();
-    super.dispose();
   }
 }

@@ -18,8 +18,19 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   WidgetsFlutterBinding.ensureInitialized();
   await EnvConfig.load();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  debugPrint('📩 Background message: ${message.messageId}');
-  debugPrint('Background data: ${message.data}');
+  debugPrint('Background message: ${message.messageId}');
+
+  final notification = message.notification;
+  if (notification != null) {
+    final notificationType = message.data['type']?.toString() ?? 'system';
+    await NotificationService().saveNotification(
+      id: message.messageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      title: notification.title ?? 'Meatvo',
+      body: notification.body ?? '',
+      type: notificationType,
+      orderId: message.data['order_id']?.toString(),
+    );
+  }
 }
 
 /// Push Notification Service with full FCM integration
@@ -401,6 +412,12 @@ class PushNotificationService {
 
   /// Check if initialized
   bool get isInitialized => _isInitialized;
+
+  /// Whether FCM handlers are active (permissions granted and init completed).
+  bool get isConfigured => _isInitialized;
+
+  /// Whether a device token is available for backend push delivery.
+  bool get hasToken => _fcmToken != null && _fcmToken!.isNotEmpty;
 
   /// Refresh FCM token (useful for testing or manual refresh)
   Future<void> refreshToken() async {

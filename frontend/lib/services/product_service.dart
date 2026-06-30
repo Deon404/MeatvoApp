@@ -7,6 +7,7 @@ import '../utils/media_url_resolver.dart';
 import '../utils/product_unit_helper.dart';
 import 'api_service.dart';
 import 'cache_service.dart';
+import 'socket_service.dart';
 
 /// Product Filters
 class ProductFilters {
@@ -729,14 +730,30 @@ class ProductService {
     await CacheService.remove('product_categories_maps');
   }
 
-  // ── Realtime stubs (no-op in REST backend) ────────────────────────────────
+  void Function(dynamic data)? _catalogChangeHandler;
 
   RealtimeChannel subscribeToProductUpdates({
     Function()? onProductUpdated,
     Function()? onProductInserted,
     Function()? onProductDeleted,
-  }) =>
-      RealtimeChannel();
+  }) {
+    final socket = SocketService();
+    _catalogChangeHandler = (_) {
+      onProductUpdated?.call();
+      onProductInserted?.call();
+      onProductDeleted?.call();
+    };
+    socket.onCatalogChange(_catalogChangeHandler!);
+    return RealtimeChannel(
+      onSubscribe: () {
+        onProductUpdated?.call();
+      },
+    );
+  }
 
-  void unsubscribeFromProductUpdates() {}
+  void unsubscribeFromProductUpdates() {
+    if (_catalogChangeHandler == null) return;
+    SocketService().offCatalogChange(_catalogChangeHandler);
+    _catalogChangeHandler = null;
+  }
 }

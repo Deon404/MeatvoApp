@@ -280,38 +280,6 @@ class CartService {
     }
   }
 
-  // ── Wishlist stubs (not yet in backend API) ────────────────────────────────
-
-  Future<void> addToWishlist(String productId) async {
-    debugPrint('⚠️ addToWishlist: not yet supported by backend');
-  }
-
-  Future<void> removeFromWishlist(String productId) async {
-    debugPrint('⚠️ removeFromWishlist: not yet supported by backend');
-  }
-
-  Future<List<ProductModel>> getWishlist() async => [];
-
-  Future<bool> isInWishlist(String productId) async => false;
-
-  // ── Realtime stub (REST backend has no realtime) ───────────────────────────
-
-  Stream<CartModel> subscribeToCartUpdates({
-    required Function() onCartUpdated,
-    Function(String)? onError,
-  }) async* {
-    try {
-      final cart = await getCart();
-      yield cart;
-      onCartUpdated();
-    } catch (e) {
-      onError?.call('Failed to load cart: $e');
-    }
-  }
-
-  void unsubscribeFromCartUpdates() {}
-
-  // ── Optimistic updates (instant UI, sync API in background) ─────────────
 
   /// Pushes a cart snapshot to all listeners without waiting for the server.
   void applyOptimisticCart(CartModel cart) {

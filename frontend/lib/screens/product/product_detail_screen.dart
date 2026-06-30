@@ -132,6 +132,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     _cartSync.dispose();
     _productSubscription?.close();
     _productUpdatesChannel?.unsubscribe();
+    _productService.unsubscribeFromProductUpdates();
     _productUpdatesChannel = null;
     super.dispose();
   }

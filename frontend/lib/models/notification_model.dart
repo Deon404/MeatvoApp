@@ -53,13 +53,13 @@ class NotificationModel {
 
     return NotificationModel(
       id: (json['id'] ?? '').toString(),
-      userId: (json['user_id'] ?? '').toString(),
+      userId: (json['user_id'] ?? json['userId'] ?? '').toString(),
       title: (json['title'] ?? '').toString(),
       body: (json['body'] ?? '').toString(),
       type: (json['type'] ?? 'system').toString(),
       data: parsedData,
-      isRead: parseBool(json['is_read'], false),
-      createdAt: parseDate(json['created_at']),
+      isRead: parseBool(json['is_read'] ?? json['read'], false),
+      createdAt: parseDate(json['created_at'] ?? json['createdAt']),
     );
   }
 

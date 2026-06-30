@@ -28,6 +28,11 @@ const {
 const { emitOrderLifecycleEvent } = require('../utils/orderSocketEmit');
 const { instrumentOrderStateTransition } = require('../utils/operationalEvents.util');
 const { assertWeightReconciliationForDispatch } = require('../utils/weightReconciliationDispatch.util');
+const {
+  restoreStockForOrder,
+  shouldRestoreStockOnCancel,
+} = require('../modules/payments/payment-stock');
+const { releaseCouponForOrder } = require('../utils/couponRelease.util');
 
 /**
  * Transition order to new state
@@ -494,8 +499,68 @@ async function getOrderActions(orderId, userId, userRole) {
   }
 }
 
+/**
+ * Cancel order via enhanced lifecycle: stock restore, coupon release, transition, optional refund.
+ */
+async function cancelOrderLifecycle({
+  orderId,
+  actor,
+  actorRole,
+  context = {},
+  io = null,
+  triggerRefund = false,
+}) {
+  const { rows: orderRows } = await query(
+    `SELECT id, status, customer_id, payment_mode, payment_status, total_amount
+     FROM orders WHERE id = $1`,
+    [orderId]
+  );
+  const order = orderRows[0];
+  if (!order) {
+    throw new Error('Order not found');
+  }
+
+  await withTransaction(async (client) => {
+    if (shouldRestoreStockOnCancel(order.status)) {
+      await restoreStockForOrder(client, orderId);
+    }
+    await releaseCouponForOrder(client, orderId);
+  });
+
+  const result = await transitionOrderState({
+    orderId,
+    newState: ORDER_STATES.CANCELLED,
+    actor,
+    actorRole,
+    context,
+    io,
+  });
+
+  if (triggerRefund) {
+    const isOnlinePaid =
+      String(order.payment_mode || '').toUpperCase() === 'ONLINE' &&
+      String(order.payment_status || '').toUpperCase() === 'PAID';
+    if (isOnlinePaid) {
+      const { processFailedDeliveryRefund } = require('./cashfreeRefund.service');
+      processFailedDeliveryRefund({
+        orderId,
+        amount: Number(order.total_amount),
+        paymentMode: 'ONLINE',
+      }).catch((err) => {
+        logger.error('cancel_refund_failed', {
+          orderId,
+          error: err.message,
+        });
+      });
+    }
+  }
+
+  return { ...result, order };
+}
+
 module.exports = {
   transitionOrderState,
+  cancelOrderLifecycle,
   handleStateActions,
   getOrderTimeline,
   getOrderActions,

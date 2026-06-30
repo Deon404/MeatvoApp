@@ -40,6 +40,78 @@ const MAX_ASSIGNMENT_ATTEMPTS = ASSIGNMENT.maxAttempts;
 const ASSIGNMENT_TIMEOUT_MS = resolveAssignmentTimeoutMs();
 const SMALL_FLEET_THRESHOLD = ASSIGNMENT.smallFleetThreshold;
 const pendingAssignmentTimeouts = new Map();
+const BROADCAST_CLAIM_TTL_SECONDS = 600;
+
+function broadcastClaimKey(orderId) {
+  return `order:broadcast_claim:${orderId}`;
+}
+
+async function markOrderBroadcastPending(orderId) {
+  try {
+    await redis.set(
+      broadcastClaimKey(orderId),
+      'pending',
+      'EX',
+      BROADCAST_CLAIM_TTL_SECONDS,
+      'NX'
+    );
+  } catch (error) {
+    logger.warn('broadcast_mark_failed', { orderId, error: error.message });
+  }
+}
+
+async function tryClaimBroadcastOrder(orderId, deliveryPartnerId) {
+  const key = broadcastClaimKey(orderId);
+  try {
+    const current = await redis.get(key);
+    if (current === null) {
+      return true;
+    }
+    if (current === 'pending') {
+      await redis.set(key, String(deliveryPartnerId), 'EX', BROADCAST_CLAIM_TTL_SECONDS);
+      const verify = await redis.get(key);
+      return verify === String(deliveryPartnerId);
+    }
+    return current === String(deliveryPartnerId);
+  } catch (error) {
+    logger.warn('broadcast_claim_failed', { orderId, error: error.message });
+    return false;
+  }
+}
+
+async function releaseBroadcastClaim(orderId) {
+  try {
+    await redis.del(broadcastClaimKey(orderId));
+  } catch (error) {
+    logger.warn('broadcast_claim_release_failed', { orderId, error: error.message });
+  }
+}
+
+async function notifyBroadcastClaimed(io, orderId, winnerUserId) {
+  if (!io) return;
+  const payload = {
+    orderId: Number(orderId),
+    claimedBy: Number(winnerUserId),
+    reason: 'broadcast_claimed',
+    timestamp: new Date().toISOString(),
+  };
+  io.to('admin_room').emit('order:broadcast_claimed', payload);
+  const { rows } = await query(
+    `SELECT user_id FROM delivery_partners WHERE is_online = TRUE AND approved = TRUE`
+  );
+  for (const row of rows) {
+    const riderUserId = Number(row.user_id);
+    if (!Number.isFinite(riderUserId) || riderUserId === Number(winnerUserId)) continue;
+    io.to(`user:${riderUserId}`).emit('order:assignment_cancelled', {
+      orderId: Number(orderId),
+      reason: 'broadcast_claimed',
+    });
+    io.to(`delivery_${riderUserId}`).emit('order:assignment_cancelled', {
+      orderId: Number(orderId),
+      reason: 'broadcast_claimed',
+    });
+  }
+}
 
 const assignableOrderStatuses = assignableOrderStatusSet;
 const activeAssignmentStatuses = activeAssignmentStatusSet;
@@ -920,6 +992,8 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
           ? Number(haversineDistanceKm(store.lat, store.lng, target.lat, target.lng).toFixed(1))
           : null;
 
+      await markOrderBroadcastPending(orderId);
+
       const broadcastPayload = {
         orderId: Number(order.id),
         orderStatus: order.status,
@@ -934,6 +1008,7 @@ const assignOrderToPartner = async ({ orderId, io, excludePartnerId = null }) =>
         paymentMode: order.payment_mode,
         distance: distanceKm ?? null,
         broadcast: true,
+        claimRequired: true,
         timestamp: new Date().toISOString(),
       };
 
@@ -1180,6 +1255,10 @@ module.exports = {
   scheduleAssignmentTimeout,
   cancelRiderAssignmentForOrder,
   notifyRiderAssignmentCancelled,
+  markOrderBroadcastPending,
+  tryClaimBroadcastOrder,
+  releaseBroadcastClaim,
+  notifyBroadcastClaimed,
   MAX_ASSIGNMENT_ATTEMPTS,
   ASSIGNMENT_TIMEOUT_MS,
 };

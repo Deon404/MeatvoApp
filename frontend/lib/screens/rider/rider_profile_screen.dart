@@ -9,6 +9,8 @@ import '../../providers/rider_provider.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../auth/phone_screen.dart';
+import 'delivery_map_screen.dart';
+import 'rider_analytics_screen.dart';
 
 /// Rider Profile Screen - Rider profile and settings
 class RiderProfileScreen extends ConsumerStatefulWidget {
@@ -114,6 +116,8 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                               _buildVehicleDetails(),
                               SizedBox(height: R.sh(2, context)),
                               _buildEarningsSummary(),
+                              SizedBox(height: R.sh(2, context)),
+                              _buildQuickLinks(),
                               SizedBox(height: R.sh(2, context)),
                               _buildKYCStatus(),
                               SizedBox(height: R.sh(3, context)),
@@ -616,6 +620,47 @@ class _RiderProfileScreenState extends ConsumerState<RiderProfileScreen> {
                 isTotal: true),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildQuickLinks() {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: AppColors.divider),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.analytics_outlined, color: AppColors.primary),
+            title: const Text('Performance analytics'),
+            subtitle: const Text('Earnings trends and delivery stats'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const RiderAnalyticsScreen(),
+                ),
+              );
+            },
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.map_outlined, color: AppColors.primary),
+            title: const Text('Delivery route map'),
+            subtitle: const Text('View stops and optimized route'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const DeliveryMapScreen(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

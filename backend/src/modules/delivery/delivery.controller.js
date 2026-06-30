@@ -9,6 +9,9 @@ const {
   emitCustomerPartnerAssigned,
   emitRouteZoneAssigned,
   clearAssignmentTimeout,
+  tryClaimBroadcastOrder,
+  releaseBroadcastClaim,
+  notifyBroadcastClaimed,
 } = require('../../services/assignment.service');
 const {
   markFailedDelivery,
@@ -479,11 +482,31 @@ const acceptOrder = asyncHandler(async (req, res) => {
     if (assignment) {
       await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['ACCEPTED', orderId]);
     } else {
-      await client.query(
+      const claimed = await tryClaimBroadcastOrder(orderId, deliveryPartnerId);
+      if (!claimed) {
+        const err = new Error('Order already claimed by another rider');
+        err.statusCode = 409;
+        throw err;
+      }
+
+      const { rows: insertRows } = await client.query(
         `INSERT INTO order_assignments (order_id, delivery_partner_id, status)
-         VALUES ($1,$2,'ACCEPTED')`,
+         VALUES ($1,$2,'ACCEPTED')
+         ON CONFLICT (order_id) DO NOTHING
+         RETURNING id`,
         [orderId, deliveryPartnerId]
       );
+      if (!insertRows[0]) {
+        const { rows: conflictRows } = await client.query(
+          'SELECT delivery_partner_id FROM order_assignments WHERE order_id = $1',
+          [orderId]
+        );
+        if (Number(conflictRows[0]?.delivery_partner_id) !== deliveryPartnerId) {
+          const err = new Error('Order already claimed by another rider');
+          err.statusCode = 409;
+          throw err;
+        }
+      }
     }
 
     const { rows: updatedRows } = await client.query(
@@ -500,12 +523,14 @@ const acceptOrder = asyncHandler(async (req, res) => {
   }
 
   clearAssignmentTimeout(orderId);
+  await releaseBroadcastClaim(orderId);
 
   ensureDeliveryOTP(orderId).catch(() => {});
 
   // Emit to customer and admin rooms after transaction commits successfully
   const io = req.app.get('io');
   if (io) {
+    notifyBroadcastClaimed(io, orderId, userId).catch(() => {});
     const { rows: partnerRows } = await query(
       `SELECT dp.id, dp.user_id, dp.current_lat, dp.current_lng, u.name, u.phone
        FROM delivery_partners dp

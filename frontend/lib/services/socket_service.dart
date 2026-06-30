@@ -319,9 +319,14 @@ class SocketService {
     _socket?.on('catalog:products_changed', cb);
   }
 
-  void offCatalogChange() {
-    _socket?.off('catalog:categories_changed');
-    _socket?.off('catalog:products_changed');
+  void offCatalogChange([void Function(dynamic data)? cb]) {
+    if (cb != null) {
+      _socket?.off('catalog:categories_changed', cb);
+      _socket?.off('catalog:products_changed', cb);
+    } else {
+      _socket?.off('catalog:categories_changed');
+      _socket?.off('catalog:products_changed');
+    }
   }
 
   void onStoreStatusChange(void Function(dynamic data) cb) {

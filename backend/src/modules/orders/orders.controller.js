@@ -6,20 +6,16 @@ const { emitToRole, emitToUser } = require('../../socket/socket');
 const { readCartMap, clearCart } = require('../cart/cart.service');
 const { logger } = require('../../utils/logger');
 const { addressToText } = require('../../utils/address');
-const { canTransition } = require('../../utils/orderStateMachine');
+const {
+  transitionOrderState,
+  cancelOrderLifecycle,
+  ORDER_STATES: ENHANCED_ORDER_STATES,
+} = require('../../services/orderLifecycle.service');
 const {
   ensureOrderAssigned,
-  cancelRiderAssignmentForOrder,
-  notifyRiderAssignmentCancelled,
 } = require('../../services/assignment.service');
 const { createParamBinder, joinWhere } = require('../../utils/sqlParams');
 const { getDeliveryPartnerIdForUser } = require('../../utils/deliveryPartner.util');
-
-// Enhanced lifecycle imports
-const {
-  transitionOrderState,
-  ORDER_STATES: ENHANCED_ORDER_STATES,
-} = require('../../services/orderLifecycle.service');
 const {
   instrumentOrderConfirmed,
   publishOperationalEventAsync,
@@ -43,11 +39,8 @@ const { resolveUnitSalePrice } = require('../../utils/productPricing.util');
 const { resolveDeliveryCharge } = require('../../utils/orderPricing.util');
 const { calculateExpressETA, calculateRiderTrackingETA } = require('../../utils/eta-calculator');
 const {
-  restoreStockForOrder,
   shouldRestoreStockOnCancel,
 } = require('../payments/payment-stock');
-const { releaseCouponForOrder } = require('../../utils/couponRelease.util');
-const { processFailedDeliveryRefund } = require('../../services/cashfreeRefund.service');
 const {
   packOrderWithWeightReconciliation,
 } = require('../../services/packingWeightReconciliation.service');
@@ -722,11 +715,7 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
     return ok(res, { order: orderRows[0] }, 'Order status unchanged');
   }
   
-  // Basic transition validation (still using old canTransition for backward compatibility)
-  if (!canTransition(currentStatus, status)) {
-    return fail(res, 400, `Cannot change order from ${currentStatus} to ${status}`);
-  }
-
+  // Transition validation handled by enhanced lifecycle service
   // Determine actor role
   let actorRole = req.user.role;
   if (actorRole === 'delivery') {
@@ -835,14 +824,13 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
   }
 });
 
-// PUT /api/orders/:id/cancel - user only PLACED orders
+// PUT /api/orders/:id/cancel - user only PLACED or CONFIRMED orders
 const cancelOrder = asyncHandler(async (req, res) => {
   const orderId = Number(req.params.id || req.validated?.params?.id);
   const customerId = Number(req.user.id);
 
   const { rows } = await query(
-    `SELECT o.id, o.status, o.customer_id, o.address,
-            o.payment_mode, o.payment_status, o.total_amount
+    `SELECT o.id, o.status, o.customer_id
      FROM orders o
      WHERE o.id = $1`,
     [orderId]
@@ -856,79 +844,31 @@ const cancelOrder = asyncHandler(async (req, res) => {
     return fail(res, 400, 'Order can only be cancelled from PLACED or CONFIRMED');
   }
 
-  let cancelledPartnerUserId = null;
-  await withTransaction(async (client) => {
-    if (shouldRestoreStockOnCancel(order.status)) {
-      await restoreStockForOrder(client, orderId);
-    }
+  const io = req.app.get('io');
 
-    await client.query(
-      'UPDATE orders SET status = $1 WHERE id = $2',
-      ['CANCELLED', orderId]
+  try {
+    await cancelOrderLifecycle({
+      orderId,
+      actor: customerId,
+      actorRole: 'customer',
+      context: {
+        reason: req.body?.reason || 'Customer requested cancellation',
+      },
+      io,
+      triggerRefund: true,
+    });
+  } catch (error) {
+    const clientError = /invalid transition|cannot trigger|not found/i.test(
+      error.message || '',
     );
-
-    await releaseCouponForOrder(client, orderId);
-
-    const assignmentResult = await cancelRiderAssignmentForOrder({
-      orderId,
-      dbClient: client,
-    });
-    cancelledPartnerUserId = assignmentResult.partnerUserId;
-  });
-
-  // Trigger refund for online payments
-  const isOnlinePaid =
-    order.payment_mode === 'ONLINE' &&
-    order.payment_status === 'PAID';
-
-  if (isOnlinePaid) {
-    // Fire-and-forget refund (do not block cancel response)
-    processFailedDeliveryRefund({
-      orderId,
-      amount: Number(order.total_amount),
-      paymentMode: 'ONLINE',
-    }).catch((err) => {
-      logger.error('cancel_refund_failed', {
-        orderId,
-        error: err.message,
-      });
-    });
+    return fail(
+      res,
+      clientError ? 400 : 500,
+      error.message || 'Failed to cancel order',
+    );
   }
 
   logger.info('order_cancelled', { orderId, customerId });
-
-  const io = req.app.get('io');
-
-  notifyRiderAssignmentCancelled({
-    orderId,
-    partnerUserId: cancelledPartnerUserId,
-    io,
-    reason: 'order_cancelled',
-  });
-
-  // Send enhanced cancellation notifications
-  await sendOrderStateNotifications({
-    orderId,
-    newState: 'CANCELLED',
-    customerId,
-    context: {
-      reason: req.body.reason || 'Customer requested cancellation',
-    },
-    io,
-  });
-
-  // Backward compatibility - emit old events
-  if (io) {
-    const payload = {
-      orderId,
-      status: 'CANCELLED',
-      timestamp: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    io.to(`customer_${customerId}`).emit('order:status_update', payload);
-    io.to(`customer_${customerId}`).emit('order:status_updated', payload);
-    io.to('admin_room').emit('order:updated', payload);
-  }
 
   return ok(
     res,

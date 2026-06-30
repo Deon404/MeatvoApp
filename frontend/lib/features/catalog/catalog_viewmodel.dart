@@ -10,6 +10,7 @@ import '../../models/product_variant_model.dart';
 import '../../services/cart_service.dart';
 import '../../services/cart_sync_subscription.dart';
 import '../../services/product_service.dart';
+import '../../services/socket_service.dart';
 import 'catalog_state.dart';
 
 class CatalogViewModel extends StateNotifier<CatalogState> {
@@ -25,6 +26,10 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
     _cartSync = CartSyncSubscription((cart) {
       state = state.copyWith(cart: cart);
     });
+    _catalogChangeHandler = (_) {
+      load(refresh: true);
+    };
+    _socketService.onCatalogChange(_catalogChangeHandler);
   }
 
   final ProductService _productService;
@@ -33,6 +38,8 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
   bool _userSelectedCategory = false;
   Timer? _searchDebounce;
   late final CartSyncSubscription _cartSync;
+  final SocketService _socketService = SocketService();
+  late final void Function(dynamic data) _catalogChangeHandler;
 
   static const _defaultCategories = ['Chicken', 'Eggs', 'Fish', 'Mutton'];
   static const _comingSoonCategoryKeys = {'fish', 'mutton'};
@@ -42,6 +49,7 @@ class CatalogViewModel extends StateNotifier<CatalogState> {
   void dispose() {
     _searchDebounce?.cancel();
     _cartSync.dispose();
+    _socketService.offCatalogChange(_catalogChangeHandler);
     super.dispose();
   }
 
