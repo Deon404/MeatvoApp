@@ -57,17 +57,77 @@ class _CartCouponSectionState extends State<CartCouponSection> {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
 
-    final cardDecoration = BoxDecoration(
-      color: mv.surfaceCard,
-      borderRadius: BorderRadius.circular(mv.radii.lg),
-      border: Border.all(color: mv.border),
-    );
+    // ── Applied state: show green success banner ──────────────────────────
+    if (widget.appliedCode != null && widget.appliedCode!.isNotEmpty) {
+      const green = Color(0xFF2D6A4F);
+      return Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: mv.spacing.md,
+          vertical: mv.spacing.sm,
+        ),
+        decoration: BoxDecoration(
+          color: green.withValues(alpha: 0.09),
+          borderRadius: BorderRadius.circular(mv.radii.lg),
+          border: Border.all(color: green.withValues(alpha: 0.40)),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.check_circle_rounded,
+              color: green,
+              size: 20,
+            ),
+            SizedBox(width: mv.spacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    widget.appliedCode!.toUpperCase(),
+                    style: textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: green,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  if (widget.appliedDiscount > 0)
+                    Text(
+                      '\u20B9${widget.appliedDiscount.toStringAsFixed(0)} saved',
+                      style: textTheme.bodySmall?.copyWith(
+                        color: green,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.lightImpact();
+                widget.onRemove?.call();
+              },
+              child: Icon(
+                Icons.close_rounded,
+                size: 18,
+                color: mv.textMuted,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
+    // ── Unapplied state: tappable row ──────────────────────────────────────
     return GestureDetector(
       onTap: _showCouponDialog,
       child: Container(
         padding: EdgeInsets.all(mv.spacing.sm + 2),
-        decoration: cardDecoration,
+        decoration: BoxDecoration(
+          color: mv.surfaceCard,
+          borderRadius: BorderRadius.circular(mv.radii.lg),
+          border: Border.all(color: mv.border),
+        ),
         child: Row(
           children: [
             Icon(Icons.local_offer_outlined, color: mv.brandPrimary, size: 20),

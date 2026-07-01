@@ -19,6 +19,7 @@ import '../services/product_service.dart';
 import '../services/socket_service.dart';
 import '../utils/variant_pricing.dart';
 
+import 'home_state.dart';
 export 'home_state.dart';
 
 class HomeViewModel extends StateNotifier<HomeState> {

@@ -5,6 +5,7 @@ import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../screens/checkout/checkout_payment_options_screen.dart';
 import '../../services/payment_service.dart';
+import 'checkout_payment_methods.dart';
 import 'checkout_payment_types.dart';
 
 /// Result from quick-pay sheet when user confirms payment.
@@ -178,7 +179,21 @@ class _CheckoutQuickPaySheetState extends State<CheckoutQuickPaySheet> {
             ),
             child: Row(
               children: [
-                Icon(Icons.phone_android_rounded, color: mv.brandPrimary, size: 22),
+                _upiPackageId != null
+                    ? upiAppAvatar(_upiPackageId!, _methodLabel, size: 28)
+                    : Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: mv.brandPrimary.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.apps_rounded,
+                          size: 16,
+                          color: mv.brandPrimary,
+                        ),
+                      ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(

@@ -146,6 +146,7 @@ class _CheckoutPaymentOptionsScreenState
                                   CheckoutUpiChip(
                                     label: app.displayName,
                                     icon: Icons.phone_android_rounded,
+                                    packageId: app.packageId,
                                     isSelected: _upiSelection ==
                                             CheckoutUpiSelection.installedApp &&
                                         _upiPackageId == app.packageId,

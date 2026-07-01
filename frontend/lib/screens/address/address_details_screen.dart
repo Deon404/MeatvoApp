@@ -180,106 +180,107 @@ class _AddressDetailsScreenState extends State<AddressDetailsScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                  _LocationPreviewCard(
-                    latitude: widget.latitude,
-                    longitude: widget.longitude,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              style: AppTextStyles.h2.copyWith(fontSize: 17),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _fields.street.isNotEmpty
-                                  ? _fields.street
-                                  : _fields.areaDisplayLine,
-                              style: AppTextStyles.caption,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      OutlinedButton(
-                        onPressed: _changeLocation,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.textPrimary,
-                          side: const BorderSide(color: AppColors.textPrimary),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.md,
-                            vertical: AppSpacing.xs,
+                    _LocationPreviewCard(
+                      latitude: widget.latitude,
+                      longitude: widget.longitude,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                style: AppTextStyles.h2.copyWith(fontSize: 17),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                _fields.street.isNotEmpty
+                                    ? _fields.street
+                                    : _fields.areaDisplayLine,
+                                style: AppTextStyles.caption,
+                              ),
+                            ],
                           ),
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
-                        child: const Text('CHANGE'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  Text(
-                    'Select address type',
-                    style: AppTextStyles.h3.copyWith(fontSize: 15),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Row(
-                    children: [
-                      _LabelChip(
-                        label: 'Home',
-                        selected: _label == AddressLabel.home,
-                        onTap: () => setState(() => _label = AddressLabel.home),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      _LabelChip(
-                        label: 'Work',
-                        selected: _label == AddressLabel.work,
-                        onTap: () => setState(() => _label = AddressLabel.work),
-                      ),
-                      const SizedBox(width: AppSpacing.sm),
-                      _LabelChip(
-                        label: 'Other',
-                        selected: _label == AddressLabel.other,
-                        onTap: () => setState(() => _label = AddressLabel.other),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-                  Text(
-                    'Enter more details',
-                    style: AppTextStyles.h3.copyWith(fontSize: 15),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _FilledField(
-                    controller: _houseController,
-                    hint: 'House number',
-                    validator: AddressInputValidator.validateHouseNumber,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _FilledField(
-                    controller: _floorController,
-                    hint: 'Floor',
-                    validator: AddressInputValidator.validateFloor,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _FilledField(
-                    controller: _towerController,
-                    hint: 'Tower / Block (optional)',
-                    validator: AddressInputValidator.validateTowerBlock,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _FilledField(
-                    controller: _landmarkController,
-                    hint: 'Nearby landmark (optional)',
-                    validator: AddressInputValidator.validateLandmark,
-                  ),
-                ],
+                        const SizedBox(width: AppSpacing.sm),
+                        OutlinedButton(
+                          onPressed: _changeLocation,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.textPrimary,
+                            side: const BorderSide(color: AppColors.textPrimary),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.md,
+                              vertical: AppSpacing.xs,
+                            ),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('CHANGE'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(
+                      'Select address type',
+                      style: AppTextStyles.h3.copyWith(fontSize: 15),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Row(
+                      children: [
+                        _LabelChip(
+                          label: 'Home',
+                          selected: _label == AddressLabel.home,
+                          onTap: () => setState(() => _label = AddressLabel.home),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        _LabelChip(
+                          label: 'Work',
+                          selected: _label == AddressLabel.work,
+                          onTap: () => setState(() => _label = AddressLabel.work),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        _LabelChip(
+                          label: 'Other',
+                          selected: _label == AddressLabel.other,
+                          onTap: () => setState(() => _label = AddressLabel.other),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                    Text(
+                      'Enter more details',
+                      style: AppTextStyles.h3.copyWith(fontSize: 15),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _FilledField(
+                      controller: _houseController,
+                      hint: 'House number',
+                      validator: AddressInputValidator.validateHouseNumber,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _FilledField(
+                      controller: _floorController,
+                      hint: 'Floor',
+                      validator: AddressInputValidator.validateFloor,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _FilledField(
+                      controller: _towerController,
+                      hint: 'Tower / Block (optional)',
+                      validator: AddressInputValidator.validateTowerBlock,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _FilledField(
+                      controller: _landmarkController,
+                      hint: 'Nearby landmark (optional)',
+                      validator: AddressInputValidator.validateLandmark,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
