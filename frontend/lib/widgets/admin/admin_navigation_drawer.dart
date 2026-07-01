@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/app_constants.dart';
+import '../../providers/admin_dashboard_stats_provider.dart';
 import '../../screens/auth/phone_screen.dart';
 import '../../services/auth_service.dart';
 import '../../screens/admin/admin_banners_screen.dart';
@@ -29,7 +31,7 @@ enum AdminNavSection {
   settings,
 }
 
-class AdminNavigationDrawer extends StatelessWidget {
+class AdminNavigationDrawer extends ConsumerWidget {
   const AdminNavigationDrawer({
     super.key,
     required this.currentSection,
@@ -130,14 +132,18 @@ class AdminNavigationDrawer extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cachedStats = ref.watch(adminDashboardStatsProvider);
+    final orders = todayOrders ?? cachedStats?.todayOrders;
+    final revenue = todayRevenue ?? cachedStats?.todayRevenue;
+
     return Drawer(
       backgroundColor: AppColors.cardBg,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _buildHeader(context),
+            _buildHeader(context, orders: orders, revenue: revenue),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -237,10 +243,11 @@ class AdminNavigationDrawer extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    final orders = todayOrders;
-    final revenue = todayRevenue;
-
+  Widget _buildHeader(
+    BuildContext context, {
+    int? orders,
+    double? revenue,
+  }) {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
       decoration: const BoxDecoration(

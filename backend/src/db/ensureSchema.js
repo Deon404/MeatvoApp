@@ -975,6 +975,14 @@ const ensureSchema = async () => {
       name: 'delivery_partners.availability_status_index',
       sql: `CREATE INDEX IF NOT EXISTS idx_delivery_partners_availability ON delivery_partners(availability_status) WHERE is_online = TRUE`,
     },
+    {
+      name: 'delivery_partners.kyc_status',
+      sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS kyc_status VARCHAR(20) NOT NULL DEFAULT 'pending'`,
+    },
+    {
+      name: 'delivery_partners.kyc_status_backfill',
+      sql: `UPDATE delivery_partners SET kyc_status = 'verified' WHERE approved = TRUE AND kyc_status = 'pending'`,
+    },
   ];
 
   for (const step of steps) {

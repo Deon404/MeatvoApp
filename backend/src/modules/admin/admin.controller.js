@@ -44,53 +44,85 @@ const { getPublicBaseUrl } = require('../../utils/requestBaseUrl');
 const signImageField = (req, url) => signStoredImageUrl(url || '', getPublicBaseUrl(req));
 const storeImageField = (url) => (url ? normalizeStoredImageUrl(url) : null);
 
+const safeCount = async (sql, params = []) => {
+  try {
+    const { rows } = await query(sql, params);
+    return Number(rows[0]?.total ?? 0);
+  } catch (err) {
+    if (err?.code === '42P01' || err?.code === '42703') {
+      logger.warn('admin_query_skipped', {
+        code: err.code,
+        message: err.message,
+      });
+      return 0;
+    }
+    throw err;
+  }
+};
+
 const invalidateCatalogCache = async () => {
   await redis.deleteByPattern('products:*');
 };
 
 const dashboard = asyncHandler(async (req, res) => {
-  const [
-    { rows: ordersCount },
-    { rows: customersCount },
-    { rows: deliveryCount },
-    { rows: revenue },
-    { rows: todayOrdersRows },
-    { rows: todayRevenueRows },
-    { rows: activeRidersRows },
-  ] = await Promise.all([
-    query('SELECT COUNT(*)::int AS total FROM orders'),
-    query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'customer'"),
-    query(
-      `SELECT COUNT(*)::int AS total
-       FROM delivery_partners dp
-       JOIN users u ON u.id = dp.user_id
-       WHERE u.role = 'delivery'`
-    ),
-    query("SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total FROM orders WHERE status = 'DELIVERED'"),
-    query(
-      `SELECT COUNT(*)::int AS total
-       FROM orders
-       WHERE created_at >= CURRENT_DATE`
-    ),
-    query(
-      `SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total
-       FROM orders
-       WHERE status = 'DELIVERED' AND created_at >= CURRENT_DATE`
-    ),
-    query(
-      `SELECT COUNT(*)::int AS total
-       FROM delivery_partners dp
-       JOIN users u ON u.id = dp.user_id
-       WHERE dp.is_online = true
-         AND u.role = 'delivery'`
-    ),
-  ]);
+  let ordersCount = [{ total: 0 }];
+  let customersCount = [{ total: 0 }];
+  let deliveryCount = [{ total: 0 }];
+  let revenue = [{ total: 0 }];
+  let todayOrdersRows = [{ total: 0 }];
+  let todayRevenueRows = [{ total: 0 }];
+  let activeRidersRows = [{ total: 0 }];
+  let liveOrders = [{ total: 0 }];
 
-  const { rows: liveOrders } = await query(
-    "SELECT COUNT(*)::int AS total FROM orders WHERE status NOT IN ('DELIVERED','CANCELLED')"
-  );
+  try {
+    const results = await Promise.all([
+      query('SELECT COUNT(*)::int AS total FROM orders'),
+      query("SELECT COUNT(*)::int AS total FROM users WHERE role = 'customer'"),
+      query(
+        `SELECT COUNT(*)::int AS total
+         FROM delivery_partners dp
+         JOIN users u ON u.id = dp.user_id
+         WHERE u.role = 'delivery'`
+      ),
+      query("SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total FROM orders WHERE status = 'DELIVERED'"),
+      query(
+        `SELECT COUNT(*)::int AS total
+         FROM orders
+         WHERE created_at >= CURRENT_DATE`
+      ),
+      query(
+        `SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total
+         FROM orders
+         WHERE status = 'DELIVERED' AND created_at >= CURRENT_DATE`
+      ),
+      query(
+        `SELECT COUNT(*)::int AS total
+         FROM delivery_partners dp
+         JOIN users u ON u.id = dp.user_id
+         WHERE dp.is_online = true
+           AND u.role = 'delivery'`
+      ),
+    ]);
+    ordersCount = results[0].rows;
+    customersCount = results[1].rows;
+    deliveryCount = results[2].rows;
+    revenue = results[3].rows;
+    todayOrdersRows = results[4].rows;
+    todayRevenueRows = results[5].rows;
+    activeRidersRows = results[6].rows;
 
-  const { rows: dispatchQueueRows } = await query(
+    const liveResult = await query(
+      "SELECT COUNT(*)::int AS total FROM orders WHERE status NOT IN ('DELIVERED','CANCELLED','REFUNDED')"
+    );
+    liveOrders = liveResult.rows;
+  } catch (err) {
+    logger.error('admin_dashboard_core_query_failed', {
+      code: err?.code,
+      message: err?.message,
+    });
+  }
+
+  const dispatchQueueCount = await safeCount(
     `SELECT COUNT(*)::int AS total
      FROM orders o
      LEFT JOIN order_assignments oa
@@ -99,7 +131,7 @@ const dashboard = asyncHandler(async (req, res) => {
        AND oa.id IS NULL`
   );
 
-  const { rows: packAgeWarningRows } = await query(
+  const packAgeWarningCount = await safeCount(
     `SELECT COUNT(*)::int AS total
      FROM orders o
      LEFT JOIN order_assignments oa
@@ -111,7 +143,7 @@ const dashboard = asyncHandler(async (req, res) => {
     [String(PACK_AGE.warningMinutes)]
   );
 
-  const { rows: packAgeCriticalRows } = await query(
+  const packAgeCriticalCount = await safeCount(
     `SELECT COUNT(*)::int AS total
      FROM orders o
      LEFT JOIN order_assignments oa
@@ -123,14 +155,21 @@ const dashboard = asyncHandler(async (req, res) => {
     [String(PACK_AGE.criticalMinutes)]
   );
 
-  const { rows: openAssignmentTasks } = await query(
+  const openAssignmentFailureTasks = await safeCount(
     `SELECT COUNT(*)::int AS total
      FROM admin_tasks
      WHERE status = 'open' AND task_type = $1`,
     [ADMIN_TASK_TYPES.ASSIGNMENT_FAILED]
   );
 
-  const { rows: awaitingPaymentRows } = await query(
+  const openFailedDeliveryTasks = await safeCount(
+    `SELECT COUNT(*)::int AS total
+     FROM admin_tasks
+     WHERE status = 'open' AND task_type = $1`,
+    [ADMIN_TASK_TYPES.FAILED_DELIVERY]
+  );
+
+  const awaitingPaymentCount = await safeCount(
     `SELECT COUNT(*)::int AS total
      FROM orders
      WHERE status = 'PLACED'
@@ -150,11 +189,12 @@ const dashboard = asyncHandler(async (req, res) => {
         todayOrders: todayOrdersRows[0].total,
         todayRevenue: todayRevenueRows[0].total,
         activeRiders: activeRidersRows[0].total,
-        dispatchQueueCount: dispatchQueueRows[0].total,
-        packAgeWarningCount: packAgeWarningRows[0].total,
-        packAgeCriticalCount: packAgeCriticalRows[0].total,
-        openAssignmentFailureTasks: openAssignmentTasks[0].total,
-        awaitingPaymentCount: awaitingPaymentRows[0].total,
+        dispatchQueueCount,
+        packAgeWarningCount,
+        packAgeCriticalCount,
+        openAssignmentFailureTasks,
+        openFailedDeliveryTasks,
+        awaitingPaymentCount,
       },
     },
     'Dashboard'
@@ -273,7 +313,8 @@ const getUserDetail = asyncHandler(async (req, res) => {
   }
 
   const { rows: orderRows } = await query(
-    `SELECT o.id, o.total_amount, o.status, o.created_at
+    `SELECT o.id, o.total_amount, o.status, o.created_at,
+            (SELECT COUNT(*)::int FROM order_items oi WHERE oi.order_id = o.id) AS items_count
      FROM orders o
      WHERE o.customer_id = $1
      ORDER BY o.created_at DESC
@@ -338,6 +379,7 @@ const getUserDetail = asyncHandler(async (req, res) => {
     total_price: Number(o.total_amount || 0),
     status: String(o.status || '').toLowerCase(),
     created_at: o.created_at ? new Date(o.created_at).toISOString() : null,
+    items_count: Number(o.items_count || 0),
   }));
 
   const addresses = (addressRows || []).map((a) => ({
@@ -446,7 +488,7 @@ const deliveryPartners = asyncHandler(async (req, res) => {
   try {
     ({ rows } = await query(
       `SELECT dp.id, dp.user_id, dp.is_online, dp.current_lat, dp.current_lng, dp.vehicle_type,
-              dp.approved, dp.vehicle_number, dp.licence_number, dp.bank_details, dp.earnings,
+              dp.approved, dp.kyc_status, dp.vehicle_number, dp.licence_number, dp.bank_details, dp.earnings,
               dp.availability_status, dp.estimated_return_at, dp.estimated_return_minutes,
               dp.active_order_count,
               u.phone, u.name, u.created_at
@@ -459,6 +501,9 @@ const deliveryPartners = asyncHandler(async (req, res) => {
     if (err?.code !== '42703') throw err;
     ({ rows } = await query(
       `SELECT dp.id, dp.user_id, dp.is_online, dp.current_lat, dp.current_lng, dp.vehicle_type,
+              dp.approved, dp.vehicle_number, dp.licence_number, dp.bank_details, dp.earnings,
+              dp.availability_status, dp.estimated_return_at, dp.estimated_return_minutes,
+              dp.active_order_count,
               u.phone, u.name, u.created_at
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
@@ -467,23 +512,21 @@ const deliveryPartners = asyncHandler(async (req, res) => {
     ));
     rows = rows.map((r) => ({
       ...r,
-      approved: true,
-      vehicle_number: null,
-      licence_number: null,
-      bank_details: null,
-      earnings: 0,
-      availability_status: r.availability_status || (r.is_online ? 'available' : 'offline'),
-      estimated_return_at: r.estimated_return_at ?? null,
-      estimated_return_minutes: r.estimated_return_minutes ?? null,
-      active_order_count: r.active_order_count ?? 0,
+      kyc_status: r.approved ? 'verified' : 'pending',
     }));
   }
+
+  const resolveKycStatus = (partner) => {
+    if (partner.kyc_status) return partner.kyc_status;
+    return partner.approved ? 'verified' : 'pending';
+  };
 
   const out = rows.map((p) => ({
     id: String(p.id),
     user_id: String(p.user_id),
     phone: p.phone || '',
     joined_at: p.created_at ? new Date(p.created_at).toISOString() : null,
+    kyc_status: resolveKycStatus(p),
     operationalStatus: p.availability_status || (p.is_online ? 'available' : 'offline'),
     estimatedReturnMinutes:
       p.estimated_return_minutes != null ? Number(p.estimated_return_minutes) : null,
@@ -495,6 +538,7 @@ const deliveryPartners = asyncHandler(async (req, res) => {
       name: p.name || '',
       online: Boolean(p.is_online),
       approved: Boolean(p.approved),
+      kyc_status: resolveKycStatus(p),
       vehicle: p.vehicle_type || '',
       vehicleNumber: p.vehicle_number || '',
       licenceNumber: p.licence_number || '',
@@ -571,6 +615,7 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
     if (!dp) return null;
 
     const hasApproved = Object.prototype.hasOwnProperty.call(patch, 'approved');
+    const hasKycStatus = Object.prototype.hasOwnProperty.call(patch, 'kyc_status');
     const hasOnline = Object.prototype.hasOwnProperty.call(patch, 'online');
     const hasEarnings = Object.prototype.hasOwnProperty.call(patch, 'earnings');
     const hasVehicle = Object.prototype.hasOwnProperty.call(patch, 'vehicle');
@@ -579,6 +624,7 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
     const hasBankDetails = Object.prototype.hasOwnProperty.call(patch, 'bankDetails');
     const hasDeliveryPartnerPatch =
       hasApproved ||
+      hasKycStatus ||
       hasOnline ||
       hasEarnings ||
       hasVehicle ||
@@ -587,19 +633,29 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
       hasBankDetails;
 
     if (hasDeliveryPartnerPatch) {
+      let nextKycStatus = null;
+      if (hasKycStatus) {
+        nextKycStatus = patch.kyc_status;
+      } else if (hasApproved) {
+        nextKycStatus = patch.approved ? 'verified' : 'pending';
+      }
+
       await client.query(
         `UPDATE delivery_partners
          SET approved = CASE WHEN $1 THEN $2 ELSE approved END,
-             is_online = CASE WHEN $3 THEN $4 ELSE is_online END,
-             earnings = CASE WHEN $5 THEN $6 ELSE earnings END,
-             vehicle_type = CASE WHEN $7 THEN $8 ELSE vehicle_type END,
-             vehicle_number = CASE WHEN $9 THEN $10 ELSE vehicle_number END,
-             licence_number = CASE WHEN $11 THEN $12 ELSE licence_number END,
-             bank_details = CASE WHEN $13 THEN $14 ELSE bank_details END
-         WHERE id = $15`,
+             kyc_status = CASE WHEN $3 THEN $4 ELSE kyc_status END,
+             is_online = CASE WHEN $5 THEN $6 ELSE is_online END,
+             earnings = CASE WHEN $7 THEN $8 ELSE earnings END,
+             vehicle_type = CASE WHEN $9 THEN $10 ELSE vehicle_type END,
+             vehicle_number = CASE WHEN $11 THEN $12 ELSE vehicle_number END,
+             licence_number = CASE WHEN $13 THEN $14 ELSE licence_number END,
+             bank_details = CASE WHEN $15 THEN $16 ELSE bank_details END
+         WHERE id = $17`,
         [
           hasApproved,
           Boolean(patch.approved),
+          hasKycStatus || hasApproved,
+          nextKycStatus,
           hasOnline,
           Boolean(patch.online),
           hasEarnings,
@@ -622,7 +678,7 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
     }
 
     const { rows } = await client.query(
-      `SELECT dp.id, dp.is_online, dp.approved, dp.vehicle_type, dp.vehicle_number, dp.licence_number, dp.bank_details, dp.earnings,
+      `SELECT dp.id, dp.is_online, dp.approved, dp.kyc_status, dp.vehicle_type, dp.vehicle_number, dp.licence_number, dp.bank_details, dp.earnings,
               u.phone, u.name
        FROM delivery_partners dp
        JOIN users u ON u.id = dp.user_id
@@ -643,6 +699,7 @@ const patchDeliveryPartner = asyncHandler(async (req, res) => {
         name: updated.name || '',
         online: Boolean(updated.is_online),
         approved: Boolean(updated.approved),
+        kyc_status: updated.kyc_status || (updated.approved ? 'verified' : 'pending'),
         vehicle: updated.vehicle_type || '',
         vehicleNumber: updated.vehicle_number || '',
         licenceNumber: updated.licence_number || '',
@@ -659,6 +716,7 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
   const offset = Number(req.validated?.query?.offset || 0);
   const fromDate = req.validated?.query?.from || null;
   const toDate = req.validated?.query?.to || null;
+  const statusFilter = req.validated?.query?.status || null;
 
   const binder = createParamBinder([limit, offset]);
   const conditions = [];
@@ -669,20 +727,32 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
   if (toDate) {
     conditions.push(`o.created_at < (${binder.ph(toDate)}::date + INTERVAL '1 day')`);
   }
+  if (statusFilter) {
+    conditions.push(`o.status = ${binder.ph(String(statusFilter).trim().toUpperCase())}`);
+  }
 
   const whereClause = joinWhere(conditions);
   const params = binder.params;
 
-  const baseSelect = `
-    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address, o.packed_at,
+  const coreSelect = `
+    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address,
+           o.payment_mode, o.payment_status,
            COALESCE(u.phone, '') AS phone,
            COALESCE(u.name, u.phone, 'Customer') AS customer_name`;
 
-  const runQuery = async (withAssignments) => {
+  const extendedSelect = `
+    SELECT o.id, o.customer_id, o.total_amount, o.status, o.created_at, o.address,
+           o.payment_mode, o.payment_status, o.packed_at,
+           o.failed_delivery_resolution, o.returned_at, o.return_condition,
+           COALESCE(u.phone, '') AS phone,
+           COALESCE(u.name, u.phone, 'Customer') AS customer_name`;
+
+  const runQuery = async ({ selectSql, withAssignments }) => {
     if (withAssignments) {
       return query(
-        `${baseSelect},
+        `${selectSql},
                 oa.delivery_partner_id,
+                oa.status AS assignment_status,
                 ru.name AS rider_name,
                 ru.phone AS rider_phone,
                 (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
@@ -699,8 +769,9 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
     }
 
     return query(
-      `${baseSelect},
+      `${selectSql},
               NULL::bigint AS delivery_partner_id,
+              NULL::text AS assignment_status,
               NULL::text AS rider_name,
               NULL::text AS rider_phone,
               (EXTRACT(EPOCH FROM o.created_at) * 1000)::bigint AS created_at_ms
@@ -713,13 +784,27 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
     );
   };
 
-  let rows;
-  try {
-    ({ rows } = await runQuery(true));
-  } catch (err) {
-    if (err?.code !== '42P01') throw err;
-    ({ rows } = await runQuery(false));
+  const queryAttempts = [
+    { selectSql: extendedSelect, withAssignments: true },
+    { selectSql: coreSelect, withAssignments: true },
+    { selectSql: coreSelect, withAssignments: false },
+  ];
+
+  let rows = [];
+  let lastError = null;
+  for (const attempt of queryAttempts) {
+    try {
+      ({ rows } = await runQuery(attempt));
+      lastError = null;
+      break;
+    } catch (err) {
+      lastError = err;
+      if (err?.code !== '42P01' && err?.code !== '42703') {
+        throw err;
+      }
+    }
   }
+  if (lastError) throw lastError;
 
   const itemsByOrderId = {};
   if (rows.length > 0) {
@@ -767,6 +852,8 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
       totalAmount: Number(o.total_amount || 0),
       total_price: Number(o.total_amount || 0),
       status,
+      payment_mode: o.payment_mode || null,
+      payment_status: o.payment_status || null,
       deliveryUid: o.delivery_partner_id ? String(o.delivery_partner_id) : '',
       createdAt: createdAtMs,
       created_at: o.created_at
@@ -784,8 +871,12 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
       items,
       address: o.address || null,
       delivery_address: o.address || null,
+      failed_delivery_resolution: o.failed_delivery_resolution || null,
+      returned_at: o.returned_at || null,
+      return_condition: o.return_condition || null,
       assignment: o.delivery_partner_id
         ? {
+            status: o.assignment_status || null,
             rider: {
               id: String(o.delivery_partner_id),
               user: {
@@ -855,8 +946,16 @@ const assignRiderToOrder = asyncHandler(async (req, res) => {
 
 const listAdminTasksHandler = asyncHandler(async (req, res) => {
   const taskType = req.validated.query?.type || null;
-  const tasks = await listOpenAdminTasks({ taskType });
-  return ok(res, { tasks }, 'Admin tasks');
+  try {
+    const tasks = await listOpenAdminTasks({ taskType });
+    return ok(res, { tasks }, 'Admin tasks');
+  } catch (err) {
+    if (err?.code === '42P01' || err?.code === '42703') {
+      logger.warn('admin_tasks_list_skipped', { code: err.code, message: err.message });
+      return ok(res, { tasks: [] }, 'Admin tasks');
+    }
+    throw err;
+  }
 });
 
 const resolveAssignmentFailureOrder = asyncHandler(async (req, res) => {
@@ -939,6 +1038,43 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
   if (String(orderStatus || '').toUpperCase() === 'CANCELLED') {
     const io = req.app.get('io');
     try {
+      const { rows: pendingRows } = await query(
+        `SELECT status, failed_delivery_resolution, returned_at
+         FROM orders WHERE id = $1`,
+        [orderId]
+      );
+      const pendingOrder = pendingRows[0];
+      const isPendingFailedDelivery =
+        pendingOrder &&
+        String(pendingOrder.status).toUpperCase() === 'FAILED_DELIVERY' &&
+        String(pendingOrder.failed_delivery_resolution || 'PENDING').toUpperCase() ===
+          'PENDING';
+
+      if (isPendingFailedDelivery) {
+        if (!pendingOrder.returned_at) {
+          return fail(
+            res,
+            409,
+            'Rider must return to store before this order can be discarded'
+          );
+        }
+        const resolved = await resolveFailedDelivery({
+          orderId,
+          adminUserId: Number(req.user.id),
+          resolution: 'DISCARD',
+          io,
+        });
+        return ok(
+          res,
+          {
+            id: String(resolved.order.id),
+            status: resolved.order.status,
+            failed_delivery_resolution: resolved.order.failed_delivery_resolution,
+          },
+          'Failed delivery discarded'
+        );
+      }
+
       const cancelResult = await cancelOrderLifecycle({
         orderId,
         actor: req.user.id,
@@ -1001,6 +1137,13 @@ const patchOrderCompat = asyncHandler(async (req, res) => {
     );
     const order = oRows[0];
     if (!order) return null;
+
+    const terminalStatuses = new Set(['CANCELLED', 'REFUNDED', 'DELIVERED']);
+    if (orderStatus === 'ASSIGNED' && terminalStatuses.has(String(order.status).toUpperCase())) {
+      const err = new Error('Cannot assign rider to a completed or cancelled order');
+      err.statusCode = 409;
+      throw err;
+    }
 
     if (orderStatus === 'ASSIGNED' && isOrderBlockedFromAssignment(order)) {
       const err = new Error('Order has pending failed delivery — resolve before reassigning');
@@ -2013,6 +2156,7 @@ const writeOperationalSettings = async (value) => {
 
 const getSettings = asyncHandler(async (req, res) => {
   const operational = await readOperationalSettings();
+  const effective = await getMergedStoreSettings();
 
   return ok(
     res,
@@ -2024,6 +2168,8 @@ const getSettings = asyncHandler(async (req, res) => {
       store_open_time: operational.store_open_time ?? null,
       store_close_time: operational.store_close_time ?? null,
       delivery_radius_km: Number(operational.delivery_radius_km ?? DEFAULT_STORE_SETTINGS.delivery_radius_km),
+      center_lat: Number(effective.center_lat ?? DEFAULT_STORE_SETTINGS.center_lat),
+      center_lng: Number(effective.center_lng ?? DEFAULT_STORE_SETTINGS.center_lng),
     },
     'Settings'
   );

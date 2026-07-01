@@ -48,9 +48,13 @@ class _AdminRidersScreenState extends State<AdminRidersScreen> {
     final profile = partner['profile'] is Map
         ? Map<String, dynamic>.from(partner['profile'] as Map)
         : <String, dynamic>{};
-    final approved = profile['approved'];
-    if (approved == true) return RiderKycStatus.verified;
-    if (approved == false) return RiderKycStatus.rejected;
+    final kycStatus = (profile['kyc_status'] ?? partner['kyc_status'] ?? '')
+        .toString()
+        .toLowerCase();
+    if (kycStatus == 'verified' || profile['approved'] == true) {
+      return RiderKycStatus.verified;
+    }
+    if (kycStatus == 'rejected') return RiderKycStatus.rejected;
     return RiderKycStatus.pending;
   }
 

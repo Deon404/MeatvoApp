@@ -7,6 +7,20 @@ import 'api_service.dart';
 class AddressService {
   final ApiService _api = ApiService();
 
+  static List<AddressModel>? _cachedAddresses;
+  static DateTime? _cacheTime;
+  static const _cacheTtl = Duration(minutes: 5);
+
+  static void invalidateCache() {
+    _cachedAddresses = null;
+    _cacheTime = null;
+  }
+
+  bool _isCacheFresh() {
+    if (_cachedAddresses == null || _cacheTime == null) return false;
+    return DateTime.now().difference(_cacheTime!) < _cacheTtl;
+  }
+
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   AddressModel _parse(Map<String, dynamic> json) {
@@ -65,7 +79,14 @@ class AddressService {
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
   /// Get all addresses for the current user.
-  Future<List<AddressModel>> getUserAddresses({String? userId}) async {
+  Future<List<AddressModel>> getUserAddresses({
+    String? userId,
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh && _isCacheFresh()) {
+      return List<AddressModel>.from(_cachedAddresses!);
+    }
+
     try {
       final res = await _api.get('/addresses');
       if (res.data['success'] != true) {
@@ -79,10 +100,15 @@ class AddressService {
         raw = raw['addresses'] ?? raw['address'] ?? [];
       }
       if (raw is List) {
-        return raw
+        final addresses = raw
             .map((e) => _parse(e as Map<String, dynamic>))
             .toList();
+        _cachedAddresses = addresses;
+        _cacheTime = DateTime.now();
+        return addresses;
       }
+      _cachedAddresses = const [];
+      _cacheTime = DateTime.now();
       return [];
     } on DioException catch (e) {
       throw Exception(
@@ -147,6 +173,8 @@ class AddressService {
       throw Exception('Failed to add address: $msg');
     } catch (e) {
       throw Exception('Failed to add address: $e');
+    } finally {
+      invalidateCache();
     }
   }
 
@@ -176,6 +204,8 @@ class AddressService {
       throw Exception('Failed to update address: $msg');
     } catch (e) {
       throw Exception('Failed to update address: $e');
+    } finally {
+      invalidateCache();
     }
   }
 
@@ -191,6 +221,8 @@ class AddressService {
           'Failed to delete address: ${e.response?.data?['message'] ?? e.message}');
     } catch (e) {
       throw Exception('Failed to delete address: $e');
+    } finally {
+      invalidateCache();
     }
   }
 
@@ -210,6 +242,8 @@ class AddressService {
       throw Exception('Failed to set default address: $msg');
     } catch (e) {
       throw Exception('Failed to set default address: $e');
+    } finally {
+      invalidateCache();
     }
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import '../../config/backend_resolver.dart';
 import '../../services/admin_service.dart';
@@ -12,26 +13,34 @@ import '../../widgets/common/error_state.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
 import '../../widgets/admin/assignment_failed_alert_banner.dart';
 import '../../widgets/admin/failed_delivery_alert_banner.dart';
+import '../../widgets/admin/failed_delivery_resolution_dialog.dart';
 import '../../widgets/admin/admin_order_timeline_section.dart';
 import '../../widgets/admin/new_order_alert_banner.dart';
 import '../../widgets/skeletons/order_card_skeleton.dart';
 
 /// Admin Orders Management Screen
 /// Lists all orders with filters, rider assignment, and status updates
-class AdminOrdersScreen extends StatefulWidget {
-  const AdminOrdersScreen({super.key});
+class AdminOrdersScreen extends ConsumerStatefulWidget {
+  const AdminOrdersScreen({
+    super.key,
+    this.initialOrderId,
+    this.initialStatusFilter,
+  });
+
+  final String? initialOrderId;
+  final String? initialStatusFilter;
 
   @override
-  State<AdminOrdersScreen> createState() => _AdminOrdersScreenState();
+  ConsumerState<AdminOrdersScreen> createState() => _AdminOrdersScreenState();
 }
 
-class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
-  final _adminService = AdminService();
+class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
+  AdminService get _adminService => ref.read(adminServiceProvider);
   final _socketService = SocketService();
   final _dateFormat = DateFormat('MMM d, yyyy • hh:mm a');
   AdminNewOrderAlertController? _alertController;
-  AdminFailedDeliveryAlertController? _failedDeliveryController;
   Timer? _socketReloadDebounce;
+  int _failedDeliveryPendingCount = 0;
 
   final List<Map<String, String?>> _statusFilters = const [
     {'label': 'All', 'value': null},
@@ -41,6 +50,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     {'label': 'Packed', 'value': 'PACKED'},
     {'label': 'Assigned', 'value': 'RIDER_ASSIGNED'},
     {'label': 'On the Way', 'value': 'OUT_FOR_DELIVERY'},
+    {'label': 'Failed Delivery', 'value': 'FAILED_DELIVERY'},
     {'label': 'Delivered', 'value': 'DELIVERED'},
     {'label': 'Cancelled', 'value': 'CANCELLED'},
   ];
@@ -52,11 +62,13 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   DateTimeRange? _selectedDateRange;
   String? _assigningOrderId;
   String? _updatingOrderId;
+  String? _highlightOrderId;
   final Set<int> _unassignedOrderIds = {};
 
   @override
   void initState() {
     super.initState();
+    _selectedStatus = widget.initialStatusFilter;
     _loadOrders();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupNewOrderAlerts();
@@ -73,7 +85,6 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     _socketService.offAssignmentFailed();
     _socketService.offFailedDelivery();
     _alertController?.dispose();
-    _failedDeliveryController?.dispose();
     super.dispose();
   }
 
@@ -87,23 +98,16 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       overlayState: overlay,
       onTap: (_) => _debouncedReloadOrders(),
     );
-
-    _failedDeliveryController = AdminFailedDeliveryAlertController(
-      overlayState: overlay,
-      onTap: _showFailedDeliveryResolution,
-      onDismissed: (_) {},
-    );
   }
 
   Future<void> _loadFailedDeliveryTasks() async {
     try {
-      final tasks = await _adminService.getOpenAdminTasks(type: 'failed_delivery');
+      final tasks =
+          await _adminService.getOpenAdminTasks(type: 'failed_delivery');
       if (!mounted) return;
-      final alerts = tasks
-          .map(FailedDeliveryAlertData.fromTask)
-          .where((a) => a.orderId > 0)
-          .toList();
-      _failedDeliveryController?.syncFromTasks(alerts);
+      setState(() {
+        _failedDeliveryPendingCount = tasks.length;
+      });
     } catch (e) {
       debugPrint('Failed to load admin tasks: $e');
     }
@@ -111,11 +115,13 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
 
   void _handleFailedDeliverySocket(dynamic data) {
     if (!mounted) return;
-    final alert = FailedDeliveryAlertData.fromSocket(data);
-    if (alert.orderId == 0) return;
-    _failedDeliveryController?.show(alert);
     _debouncedReloadOrders();
     _loadFailedDeliveryTasks();
+  }
+
+  void _showFailedDeliveryOrders() {
+    setState(() => _selectedStatus = 'FAILED_DELIVERY');
+    _loadOrders();
   }
 
   Future<void> _showFailedDeliveryResolution(FailedDeliveryAlertData alert) async {
@@ -131,66 +137,25 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       return;
     }
 
-    final resolution = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Resolve Order #${alert.orderId}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Reason: ${alert.reasonLabel}'),
-            if (alert.returnCondition != null) ...[
-              const SizedBox(height: 8),
-              Text('Condition: ${alert.returnCondition!.replaceAll('_', ' ')}'),
-            ],
-            const SizedBox(height: 16),
-            const Text('Choose how to resolve this failed delivery:'),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'REDELIVER'),
-            child: const Text('Redeliver'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'REFUND'),
-            child: const Text('Refund'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, 'DISCARD'),
-            child: const Text('Discard'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-
+    final resolution = await showFailedDeliveryResolutionDialog(context, alert);
     if (resolution == null) return;
 
-    try {
-      await _adminService.resolveFailedDelivery(
-        alert.orderId.toString(),
-        resolution,
-      );
-      _failedDeliveryController?.remove(alert.orderId);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Order #${alert.orderId} resolved ($resolution)')),
-        );
-        _loadOrders();
-        _loadFailedDeliveryTasks();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to resolve: $e')),
-        );
-      }
+    final resolved = await resolveFailedDeliveryAlert(
+      context,
+      adminService: _adminService,
+      alert: alert,
+      resolution: resolution,
+    );
+    if (resolved && mounted) {
+      _loadOrders();
+      _loadFailedDeliveryTasks();
     }
+  }
+
+  Future<void> _resolveFailedDeliveryOrder(Map<String, dynamic> order) async {
+    final alert = failedDeliveryAlertFromOrder(order);
+    if (alert.orderId == 0) return;
+    await _showFailedDeliveryResolution(alert);
   }
 
   Future<void> _setupSocketListeners() async {
@@ -280,17 +245,29 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
       );
 
       final filteredOrders = _selectedStatus == 'AWAITING_PAYMENT'
-          ? orders.where(_isAwaitingPayment).toList()
+          ? orders.where(_adminService.isAwaitingPaymentOrder).toList()
           : orders;
 
       if (!mounted) return;
       debugPrint('AdminOrdersScreen: loaded ${filteredOrders.length} orders');
+      final highlightId = widget.initialOrderId;
       setState(() {
         _orders = filteredOrders;
         _isLoading = false;
         _loadError = null;
+        _highlightOrderId = highlightId;
         _syncUnassignedWarnings(filteredOrders);
       });
+      if (highlightId != null && highlightId.isNotEmpty) {
+        final found = filteredOrders.any(
+          (o) => (o['id'] ?? '').toString() == highlightId,
+        );
+        if (found && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Showing order #$highlightId')),
+          );
+        }
+      }
     } catch (e, stackTrace) {
       debugPrint('AdminOrdersScreen: failed to load orders: $e');
       debugPrint('$stackTrace');
@@ -366,6 +343,17 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   }
 
   Future<void> _showAssignRiderSheet(Map<String, dynamic> order) async {
+    if (!_adminService.canAssignRiderToOrder(order)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Rider cannot be assigned for this order status'),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      return;
+    }
+
     try {
       final riders = await _adminService.getAvailableRiders();
       if (!mounted) return;
@@ -622,14 +610,36 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
-      backgroundColor: AppColors.greyLight,
+      backgroundColor: AppColors.warmBg,
       drawer: AdminNavigationDrawer(
         currentSection: AdminNavSection.orders,
         onLogout: () => AdminNavigationDrawer.confirmLogout(context),
       ),
       appBar: AppBar(
-        title: const Text('Manage Orders'),
-        backgroundColor: Colors.white,
+        title: Row(
+          children: [
+            const Text('Manage Orders'),
+            if (!_isLoading && _loadError == null && _orders.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.accentLight,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${_orders.length}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.primary,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        backgroundColor: AppColors.cardBg,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         actions: [
@@ -716,6 +726,10 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
           if (index == 0) {
             return Column(
               children: [
+                FailedDeliveryPendingBanner(
+                  count: _failedDeliveryPendingCount,
+                  onTap: _showFailedDeliveryOrders,
+                ),
                 _buildFilterSection(),
                 const SizedBox(height: 16),
               ],
@@ -811,13 +825,20 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
 
     final rider = assignment?['rider'] as Map<String, dynamic>? ?? {};
     final riderUser = rider['user'] as Map<String, dynamic>? ?? {};
+    final orderId = (order['id'] ?? '').toString();
+    final isHighlighted =
+        _highlightOrderId != null && _highlightOrderId == orderId;
 
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 16),
+      color: isHighlighted ? AppColors.accentLight : AppColors.cardBg,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.divider, width: 1),
+        side: BorderSide(
+          color: isHighlighted ? AppColors.primary : AppColors.divider,
+          width: isHighlighted ? 2 : 1,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1031,7 +1052,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                             ),
                           ),
                           Text(
-                            'Status: ${_formatStatus(assignment['status'])}',
+                            'Status: ${_formatAssignmentStatus(assignment['status']?.toString())}',
                             style: const TextStyle(
                               color: AppColors.textSecondary,
                               fontSize: 12,
@@ -1044,21 +1065,37 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                 ),
               ),
             AdminOrderTimelineSection(orderId: '${order['id'] ?? ''}'),
+            if (_adminService.isAwaitingPaymentOrder(order))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Online payment pending — accept or pack after payment is verified.',
+                  style: TextStyle(
+                    color: AppColors.warning.withValues(alpha: 0.9),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => _showAssignRiderSheet(order),
-                  icon: Icon(
-                    assignment == null ? Icons.delivery_dining : Icons.swap_horiz,
+                if (_adminService.canAssignRiderToOrder(order))
+                  OutlinedButton.icon(
+                    onPressed: () => _showAssignRiderSheet(order),
+                    icon: Icon(
+                      assignment == null
+                          ? Icons.delivery_dining
+                          : Icons.swap_horiz,
+                    ),
+                    label: Text(
+                      assignment == null ? 'Assign Rider' : 'Reassign Rider',
+                    ),
+                    style: _actionButtonStyle(),
                   ),
-                  label: Text(
-                    assignment == null ? 'Assign Rider' : 'Reassign Rider',
-                  ),
-                  style: _actionButtonStyle(),
-                ),
-                if (!_isCancelled(order['status']))
+                if (!_adminService.isTerminalOrderStatus(order) &&
+                    !_adminService.isFailedDeliveryPendingOrder(order))
                   OutlinedButton.icon(
                     onPressed: _updatingOrderId == order['id']
                         ? null
@@ -1066,6 +1103,15 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                     icon: const Icon(Icons.cancel_outlined),
                     label: const Text('Cancel'),
                     style: _actionButtonStyle(foreground: AppColors.primary),
+                  ),
+                if (_adminService.isFailedDeliveryPendingOrder(order))
+                  OutlinedButton.icon(
+                    onPressed: _updatingOrderId == order['id']
+                        ? null
+                        : () => _resolveFailedDeliveryOrder(order),
+                    icon: const Icon(Icons.build_circle_outlined),
+                    label: const Text('Resolve'),
+                    style: _actionButtonStyle(foreground: AppColors.warning),
                   ),
                 if (_updatingOrderId == order['id'])
                   const SizedBox(
@@ -1076,7 +1122,7 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                       color: AppColors.primary,
                     ),
                   )
-                else
+                else if (_adminService.canShowForwardStatusAction(order))
                   Builder(
                     builder: (context) {
                       final currentStatus =
@@ -1089,8 +1135,8 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
                       }
 
                       final nextStatus = validTargets.first;
-                      final actionLabel =
-                          _adminService.adminStatusActionLabel(nextStatus);
+                      final actionLabel = _adminService
+                          .adminForwardActionLabel(currentStatus);
 
                       return OutlinedButton.icon(
                         onPressed: _updatingOrderId == order['id']
@@ -1113,23 +1159,35 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
     );
   }
 
-  bool _isAwaitingPayment(Map<String, dynamic> order) {
-    final status = _normalizedStatus(order['status']);
-    if (status != 'placed') return false;
-    final paymentMode =
-        (order['payment_mode'] ?? order['paymentMode'] ?? '').toString().toUpperCase();
-    if (paymentMode != 'ONLINE') return false;
-    final paymentStatus = (order['payment_status'] ?? order['paymentStatus'] ?? 'PENDING')
-        .toString()
-        .toUpperCase();
-    return !{'PAID', 'PAYMENT_VERIFIED'}.contains(paymentStatus);
-  }
+  bool _isAwaitingPayment(Map<String, dynamic> order) =>
+      _adminService.isAwaitingPaymentOrder(order);
 
   String _normalizedStatus(dynamic status) =>
       status?.toString().trim().toLowerCase() ?? '';
 
-  bool _isCancelled(dynamic status) =>
-      _normalizedStatus(status) == 'cancelled';
+  bool _isCancelled(dynamic status) {
+    final normalized = _normalizedStatus(status);
+    return normalized == 'cancelled' || normalized == 'refunded';
+  }
+
+  String _formatAssignmentStatus(String? status) {
+    switch (_normalizedStatus(status)) {
+      case 'assigned':
+        return 'Assigned';
+      case 'accepted':
+        return 'Accepted';
+      case 'picked':
+        return 'Picked up';
+      case 'delivered':
+        return 'Delivered';
+      case 'cancelled':
+        return 'Cancelled';
+      case 'failed':
+        return 'Failed delivery';
+      default:
+        return _formatStatus(status);
+    }
+  }
 
   ButtonStyle _actionButtonStyle({Color? foreground}) {
     return OutlinedButton.styleFrom(
@@ -1168,6 +1226,8 @@ class _AdminOrdersScreenState extends State<AdminOrdersScreen> {
         return AppColors.warning;
       case 'on_way':
         return Colors.blue;
+      case 'failed_delivery':
+        return AppColors.warning;
       case 'delivered':
         return AppColors.success;
       case 'cancelled':

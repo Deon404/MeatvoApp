@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -5,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import '../../core/constants/app_constants.dart';
 import '../../widgets/location/delivery_location_coordinator.dart';
 import '../../widgets/location/delivery_location_header.dart';
+import '../../widgets/skeletons/home_content_skeleton.dart';
 
 /// Slim first-time gate: auto GPS then map pin flow.
 class LocationSetupScreen extends ConsumerStatefulWidget {
@@ -33,6 +36,8 @@ class _LocationSetupScreenState extends ConsumerState<LocationSetupScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _start());
   }
 
+  static const _locationTimeout = Duration(seconds: 12);
+
   Future<void> _start() async {
     if (_started) return;
     _started = true;
@@ -44,72 +49,99 @@ class _LocationSetupScreenState extends ConsumerState<LocationSetupScreen> {
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.unableToDetermine) {
-      await _coordinator.requestPermissionThenGps();
+      final completed = await _withTimeout(
+        _coordinator.requestPermissionThenGps(),
+      );
       if (!mounted) return;
       if (DeliveryLocationSession.setupJustCompleted) return;
-      setState(() {
-        _fetchingLocation = false;
-        _showSheetFallback = true;
-      });
-      await _coordinator.showDeliveryLocationSheet();
-      if (mounted && !DeliveryLocationSession.setupJustCompleted) {
-        setState(() => _showSheetFallback = false);
+      if (!completed) {
+        setState(() => _fetchingLocation = false);
       }
+      await _openSheetFallback();
       return;
     }
 
-    await _coordinator.useCurrentLocation(skipRationale: true);
+    final completed = await _withTimeout(
+      _coordinator.useCurrentLocation(
+        skipRationale: true,
+        fastGps: true,
+      ),
+    );
     if (!mounted) return;
 
-    if (!DeliveryLocationSession.setupJustCompleted) {
-      setState(() {
-        _fetchingLocation = false;
-        _showSheetFallback = true;
-      });
-      await _coordinator.showDeliveryLocationSheet();
+    if (DeliveryLocationSession.setupJustCompleted) return;
+
+    if (!completed) {
+      setState(() => _fetchingLocation = false);
+    }
+    await _openSheetFallback();
+  }
+
+  Future<bool> _withTimeout(Future<void> action) async {
+    try {
+      await action.timeout(_locationTimeout);
+      return true;
+    } on TimeoutException {
+      return false;
+    }
+  }
+
+  Future<void> _openSheetFallback() async {
+    if (!mounted || DeliveryLocationSession.setupJustCompleted) return;
+    setState(() {
+      _fetchingLocation = false;
+      _showSheetFallback = true;
+    });
+    await _coordinator.showDeliveryLocationSheet();
+    if (mounted && !DeliveryLocationSession.setupJustCompleted) {
+      setState(() => _showSheetFallback = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.paddingOf(context).top;
+
     return PopScope(
       canPop: false,
       child: Scaffold(
         backgroundColor: AppColors.background,
-        body: SafeArea(
-          top: false,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              DeliveryLocationHeader(
-                title: 'Delivery',
-                subtitle: _fetchingLocation ? 'Fetching…' : null,
-                isLoading: _fetchingLocation,
-                loadingTitle: 'Getting your location…',
-                loadingSubtitle: 'Fetching…',
-                onTap: () {},
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ColoredBox(
+              color: AppColors.primary,
+              child: Column(
+                children: [
+                  SizedBox(height: topInset),
+                  DeliveryLocationHeader(
+                    title: 'Delivery',
+                    subtitle: _fetchingLocation ? 'Fetching…' : null,
+                    isLoading: _fetchingLocation,
+                    loadingTitle: 'Getting your location…',
+                    loadingSubtitle: 'Fetching…',
+                    onTap: _fetchingLocation ? () {} : _openSheetFallback,
+                  ),
+                ],
               ),
-              Expanded(
-                child: Center(
-                  child: _showSheetFallback
-                      ? Padding(
-                          padding: const EdgeInsets.all(AppSpacing.xl),
-                          child: Text(
-                            'Choose your delivery location to continue.',
-                            textAlign: TextAlign.center,
-                            style: AppTextStyles.body.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
+            ),
+            Expanded(
+              child: _showSheetFallback
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.xl),
+                        child: Text(
+                          'Choose your delivery location to continue.',
+                          textAlign: TextAlign.center,
+                          style: AppTextStyles.body.copyWith(
+                            color: AppColors.textSecondary,
                           ),
-                        )
-                      : const CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          color: AppColors.primary,
                         ),
-                ),
-              ),
-            ],
-          ),
+                      ),
+                    )
+                  : const HomeContentSkeleton(),
+            ),
+          ],
         ),
       ),
     );

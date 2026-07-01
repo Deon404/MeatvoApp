@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,7 +9,10 @@ import '../../screens/address/address_details_screen.dart';
 import '../../screens/address/search_locality_screen.dart';
 import '../../services/address_service.dart';
 import '../../utils/address_display_util.dart';
+import '../../widgets/skeletons/address_list_skeleton.dart';
 import 'delivery_location_coordinator.dart';
+
+enum _SheetBusyAction { none, currentLocation, addNew }
 
 /// Zappfresh-style select delivery address bottom sheet.
 class DeliveryLocationSheet extends ConsumerStatefulWidget {
@@ -57,7 +62,9 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
 
   List<AddressModel> _addresses = [];
   bool _loading = true;
-  bool _busy = false;
+  _SheetBusyAction _busyAction = _SheetBusyAction.none;
+
+  bool get _isBusy => _busyAction != _SheetBusyAction.none;
 
   bool get _isPicker => widget.mode == DeliveryLocationFlowMode.picker;
 
@@ -80,28 +87,36 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
     Map<String, dynamic>? geocodedAddress,
   }) async {
     if (_isPicker) {
-      await _run(() => _coordinator.openMapPin(
-            latitude: latitude,
-            longitude: longitude,
-            geocodedAddress: geocodedAddress,
-          ));
-      return;
-    }
-    await _runVoid(() => _coordinator.openMapPin(
+      await _run(
+        () => _coordinator.openMapPin(
           latitude: latitude,
           longitude: longitude,
           geocodedAddress: geocodedAddress,
-        ));
+        ),
+        _SheetBusyAction.addNew,
+      );
+      return;
+    }
+    await _runVoid(
+      () => _coordinator.openMapPin(
+        latitude: latitude,
+        longitude: longitude,
+        geocodedAddress: geocodedAddress,
+      ),
+      _SheetBusyAction.addNew,
+    );
   }
 
   void _onAddNewAddressTap() {
-    if (_busy) return;
+    if (_isBusy) return;
     _openMapPinFlow();
   }
 
   Future<void> _load() async {
     try {
-      final list = await _coordinator.loadSavedAddresses();
+      final list = await _coordinator
+          .loadSavedAddresses()
+          .timeout(const Duration(seconds: 10));
       if (mounted) {
         setState(() {
           _addresses = list;
@@ -113,9 +128,12 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
     }
   }
 
-  Future<void> _run(Future<AddressModel?> Function() action) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+  Future<void> _run(
+    Future<AddressModel?> Function() action,
+    _SheetBusyAction busy,
+  ) async {
+    if (_isBusy) return;
+    setState(() => _busyAction = busy);
     try {
       final picked = await action();
       if (!mounted || picked == null) return;
@@ -123,17 +141,20 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
         Navigator.of(context).pop(picked);
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _busyAction = _SheetBusyAction.none);
     }
   }
 
-  Future<void> _runVoid(Future<void> Function() action) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+  Future<void> _runVoid(
+    Future<void> Function() action,
+    _SheetBusyAction busy,
+  ) async {
+    if (_isBusy) return;
+    setState(() => _busyAction = busy);
     try {
       await action();
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _busyAction = _SheetBusyAction.none);
     }
   }
 
@@ -147,7 +168,7 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
   }
 
   Future<void> _openSearch() async {
-    if (_busy) return;
+    if (_isBusy) return;
     final place = await Navigator.of(context, rootNavigator: true)
         .push<Map<String, dynamic>>(
       MaterialPageRoute(builder: (_) => const SearchLocalityScreen()),
@@ -221,8 +242,9 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final height = MediaQuery.sizeOf(context).height * 0.85;
+    final screenHeight = MediaQuery.sizeOf(context).height;
     final bottom = MediaQuery.paddingOf(context).bottom;
+    final height = _sheetHeight(screenHeight, bottom);
 
     return Container(
       height: height,
@@ -254,7 +276,7 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
             child: InkWell(
-              onTap: _busy ? null : _openSearch,
+              onTap: _isBusy ? null : _openSearch,
               borderRadius: BorderRadius.circular(AppRadius.button),
               child: Container(
                 padding: const EdgeInsets.symmetric(
@@ -287,14 +309,20 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
               icon: Icons.my_location_rounded,
               label: 'Use your current location',
               filled: true,
-              loading: _busy,
-              onTap: _busy
+              loading: _busyAction == _SheetBusyAction.currentLocation,
+              onTap: _isBusy
                   ? null
                   : () {
                       if (_isPicker) {
-                        _run(() => _coordinator.useCurrentLocation());
+                        _run(
+                          () => _coordinator.useCurrentLocation(fastGps: true),
+                          _SheetBusyAction.currentLocation,
+                        );
                       } else {
-                        _runVoid(() => _coordinator.useCurrentLocation());
+                        _runVoid(
+                          () => _coordinator.useCurrentLocation(fastGps: true),
+                          _SheetBusyAction.currentLocation,
+                        );
                       }
                     },
             ),
@@ -306,15 +334,26 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
               icon: Icons.add_rounded,
               label: 'Add new address',
               filled: false,
-              loading: _busy,
-              onTap: _busy ? null : _onAddNewAddressTap,
+              loading: _busyAction == _SheetBusyAction.addNew,
+              onTap: _isBusy ? null : _onAddNewAddressTap,
             ),
           ),
-          if (_loading)
-            const Expanded(
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            )
-          else if (_addresses.isNotEmpty) ...[
+          if (_loading) ...[
+            const SizedBox(height: AppSpacing.lg),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+              child: Text(
+                'Your saved addresses',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Expanded(child: AddressListSkeleton(count: 3)),
+          ] else if (_addresses.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(
                 AppSpacing.md,
@@ -346,15 +385,19 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
                   return _SavedAddressCard(
                     address: address,
                     isSelected: isSelected,
-                    onSelect: _busy
+                    onSelect: _isBusy
                         ? null
                         : () {
                             if (_isPicker) {
-                              _run(() =>
-                                  _coordinator.selectSavedAddress(address));
+                              _run(
+                                () => _coordinator.selectSavedAddress(address),
+                                _SheetBusyAction.currentLocation,
+                              );
                             } else {
-                              _runVoid(() =>
-                                  _coordinator.selectSavedAddress(address));
+                              _runVoid(
+                                () => _coordinator.selectSavedAddress(address),
+                                _SheetBusyAction.currentLocation,
+                              );
                             }
                           },
                     onEdit: () => _editAddress(address),
@@ -364,10 +407,27 @@ class _DeliveryLocationSheetState extends ConsumerState<DeliveryLocationSheet> {
               ),
             ),
           ] else
-            const Spacer(),
+            const SizedBox(height: AppSpacing.md),
         ],
       ),
     );
+  }
+
+  double _sheetHeight(double screenHeight, double bottomInset) {
+    const headerBlock = 56.0 + 52.0 + 52.0 + 52.0 + 24.0;
+    final maxHeight = screenHeight * 0.85;
+
+    if (_loading) {
+      return (headerBlock + 280 + bottomInset).clamp(360.0, maxHeight);
+    }
+
+    if (_addresses.isEmpty) {
+      return (headerBlock + bottomInset).clamp(300.0, maxHeight * 0.55);
+    }
+
+    final visibleCards = _addresses.length.clamp(1, 4);
+    final listBlock = 40.0 + (visibleCards * 118.0);
+    return (headerBlock + listBlock + bottomInset).clamp(360.0, maxHeight);
   }
 }
 

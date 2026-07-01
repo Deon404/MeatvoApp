@@ -2,8 +2,9 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../config/api_config.dart' show ApiAdminPaths, ApiDeliveryPaths;
+import '../config/api_config.dart' show ApiAdminPaths;
 import '../config/backend_resolver.dart';
+import '../config/store_config.dart';
 import '../utils/media_url_resolver.dart';
 import 'api_service.dart';
 import 'error_tracking_service.dart';
@@ -157,6 +158,7 @@ class AdminService {
       createdAtIso = DateTime.tryParse(createdAt.toString())?.toIso8601String();
     }
 
+    // Backend: COALESCE(u.is_active, true) — missing/null means active.
     return {
       ...raw,
       'id': (raw['id'] ?? raw['uid'] ?? '').toString(),
@@ -219,6 +221,109 @@ class AdminService {
   bool isSameBackendOrderStatus(String a, String b) =>
       toBackendOrderStatus(a) == toBackendOrderStatus(b);
 
+  bool isAwaitingPaymentOrder(Map<String, dynamic> order) {
+    final status = toBackendOrderStatus((order['status'] ?? '').toString());
+    if (status != 'PLACED') return false;
+    final paymentMode =
+        (order['payment_mode'] ?? order['paymentMode'] ?? '').toString().toUpperCase();
+    if (paymentMode != 'ONLINE') return false;
+    final paymentStatus = (order['payment_status'] ?? order['paymentStatus'] ?? 'PENDING')
+        .toString()
+        .toUpperCase();
+    return !{'PAID', 'PAYMENT_VERIFIED'}.contains(paymentStatus);
+  }
+
+  bool isFailedDeliveryPendingOrder(Map<String, dynamic> order) {
+    final status = toBackendOrderStatus((order['status'] ?? '').toString());
+    if (status != 'FAILED_DELIVERY') return false;
+    final resolution = (order['failed_delivery_resolution'] ??
+            order['failedDeliveryResolution'] ??
+            'PENDING')
+        .toString()
+        .toUpperCase();
+    return resolution == 'PENDING';
+  }
+
+  bool isTerminalOrderStatus(Map<String, dynamic> order) {
+    final status = toBackendOrderStatus((order['status'] ?? '').toString());
+    return {'CANCELLED', 'REFUNDED', 'DELIVERED'}.contains(status);
+  }
+
+  bool canAssignRiderToOrder(Map<String, dynamic> order) {
+    if (isTerminalOrderStatus(order)) return false;
+    if (isFailedDeliveryPendingOrder(order)) return false;
+    if (isAwaitingPaymentOrder(order)) return false;
+    final status = toBackendOrderStatus((order['status'] ?? '').toString());
+    const allowed = {
+      'PLACED',
+      'CONFIRMED',
+      'PACKING_STARTED',
+      'PACKED',
+      'RIDER_ASSIGNED',
+      'RIDER_ACCEPTED',
+      'RIDER_REJECTED',
+      'OUT_FOR_DELIVERY',
+      'PICKED_UP',
+      'ON_THE_WAY',
+      'RIDER_NEARBY',
+    };
+    return allowed.contains(status);
+  }
+
+  bool canShowForwardStatusAction(Map<String, dynamic> order) {
+    if (isTerminalOrderStatus(order)) return false;
+    if (isFailedDeliveryPendingOrder(order)) return false;
+    if (isAwaitingPaymentOrder(order)) return false;
+    final current = (order['status'] ?? '').toString();
+    return validAdminStatusTargets(current).isNotEmpty;
+  }
+
+  bool orderMatchesAdminStatusFilter(
+    Map<String, dynamic> order,
+    String filter,
+  ) {
+    final filterBackend = _mapOrderStatusToBackend(filter);
+    final orderBackend =
+        _mapOrderStatusToBackend((order['status'] ?? '').toString());
+    final hasAssignment = _orderHasRiderAssignment(order);
+
+    switch (filterBackend) {
+      case 'RIDER_ASSIGNED':
+        if (!hasAssignment) return false;
+        return {
+          'CONFIRMED',
+          'PACKING_STARTED',
+          'PACKED',
+          'RIDER_ASSIGNED',
+          'RIDER_ACCEPTED',
+        }.contains(orderBackend);
+      case 'OUT_FOR_DELIVERY':
+        return {
+          'OUT_FOR_DELIVERY',
+          'PICKED_UP',
+          'ON_THE_WAY',
+          'RIDER_NEARBY',
+        }.contains(orderBackend);
+      case 'CONFIRMED':
+        return orderBackend == 'CONFIRMED' || orderBackend == 'PACKING_STARTED';
+      case 'PLACED':
+        return orderBackend == 'PLACED' ||
+            orderBackend == 'PAYMENT_PENDING' ||
+            orderBackend == 'PAYMENT_VERIFIED';
+      default:
+        return orderBackend == filterBackend;
+    }
+  }
+
+  bool _orderHasRiderAssignment(Map<String, dynamic> order) {
+    final deliveryUid =
+        (order['deliveryUid'] ?? order['delivery_uid'] ?? '').toString();
+    if (deliveryUid.isNotEmpty) return true;
+    final assignment = order['assignment'];
+    if (assignment is Map && assignment.isNotEmpty) return true;
+    return false;
+  }
+
   /// Maps legacy/enhanced DB statuses to the simplified admin flow states.
   String resolveAdminTransitionState(String status) {
     switch (toBackendOrderStatus(status)) {
@@ -227,10 +332,13 @@ class AdminService {
         return 'PLACED';
       case 'CONFIRMED':
       case 'ASSIGNED':
-      case 'RIDER_ASSIGNED':
-      case 'RIDER_ACCEPTED':
-      case 'RIDER_REJECTED':
         return 'CONFIRMED';
+      case 'RIDER_ASSIGNED':
+        return 'RIDER_ASSIGNED';
+      case 'RIDER_ACCEPTED':
+        return 'RIDER_ACCEPTED';
+      case 'RIDER_REJECTED':
+        return 'PACKED';
       case 'PACKING_STARTED':
         return 'PACKING_STARTED';
       case 'PACKED':
@@ -242,6 +350,8 @@ class AdminService {
         return 'OUT_FOR_DELIVERY';
       case 'DELIVERED':
         return 'DELIVERED';
+      case 'FAILED_DELIVERY':
+        return 'FAILED_DELIVERY';
       case 'CANCELLED':
       case 'REFUNDED':
       case 'FAILED':
@@ -257,6 +367,7 @@ class AdminService {
     'CONFIRMED': 'PACKED',
     'PACKING_STARTED': 'PACKED',
     'PACKED': 'OUT_FOR_DELIVERY',
+    'RIDER_ACCEPTED': 'OUT_FOR_DELIVERY',
     'OUT_FOR_DELIVERY': 'DELIVERED',
   };
 
@@ -266,10 +377,32 @@ class AdminService {
     'CONFIRMED': ['PACKING_STARTED', 'PACKED', 'CANCELLED'],
     'PACKING_STARTED': ['PACKED', 'CANCELLED'],
     'PACKED': ['OUT_FOR_DELIVERY', 'CANCELLED'],
+    'RIDER_ASSIGNED': [],
+    'RIDER_ACCEPTED': ['OUT_FOR_DELIVERY'],
     'OUT_FOR_DELIVERY': ['DELIVERED'],
     'DELIVERED': [],
     'CANCELLED': [],
   };
+
+  /// Label for the primary forward action from the order's current state.
+  String adminForwardActionLabel(String currentUiStatus) {
+    switch (resolveAdminTransitionState(currentUiStatus)) {
+      case 'PLACED':
+        return 'Accept Order';
+      case 'CONFIRMED':
+      case 'PACKING_STARTED':
+        return 'Mark as Packed';
+      case 'PACKED':
+      case 'RIDER_ACCEPTED':
+        return 'Out for Delivery';
+      case 'OUT_FOR_DELIVERY':
+        return 'Mark Delivered';
+      case 'RIDER_ASSIGNED':
+        return 'Awaiting Rider';
+      default:
+        return adminStatusActionLabel(currentUiStatus);
+    }
+  }
 
   /// Human-readable label for the admin status action button/menu.
   String adminStatusActionLabel(String uiStatus) {
@@ -489,6 +622,10 @@ class AdminService {
         data,
         ['deliveredRevenue', 'delivered_revenue', 'totalRevenue', 'total_revenue', 'revenue'],
       ));
+      final openFailedDeliveryTasks = _asInt(_firstNonNull(
+        data,
+        ['openFailedDeliveryTasks', 'open_failed_delivery_tasks'],
+      ));
 
       // Normalize field names for existing UI
       return {
@@ -516,6 +653,8 @@ class AdminService {
         'revenue': revenue,
         'deliveredRevenue': deliveredRevenue,
         'delivered_revenue': deliveredRevenue,
+        'openFailedDeliveryTasks': openFailedDeliveryTasks,
+        'open_failed_delivery_tasks': openFailedDeliveryTasks,
       };
     } on DioException catch (e) {
       await ErrorTrackingService.captureException(e, tag: 'admin_dashboard');
@@ -535,11 +674,20 @@ class AdminService {
   Future<List<Map<String, dynamic>>> getOrders([
     DateTime? fromDate,
     DateTime? toDate,
+    int limit = 500,
+    int offset = 0,
+    String? backendStatus,
   ]) async {
     try {
-      final params = <String, dynamic>{};
+      final params = <String, dynamic>{
+        'limit': limit,
+        'offset': offset,
+      };
       if (fromDate != null) params['from'] = _formatApiDate(fromDate);
       if (toDate != null) params['to'] = _formatApiDate(toDate);
+      if (backendStatus != null && backendStatus.isNotEmpty) {
+        params['status'] = backendStatus;
+      }
 
       return _extractList(
         await _api.get(
@@ -558,6 +706,45 @@ class AdminService {
     }
   }
 
+  String? _simpleBackendStatusFilter(String? status) {
+    if (status == null || status.isEmpty) return null;
+    final upper = status.toUpperCase();
+    const complexFilters = {
+      'RIDER_ASSIGNED',
+      'OUT_FOR_DELIVERY',
+      'CONFIRMED',
+      'PLACED',
+      'AWAITING_PAYMENT',
+    };
+    if (complexFilters.contains(upper)) return null;
+    return _mapOrderStatusToBackend(status);
+  }
+
+  Future<List<Map<String, dynamic>>> fetchAllOrders({
+    DateTime? fromDate,
+    DateTime? toDate,
+    String? status,
+  }) async {
+    const pageSize = 500;
+    var offset = 0;
+    final backendStatus = _simpleBackendStatusFilter(status);
+    final all = <Map<String, dynamic>>[];
+
+    while (true) {
+      final batch = await getOrders(
+        fromDate,
+        toDate,
+        pageSize,
+        offset,
+        backendStatus,
+      );
+      all.addAll(batch);
+      if (batch.length < pageSize) break;
+      offset += pageSize;
+    }
+    return all;
+  }
+
   Future<List<Map<String, dynamic>>> getAllOrders({
     String? status,
     int? page,
@@ -565,14 +752,14 @@ class AdminService {
     DateTime? toDate,
   }) async {
     try {
-      var orders = await getOrders(fromDate, toDate);
+      var orders = await fetchAllOrders(
+        fromDate: fromDate,
+        toDate: toDate,
+        status: status,
+      );
       if (status != null && status.isNotEmpty) {
-        final targetStatus = _mapOrderStatusToBackend(status);
         orders = orders
-            .where((order) =>
-                _mapOrderStatusToBackend(
-                      (order['status'] ?? '').toString()) ==
-                  targetStatus)
+            .where((order) => orderMatchesAdminStatusFilter(order, status))
             .toList();
       }
       if (page != null && page > 0) {
@@ -671,8 +858,18 @@ class AdminService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getAvailableRiders() async =>
-      getAllRiders();
+  Future<List<Map<String, dynamic>>> getAvailableRiders() async {
+    final riders = await getAllRiders();
+    return riders.where((rider) {
+      final profile = rider['profile'] is Map
+          ? Map<String, dynamic>.from(rider['profile'] as Map)
+          : <String, dynamic>{};
+      final approved = profile['approved'];
+      if (approved != true) return false;
+      final online = profile['online'] == true || profile['is_online'] == true;
+      return online;
+    }).toList();
+  }
 
   Future<List<Map<String, dynamic>>> getAllPartners() async =>
       getAllRiders();
@@ -759,7 +956,7 @@ class AdminService {
 
   Future<List<Map<String, dynamic>>> getAdminProducts({
     String? search,
-    String? category,
+    String? categoryId,
     bool showOnlyActive = false,
   }) async {
     try {
@@ -771,12 +968,12 @@ class AdminService {
                 (product['name'] ?? '').toString().toLowerCase().contains(q))
             .toList();
       }
-      if (category != null && category.isNotEmpty) {
-        final normalizedCategory = category.toLowerCase();
+      if (categoryId != null && categoryId.isNotEmpty) {
         products = products
             .where((product) =>
-                (product['category'] ?? '').toString().toLowerCase() ==
-                normalizedCategory)
+                (product['categoryId'] ?? product['category_id'] ?? '')
+                    .toString() ==
+                categoryId)
             .toList();
       }
       if (showOnlyActive) {
@@ -1236,6 +1433,24 @@ class AdminService {
     }
   }
 
+  /// Reads store center from admin settings; falls back to [StoreConfig] when missing.
+  Future<({double lat, double lng})> resolveStoreCenter() async {
+    try {
+      final settings = await getStoreSettings();
+      final lat = (settings['center_lat'] as num?)?.toDouble();
+      final lng = (settings['center_lng'] as num?)?.toDouble();
+      if (lat != null && lng != null && lat != 0 && lng != 0) {
+        return (lat: lat, lng: lng);
+      }
+    } catch (_) {
+      // Fall through to static defaults.
+    }
+    return (
+      lat: StoreConfig.storeLatitude,
+      lng: StoreConfig.storeLongitude,
+    );
+  }
+
   Future<CapacitySuggestionResponse?> getCapacitySuggestion() async {
     try {
       final data = _extractMap(
@@ -1263,98 +1478,12 @@ class AdminService {
     }
   }
 
-  // ── Rider assignment (stub — not a dedicated endpoint in spec) ────────────
-
-  Future<Map<String, dynamic>> getOptimizedDeliveryRoute({String? date}) async {
-    try {
-      final dateParam = date ?? 'today';
-      return _extractMap(
-        await _api.get(
-          ApiAdminPaths.deliveryRouteOptimize,
-          queryParameters: {'date': dateParam},
-        ),
-        'Failed to get optimized route',
-      );
-    } on DioException catch (e) {
-      throw Exception(
-        'Failed to get optimized route: ${e.response?.data?['message'] ?? e.message}',
-      );
-    } catch (e) {
-      throw Exception('Failed to get optimized route: $e');
-    }
-  }
-
-  Future<Map<String, dynamic>> assignMultiRiderRoutes({
-    required int numRiders,
-    String? date,
-  }) async {
-    try {
-      return _extractMap(
-        await _api.post(
-          ApiAdminPaths.deliveryAssignRoutes,
-          data: {
-            'date': date ?? 'today',
-            'numRiders': numRiders,
-          },
-        ),
-        'Failed to split orders into zones',
-      );
-    } on DioException catch (e) {
-      throw Exception(
-        'Failed to split orders into zones: ${e.response?.data?['message'] ?? e.message}',
-      );
-    } catch (e) {
-      throw Exception('Failed to split orders into zones: $e');
-    }
-  }
-
-  Future<void> bulkAssignZones({
-    required List<String> riderIds,
-    required List<Map<String, dynamic>> zones,
-    String? date,
-  }) async {
-    try {
-      final res = await _api.put(
-        ApiDeliveryPaths.bulkAssign,
-        data: {
-          if (date != null) 'date': date,
-          'riderIds': riderIds,
-          'zones': zones,
-        },
-      );
-      final payload = res.data;
-      if (payload is Map && payload['success'] == false) {
-        throw Exception(payload['message'] ?? 'Failed to assign zones');
-      }
-    } on DioException catch (e) {
-      throw Exception(
-        'Failed to assign zones: ${e.response?.data?['message'] ?? e.message}',
-      );
-    } catch (e) {
-      throw Exception('Failed to assign zones: $e');
-    }
-  }
-
-  Future<void> assignRouteToRider({
-    required List<String> orderIds,
-    required String riderId,
-    List<String>? routeOrder,
-  }) async {
-    final ordered = routeOrder ?? orderIds;
-    for (final orderId in ordered) {
-      if (!orderIds.contains(orderId)) continue;
-      await assignRiderToOrder(orderId, riderId);
-    }
-  }
-
   Future<void> assignRiderToOrder(String orderId, String riderId) async {
     try {
-      final res = await _api.patch(
-        '${ApiAdminPaths.orders}/$orderId',
-        data: {
-          'orderStatus': 'ASSIGNED',
-          'deliveryUserId': int.tryParse(riderId) ?? riderId,
-        },
+      final partnerId = int.tryParse(riderId) ?? riderId;
+      final res = await _api.post(
+        ApiAdminPaths.assignRider(orderId),
+        data: {'deliveryPartnerId': partnerId},
       );
       if (res.data['success'] != true) {
         throw Exception(res.data['message'] ?? 'Failed to assign rider');
@@ -1401,9 +1530,16 @@ class AdminService {
     } on DioException catch (e) {
       throw Exception(
           'Failed to resolve: ${e.response?.data?['message'] ?? e.message}');
-    } catch (e) {
-      throw Exception('Failed to resolve: $e');
     }
+  }
+
+  String formatResolveError(Object error) {
+    final message = error.toString();
+    const prefix = 'Exception: ';
+    if (message.startsWith(prefix)) {
+      return message.substring(prefix.length);
+    }
+    return message;
   }
 
   /// Chronological operational timeline for one order (newest first).
@@ -1612,13 +1748,13 @@ class AdminService {
       final partners = await getDeliveryPartners();
       Map<String, dynamic>? partner;
       for (final item in partners) {
-        final profile = item['profile'];
-        if (profile is Map && profile['name'] != null) {
+        final partnerUserId =
+            (item['user_id'] ?? item['userId'] ?? '').toString();
+        if (partnerUserId == userId) {
           partner = item;
           break;
         }
       }
-      partner ??= partners.isNotEmpty ? partners.first : null;
       if (partner == null) {
         return;
       }
@@ -1645,7 +1781,10 @@ class AdminService {
     try {
       final res = await _api.patch(
         ApiAdminPaths.deliveryPartnerById(riderId),
-        data: {'approved': kycVerified},
+        data: {
+          'approved': kycVerified,
+          'kyc_status': kycVerified ? 'verified' : 'rejected',
+        },
       );
       if (res.data['success'] != true) {
         throw Exception(res.data['message'] ?? 'Failed to update rider KYC');

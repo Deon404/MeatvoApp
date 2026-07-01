@@ -12,6 +12,8 @@ class CartBillSummary extends StatelessWidget {
     required this.grandTotal,
     required this.itemCount,
     this.isFreeDelivery = false,
+    this.appliedCouponCode,
+    this.onRemoveCoupon,
   });
 
   final double itemTotal;
@@ -21,6 +23,8 @@ class CartBillSummary extends StatelessWidget {
   final double grandTotal;
   final int itemCount;
   final bool isFreeDelivery;
+  final String? appliedCouponCode;
+  final VoidCallback? onRemoveCoupon;
 
   @override
   Widget build(BuildContext context) {
@@ -58,9 +62,17 @@ class CartBillSummary extends StatelessWidget {
             SizedBox(height: mv.spacing.xs),
             _summaryRow(
               context,
-              'Discount',
+              appliedCouponCode != null && appliedCouponCode!.isNotEmpty
+                  ? 'Coupon (${appliedCouponCode!.toUpperCase()})'
+                  : 'Discount',
               '-₹${totalDiscount.toStringAsFixed(0)}',
               valueColor: mv.freshBadge,
+              trailing: appliedCouponCode != null && onRemoveCoupon != null
+                  ? GestureDetector(
+                      onTap: onRemoveCoupon,
+                      child: Icon(Icons.close, size: 16, color: mv.textMuted),
+                    )
+                  : null,
             ),
           ],
           Padding(
@@ -85,6 +97,7 @@ class CartBillSummary extends StatelessWidget {
     String value, {
     bool bold = false,
     Color? valueColor,
+    Widget? trailing,
   }) {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
@@ -99,12 +112,21 @@ class CartBillSummary extends StatelessWidget {
             fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
           ),
         ),
-        Text(
-          value,
-          style: textTheme.bodySmall?.copyWith(
-            color: valueColor ?? mv.textPrimary,
-            fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
-          ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              style: textTheme.bodySmall?.copyWith(
+                color: valueColor ?? mv.textPrimary,
+                fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+            if (trailing != null) ...[
+              SizedBox(width: mv.spacing.xxs),
+              trailing,
+            ],
+          ],
         ),
       ],
     );

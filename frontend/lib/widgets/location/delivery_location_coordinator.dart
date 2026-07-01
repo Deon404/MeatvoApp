@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -114,10 +116,17 @@ class DeliveryLocationCoordinator {
     await DeliveryLocationSheet.show(context);
   }
 
-  Future<AddressModel?> useCurrentLocation({bool skipRationale = false}) async {
+  Future<AddressModel?> useCurrentLocation({
+    bool skipRationale = false,
+    bool fastGps = false,
+  }) async {
     final position = await resolveDeliveryLocation(
       context,
       skipRationale: skipRationale,
+      accuracy: fastGps ? LocationAccuracy.medium : LocationAccuracy.high,
+      timeLimit: fastGps ? const Duration(seconds: 6) : const Duration(seconds: 15),
+      maxRetries: fastGps ? 0 : 2,
+      preferLastKnown: fastGps,
     );
     if (position == null || !context.mounted) {
       if (context.mounted && !skipRationale) {
@@ -132,10 +141,17 @@ class DeliveryLocationCoordinator {
       return null;
     }
 
-    final address = await _mapsService.getAddressFromCoordinates(
-      latitude: position.latitude,
-      longitude: position.longitude,
-    );
+    Map<String, dynamic>? address;
+    try {
+      address = await _mapsService
+          .getAddressFromCoordinates(
+            latitude: position.latitude,
+            longitude: position.longitude,
+          )
+          .timeout(const Duration(seconds: 6));
+    } on TimeoutException {
+      address = null;
+    }
 
     if (!context.mounted) return null;
     return openMapPin(

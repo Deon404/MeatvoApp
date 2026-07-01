@@ -3,7 +3,7 @@ const { pool, withTransaction, query } = require('../../db/postgres');
 const { ok, created, fail } = require('../../utils/response');
 const { ROLES } = require('../../utils/roles');
 const { emitToRole, emitToUser } = require('../../socket/socket');
-const { readCartMap, clearCart } = require('../cart/cart.service');
+const { readCartMap, clearCart, normalizeCartEntry, gramsFromVariantId } = require('../cart/cart.service');
 const { logger } = require('../../utils/logger');
 const { addressToText } = require('../../utils/address');
 const {
@@ -262,12 +262,19 @@ const createOrder = asyncHandler(async (req, res) => {
   // Order is built exclusively from the Redis cart (source of truth).
   const cartMap = await readCartMap(customerId);
   const quantities = new Map();
+  const weightGramsByProduct = new Map();
 
-  for (const [productId, quantity] of Object.entries(cartMap || {})) {
+  for (const [productId, raw] of Object.entries(cartMap || {})) {
+    const entry = normalizeCartEntry(raw);
     const pid = Number(productId);
-    const qty = Number(quantity);
+    const qty = Number(entry.quantity);
     if (Number.isFinite(pid) && pid > 0 && Number.isFinite(qty) && qty > 0) {
       quantities.set(pid, qty);
+      const weightGrams =
+        entry.weightGrams || gramsFromVariantId(entry.variantId) || null;
+      if (weightGrams != null) {
+        weightGramsByProduct.set(pid, weightGrams);
+      }
     }
   }
 
@@ -344,7 +351,7 @@ const createOrder = asyncHandler(async (req, res) => {
         };
         throw err;
       }
-      subtotal += resolveUnitSalePrice(p) * item.quantity;
+      subtotal += resolveUnitSalePrice(p, weightGramsByProduct.get(item.product_id)) * item.quantity;
     }
 
     const deliveryCharge = resolveDeliveryCharge(subtotal, storeSettings);
@@ -426,7 +433,9 @@ const createOrder = asyncHandler(async (req, res) => {
       orderIds.push(order.id);
       productIdsForInsert.push(item.product_id);
       itemQuantities.push(item.quantity);
-      itemPrices.push(resolveUnitSalePrice(p));
+      itemPrices.push(
+        resolveUnitSalePrice(p, weightGramsByProduct.get(item.product_id))
+      );
       orderedWeights.push(
         isWeightBasedProduct(p)
           ? orderedWeightGramsForLine(p, item.quantity)
@@ -785,7 +794,10 @@ const updateOrderStatus = asyncHandler(async (req, res) => {
       newState: status,
       actor: req.user.id,
       actorRole,
-      context: { notes: req.body.notes },
+      context: {
+        notes: req.body.notes,
+        adminOverride: req.user.role === ROLES.ADMIN,
+      },
       io,
     });
 

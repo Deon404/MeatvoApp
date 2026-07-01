@@ -10,6 +10,10 @@ import 'permission_dialog.dart';
 Future<Position?> resolveDeliveryLocation(
   BuildContext context, {
   bool skipRationale = false,
+  LocationAccuracy accuracy = LocationAccuracy.high,
+  Duration timeLimit = const Duration(seconds: 15),
+  int maxRetries = 2,
+  bool preferLastKnown = false,
 }) async {
   final mapsService = MapsService();
 
@@ -20,6 +24,10 @@ Future<Position?> resolveDeliveryLocation(
     try {
       return await mapsService.resolveCurrentPosition(
         requestPermissionIfDenied: false,
+        accuracy: accuracy,
+        timeLimit: timeLimit,
+        maxRetries: maxRetries,
+        preferLastKnown: preferLastKnown,
       );
     } on LocationException catch (e) {
       if (!context.mounted) return null;
@@ -76,6 +84,10 @@ Future<Position?> resolveDeliveryLocation(
   try {
     return await mapsService.resolveCurrentPosition(
       requestPermissionIfDenied: false,
+      accuracy: accuracy,
+      timeLimit: timeLimit,
+      maxRetries: maxRetries,
+      preferLastKnown: preferLastKnown,
     );
   } on LocationException catch (e) {
     if (!context.mounted) return null;

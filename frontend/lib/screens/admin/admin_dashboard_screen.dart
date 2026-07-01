@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../config/backend_resolver.dart';
+import '../../providers/admin_dashboard_stats_provider.dart';
 import '../../services/admin_service.dart';
 import '../../services/socket_service.dart';
 import '../../core/constants/app_constants.dart';
@@ -9,20 +11,22 @@ import '../../widgets/admin/failed_delivery_alert_banner.dart';
 import '../../widgets/admin/new_order_alert_banner.dart';
 import '../../widgets/common/error_state.dart';
 import 'admin_orders_screen.dart';
+import 'admin_riders_screen.dart';
+import 'admin_settings_screen.dart';
 
-class AdminDashboardScreen extends StatefulWidget {
+class AdminDashboardScreen extends ConsumerStatefulWidget {
   const AdminDashboardScreen({super.key});
 
   @override
-  State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
+  ConsumerState<AdminDashboardScreen> createState() =>
+      _AdminDashboardScreenState();
 }
 
-class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  final _adminService = AdminService();
+class _AdminDashboardScreenState extends ConsumerState<AdminDashboardScreen> {
+  AdminService get _adminService => ref.read(adminServiceProvider);
   final _socketService = SocketService();
   AdminNewOrderAlertController? _alertController;
   AdminAssignmentFailedAlertController? _assignmentFailedController;
-  AdminFailedDeliveryAlertController? _failedDeliveryController;
   Map<String, dynamic>? _stats;
   bool _isLoading = true;
   String? _loadError;
@@ -33,7 +37,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _loadStats();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupNewOrderAlerts();
-      _loadFailedDeliveryTasks();
       _loadAssignmentFailureTasks();
     });
   }
@@ -42,10 +45,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   void dispose() {
     _socketService.offNewOrder();
     _socketService.offAssignmentFailed();
-    _socketService.offFailedDelivery();
     _alertController?.dispose();
     _assignmentFailedController?.dispose();
-    _failedDeliveryController?.dispose();
     super.dispose();
   }
 
@@ -63,10 +64,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       overlayState: overlay,
       onTap: (_) => _openOrdersFromAlert(),
       onResolve: _resolveAssignmentFailure,
-    );
-    _failedDeliveryController = AdminFailedDeliveryAlertController(
-      overlayState: overlay,
-      onTap: (_) => _openOrdersFromAlert(),
     );
     _setupSocket();
   }
@@ -89,6 +86,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Future<void> _resolveAssignmentFailure(AssignmentFailedAlertData alert) async {
     try {
       await _adminService.resolveAssignmentFailure(alert.orderId.toString());
+      if (!mounted) return;
+      await _loadStats();
+      await _loadAssignmentFailureTasks();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -98,32 +98,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     }
   }
 
-  Future<void> _loadFailedDeliveryTasks() async {
-    try {
-      final tasks = await _adminService.getOpenAdminTasks(type: 'failed_delivery');
-      if (!mounted) return;
-      final alerts = tasks
-          .map(FailedDeliveryAlertData.fromTask)
-          .where((a) => a.orderId > 0)
-          .toList();
-      _failedDeliveryController?.syncFromTasks(alerts);
-    } catch (e) {
-      debugPrint('Failed to load admin tasks: $e');
-    }
-  }
-
-  void _handleFailedDeliverySocket(dynamic data) {
-    if (!mounted) return;
-    final alert = FailedDeliveryAlertData.fromSocket(data);
-    if (alert.orderId == 0) return;
-    _failedDeliveryController?.show(alert);
-  }
-
   Future<void> _setupSocket() async {
     await _socketService.connect();
     _socketService.onNewOrder(_handleNewOrder);
     _socketService.onAssignmentFailed(_handleAssignmentFailed);
-    _socketService.onFailedDelivery(_handleFailedDeliverySocket);
   }
 
   void _handleAssignmentFailed(dynamic data) {
@@ -174,6 +152,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         _isLoading = false;
         _loadError = null;
       });
+      ref.read(adminDashboardStatsProvider.notifier).state = AdminDashboardStats(
+        todayOrders: _readStatInt(['today_orders', 'todayOrders']),
+        todayRevenue: _readStatDouble(['today_revenue', 'todayRevenue']),
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -217,6 +199,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final awaitingPayment = _readStatInt([
       'awaiting_payment_count',
       'awaitingPaymentCount',
+    ]);
+    final failedDeliveryPending = _readStatInt([
+      'open_failed_delivery_tasks',
+      'openFailedDeliveryTasks',
+      'failed_delivery_pending_count',
     ]);
     
     // Responsive font sizes
@@ -269,6 +256,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    if (failedDeliveryPending > 0) ...[
+                      FailedDeliveryPendingBanner(
+                        count: failedDeliveryPending,
+                        onTap: () => _open(
+                          context,
+                          const AdminOrdersScreen(
+                            initialStatusFilter: 'FAILED_DELIVERY',
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: gridSpacing),
+                    ],
                     // Stats Cards Row
                     Row(
                       children: [
@@ -350,6 +349,39 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       ),
                     ],
                     SizedBox(height: horizontalPadding),
+                    Text(
+                      'Quick actions',
+                      style: AppTextStyles.h3.copyWith(color: AppColors.textDark),
+                    ),
+                    SizedBox(height: gridSpacing),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildQuickNavCard(
+                            'Orders',
+                            Icons.receipt_long_outlined,
+                            () => _open(context, const AdminOrdersScreen()),
+                          ),
+                        ),
+                        SizedBox(width: gridSpacing),
+                        Expanded(
+                          child: _buildQuickNavCard(
+                            'Riders',
+                            Icons.delivery_dining_outlined,
+                            () => _open(context, const AdminRidersScreen()),
+                          ),
+                        ),
+                        SizedBox(width: gridSpacing),
+                        Expanded(
+                          child: _buildQuickNavCard(
+                            'Settings',
+                            Icons.settings_outlined,
+                            () => _open(context, const AdminSettingsScreen()),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: horizontalPadding),
                   ],
                 ),
               ),
@@ -420,6 +452,39 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => screen),
+    );
+  }
+
+  Widget _buildQuickNavCard(String title, IconData icon, VoidCallback onTap) {
+    return Card(
+      elevation: 0,
+      color: AppColors.cardBg,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+          child: Column(
+            children: [
+              Icon(icon, color: AppColors.primary, size: 28),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textDark,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

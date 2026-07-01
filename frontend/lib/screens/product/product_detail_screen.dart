@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/constants/app_constants.dart';
 import '../../utils/product_unit_helper.dart';
+import '../../utils/variant_pricing.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../models/cart_model.dart';
 import '../../models/product_variant_model.dart';
@@ -297,6 +298,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         ? ProductUnitHelper.normalizeDisplayUnit(product.unit)
         : (_selectedVariant?.weight ?? product.unit);
     final variant = _selectedVariant;
+    final linePrice = variant != null
+        ? VariantPricing.salePrice(variant: variant, product: product)
+        : product.finalPrice;
 
     final optimisticCart = _cartService.buildOptimisticCart(
       current: _cart,
@@ -304,7 +308,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       productId: product.id,
       nextQuantity: _quantity,
       variantId: selectedVariantId,
-      variantPrice: variant?.price,
+      variantPrice: linePrice,
       unit: selectedUnit,
     );
     _cartService.applyOptimisticCart(optimisticCart);
@@ -323,6 +327,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             _quantity,
             unit: selectedUnit,
             variantId: selectedVariantId,
+            weightGrams: VariantPricing.weightGramsFromVariant(variant),
           );
         } else {
           await _cartService.updateCartItem(cartItemId, _quantity);
@@ -333,6 +338,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           _quantity,
           unit: selectedUnit,
           variantId: selectedVariantId,
+          weightGrams: VariantPricing.weightGramsFromVariant(variant),
         );
       }
 
@@ -903,6 +909,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         1,
                         unit: preferredVariant?.weight ?? related.product.unit,
                         variantId: preferredVariant?.id,
+                        weightGrams:
+                            VariantPricing.weightGramsFromVariant(preferredVariant),
                       );
                     } else if (localItemId != null &&
                         localItemId.isNotEmpty &&
@@ -971,9 +979,10 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }) {
     final selected = variant ?? _selectedVariant;
     if (selected != null) {
-      final variantPrice = selected.price;
-      if (variantPrice > 0) return variantPrice;
-      return activeProduct.product.finalPrice * selected.weightValue;
+      return VariantPricing.salePrice(
+        variant: selected,
+        product: activeProduct.product,
+      );
     }
     return activeProduct.product.finalPrice;
   }
@@ -984,7 +993,11 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
   }) {
     final selected = variant ?? _selectedVariant;
     if (selected != null) {
-      return activeProduct.product.price * selected.weightValue;
+      final perKg = activeProduct.product.price;
+      final weightKg = selected.weightValue > 0
+          ? selected.weightValue
+          : VariantPricing.parseWeightValue(null, selected.weight);
+      return (perKg * weightKg * 100).round() / 100;
     }
     return activeProduct.product.price;
   }

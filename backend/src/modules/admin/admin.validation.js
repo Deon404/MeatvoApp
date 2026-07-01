@@ -33,6 +33,7 @@ const listOrdersCompatSchema = z.object({
       offset: z.coerce.number().int().nonnegative().optional(),
       from: z.string().trim().optional(),
       to: z.string().trim().optional(),
+      status: z.string().trim().optional(),
     })
     .partial()
     .optional(),
@@ -140,6 +141,7 @@ const patchDeliveryPartnerCompatSchema = z.object({
   body: z
     .object({
       approved: z.boolean().optional(),
+      kyc_status: z.enum(['pending', 'verified', 'rejected']).optional(),
       online: z.boolean().optional(),
       earnings: z.coerce.number().nonnegative().optional(),
       vehicle: z.string().trim().optional().nullable(),

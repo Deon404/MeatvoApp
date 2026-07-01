@@ -35,6 +35,9 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
 
   Set<Marker> _markers = {};
 
+  double _storeLat = StoreConfig.storeLatitude;
+  double _storeLng = StoreConfig.storeLongitude;
+
   bool _isLoading = true;
   String? _loadError;
   String? _assigningOrderId;
@@ -93,13 +96,16 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         _selectedDate.month,
         _selectedDate.day,
       );
-      final end = start.add(const Duration(days: 1));
+      final end = start;
 
       final orders = await _adminService.getAllOrders(fromDate: start, toDate: end);
+      final center = await _adminService.resolveStoreCenter();
       final activeOrders = orders.where(_isActiveOrder).toList();
 
       if (!mounted) return;
       setState(() {
+        _storeLat = center.lat;
+        _storeLng = center.lng;
         _orders = activeOrders;
         _routeStops = _buildStopsFromOrderList(activeOrders);
         _isLoading = false;
@@ -124,10 +130,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   }
 
   Future<void> _buildActiveOrderMapElements() async {
-    final storeLocation = LatLng(
-      StoreConfig.storeLatitude,
-      StoreConfig.storeLongitude,
-    );
+    final storeLocation = LatLng(_storeLat, _storeLng);
 
     final markers = <Marker>{};
     final storeMarker = await _createStoreMarker(storeLocation);
@@ -448,10 +451,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                   children: [
                     GoogleMap(
                       initialCameraPosition: CameraPosition(
-                        target: LatLng(
-                          StoreConfig.storeLatitude,
-                          StoreConfig.storeLongitude,
-                        ),
+                        target: LatLng(_storeLat, _storeLng),
                         zoom: 13,
                       ),
                       markers: _markers,
@@ -573,19 +573,19 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => _showAssignRiderSheet(orderId: orderId),
-                icon: const Icon(Icons.delivery_dining, size: 18),
-                label: const Text('Assign Rider'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
+            if (order != null && _adminService.canAssignRiderToOrder(order))
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showAssignRiderSheet(orderId: orderId),
+                  icon: const Icon(Icons.delivery_dining, size: 18),
+                  label: const Text('Assign Rider'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),

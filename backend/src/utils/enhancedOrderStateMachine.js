@@ -56,8 +56,16 @@ const STATE_TRANSITIONS = {
     ORDER_STATES.DELIVERED,
     ORDER_STATES.FAILED_DELIVERY,
   ],
-  [ORDER_STATES.RIDER_NEARBY]: [ORDER_STATES.DELIVERED],
+  [ORDER_STATES.RIDER_NEARBY]: [
+    ORDER_STATES.DELIVERED,
+    ORDER_STATES.FAILED_DELIVERY,
+  ],
   [ORDER_STATES.DELIVERED]: [ORDER_STATES.REFUNDED], // In case of issues
+  [ORDER_STATES.FAILED_DELIVERY]: [
+    ORDER_STATES.PACKED,
+    ORDER_STATES.REFUNDED,
+    ORDER_STATES.CANCELLED,
+  ],
   [ORDER_STATES.CANCELLED]: [ORDER_STATES.REFUNDED],
   [ORDER_STATES.REFUNDED]: [],
 };
@@ -300,6 +308,11 @@ const STATE_ACTIONS = {
     admin: ['view_details'],
     rider: ['next_order'],
   },
+  [ORDER_STATES.FAILED_DELIVERY]: {
+    customer: [],
+    admin: ['resolve_failed_delivery', 'redeliver', 'refund', 'discard'],
+    rider: ['confirm_return_to_store'],
+  },
   [ORDER_STATES.CANCELLED]: {
     customer: [],
     admin: ['process_refund'],
@@ -367,6 +380,11 @@ function getStateDisplayInfo(state) {
     [ORDER_STATES.OUT_FOR_DELIVERY]: { label: 'Out for Delivery', color: 'indigo', icon: 'truck' },
     [ORDER_STATES.RIDER_NEARBY]: { label: 'Arriving Soon', color: 'yellow', icon: 'map-pin' },
     [ORDER_STATES.DELIVERED]: { label: 'Delivered', color: 'green', icon: 'check-circle' },
+    [ORDER_STATES.FAILED_DELIVERY]: {
+      label: 'Failed Delivery',
+      color: 'orange',
+      icon: 'alert-triangle',
+    },
     [ORDER_STATES.CANCELLED]: { label: 'Cancelled', color: 'red', icon: 'x-circle' },
     [ORDER_STATES.REFUNDED]: { label: 'Refunded', color: 'gray', icon: 'dollar-sign' },
   };

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import '../../config/backend_resolver.dart';
 import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_image_picker_field.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
+import '../../widgets/common/error_state.dart';
 /// Admin products — full CRUD against `/api/admin/products`.
 class AdminProductsScreen extends StatefulWidget {
   const AdminProductsScreen({super.key});
@@ -19,6 +21,7 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
   List<Map<String, dynamic>> _categories = [];
   final Map<String, TextEditingController> _stockControllers = {};
   bool _isLoading = true;
+  String? _loadError;
   String? _busyProductId;
 
   @override
@@ -42,7 +45,10 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     try {
       final categories = await _adminService.getCategories();
       final products = await _adminService.getAdminProductsNormalized();
@@ -61,11 +67,19 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
         _categories = categories;
         _products = products;
         _isLoading = false;
+        _loadError = null;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
-      _toast(e.toString(), isError: true);
+      setState(() {
+        _isLoading = false;
+        _loadError = BackendResolver.toUserMessage(
+          e,
+          fallback: 'Could not load products.',
+        );
+        _products = [];
+        _categories = [];
+      });
     }
   }
 
@@ -400,10 +414,17 @@ class _AdminProductsScreenState extends State<AdminProductsScreen> {
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
+            : _loadError != null
+                ? ErrorStateWidget(
+                    title: 'Products unavailable',
+                    message: _loadError,
+                    onRetry: _load,
+                  )
+                : RefreshIndicator(
               onRefresh: _load,
               child: _products.isEmpty
                   ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         SizedBox(height: R.sh(5, context)),
                         const Center(child: Text('No products')),

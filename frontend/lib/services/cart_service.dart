@@ -109,16 +109,18 @@ class CartService {
       final variantId =
           (j['variantId'] ?? j['variant_id'])?.toString();
 
-      // Variant price from nested variant object or direct field
-      double? variantPrice;
       final variantJson = j['variant'] as Map<String, dynamic>?;
-      if (variantJson != null) {
-        final p = variantJson['price'];
-        if (p is num) variantPrice = p.toDouble();
+      double? variantPrice;
+      if (variantJson != null && variantJson['price'] is num) {
+        variantPrice = (variantJson['price'] as num).toDouble();
+      } else if (j['variantPrice'] is num) {
+        variantPrice = (j['variantPrice'] as num).toDouble();
+      } else if (productJson['price'] is num) {
+        variantPrice = (productJson['price'] as num).toDouble();
       }
 
-      final unit = (variantJson?['weight'] ??
-              j['unit'] ??
+      final unit = (j['unit'] ??
+              variantJson?['weight'] ??
               productJson['unit'] ??
               'piece')
           .toString();
@@ -168,6 +170,7 @@ class CartService {
     int quantity, {
     required String unit,
     String? variantId,
+    int? weightGrams,
   }) async {
     final normalizedProductId = _normalizeId(productId);
     try {
@@ -177,6 +180,9 @@ class CartService {
       };
       if (variantId != null && variantId.isNotEmpty) {
         body['variantId'] = variantId;
+      }
+      if (weightGrams != null && weightGrams > 0) {
+        body['weightGrams'] = weightGrams;
       }
       final res = await _api.post(ApiCartPaths.cart, data: body);
       if (!_isRequestSuccessful(res.data)) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
@@ -17,6 +19,7 @@ class AdminUsersScreen extends StatefulWidget {
 class _AdminUsersScreenState extends State<AdminUsersScreen> {
   final _adminService = AdminService();
   final _searchController = TextEditingController();
+  Timer? _searchDebounce;
 
   List<Map<String, dynamic>> _users = [];
   bool _isLoading = true;
@@ -28,10 +31,13 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   void initState() {
     super.initState();
     _loadUsers();
-    _searchController.addListener(() {
-      if (_searchController.text.trim().isEmpty) {
-        _loadUsers();
-      }
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) _loadUsers();
     });
   }
 
@@ -295,6 +301,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -303,48 +311,49 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       resizeToAvoidBottomInset: true,
+      backgroundColor: AppColors.warmBg,
       drawer: AdminNavigationDrawer(
         currentSection: AdminNavSection.users,
         onLogout: () => AdminNavigationDrawer.confirmLogout(context),
       ),
       appBar: AppBar(
         title: const Text('Manage Users'),
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.cardBg,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
         child: Column(
           children: [
-          // Search and Filter Bar
           Container(
             padding: const EdgeInsets.all(16),
-            color: Colors.white,
+            color: AppColors.cardBg,
             child: Column(
               children: [
-                // Search Bar
-                TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: 'Search by name, phone, or email...',
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
-                              _loadUsers();
-                            },
-                          )
-                        : null,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: AppColors.divider),
-                    ),
-                    filled: true,
-                    fillColor: AppColors.background,
-                  ),
-                  onSubmitted: (_) => _loadUsers(),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _searchController,
+                  builder: (context, value, _) {
+                    return TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search by name, phone, or email...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: value.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: _searchController.clear,
+                              )
+                            : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: AppColors.divider),
+                        ),
+                        filled: true,
+                        fillColor: AppColors.background,
+                      ),
+                      onSubmitted: (_) => _loadUsers(),
+                    );
+                  },
                 ),
                 const SizedBox(height: 12),
                 // Filter Row

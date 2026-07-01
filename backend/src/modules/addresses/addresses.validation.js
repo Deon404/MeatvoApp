@@ -5,6 +5,59 @@ const idParam = z.coerce.number().int().positive();
 const DEFAULT_LAT = 23.7957;
 const DEFAULT_LNG = 86.4304;
 
+const ALLOWED_ADDRESS_CHARS = /^[a-zA-Z0-9\s\-/#.,()'&]+$/;
+
+const looksLikeGibberish = (value) => {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return false;
+  if (/^\d+$/.test(trimmed)) return false;
+
+  const lettersOnly = trimmed.toLowerCase().replace(/[^a-z]/g, '');
+  if (!lettersOnly) return false;
+
+  const vowels = (lettersOnly.match(/[aeiou]/g) || []).length;
+  if (lettersOnly.length >= 5 && vowels === 0) return true;
+  if (lettersOnly.length >= 6 && vowels / lettersOnly.length < 0.12) return true;
+  if (/[bcdfghjklmnpqrstvwxyz]{4,}/.test(lettersOnly)) return true;
+  if (/(.)\1{2,}/.test(lettersOnly)) return true;
+  return false;
+};
+
+const isMeaningfulAddressLine = (value) => {
+  const v = String(value ?? '').trim();
+  if (v.length < 2) return false;
+  if (!ALLOWED_ADDRESS_CHARS.test(v)) return false;
+  if (/\d/.test(v)) return true;
+  if (
+    /\b(flat|flt|house|h\.?\s*no|plot|door|room|building|bldg|blk|block|apt|apartment|unit|shop|shed|wing|tower|twr|sector|sec)\b/i.test(
+      v
+    )
+  ) {
+    return true;
+  }
+  if (v.length <= 3 && /^[a-zA-Z0-9]+$/.test(v)) return true;
+  if (v.includes(' ') && !looksLikeGibberish(v)) return true;
+  return !looksLikeGibberish(v) && v.length >= 5;
+};
+
+const isMeaningfulLandmark = (value) => {
+  const v = String(value ?? '').trim();
+  if (!v) return true;
+  if (v.length < 3) return false;
+  if (!ALLOWED_ADDRESS_CHARS.test(v)) return false;
+  if (looksLikeGibberish(v)) return false;
+  if (/\d/.test(v)) return true;
+  if (
+    /\b(near|opposite|behind|beside|next to|landmark|market|temple|school|hospital|mall|store|park|chowk|mandir|masjid|church|bus stop|metro|station|bank|hotel|restaurant|petrol|pump|colony|gate|main road)\b/i.test(
+      v
+    )
+  ) {
+    return true;
+  }
+  const words = v.split(/\s+/).filter((w) => w.length >= 2);
+  return words.length >= 2;
+};
+
 const normalizeLabel = (label) => {
   const raw = String(label ?? 'home').toLowerCase();
   const s = raw.includes('.') ? raw.split('.').pop() : raw;
@@ -76,6 +129,14 @@ const createAddressSchema = z.object({
     .refine((b) => b.addressLine1.length >= 5, {
       message: 'Address line is required (min 5 characters)',
       path: ['addressLine1'],
+    })
+    .refine((b) => isMeaningfulAddressLine(b.addressLine1), {
+      message: 'Please enter a valid house / flat / building address',
+      path: ['addressLine1'],
+    })
+    .refine((b) => isMeaningfulLandmark(b.landmark), {
+      message: 'Please enter a valid nearby landmark',
+      path: ['landmark'],
     }),
   params: z.object({}).optional(),
   query: z.object({}).optional(),
@@ -91,6 +152,20 @@ const updateAddressSchema = z.object({
       {
         message: 'Address line must be at least 5 characters when provided',
         path: ['addressLine1'],
+      }
+    )
+    .refine(
+      (b) => b.addressLine1 === undefined || isMeaningfulAddressLine(b.addressLine1),
+      {
+        message: 'Please enter a valid house / flat / building address',
+        path: ['addressLine1'],
+      }
+    )
+    .refine(
+      (b) => b.landmark === undefined || b.landmark === null || isMeaningfulLandmark(b.landmark),
+      {
+        message: 'Please enter a valid nearby landmark',
+        path: ['landmark'],
       }
     ),
   query: z.object({}).optional(),

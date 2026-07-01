@@ -31,6 +31,60 @@ const RESOLUTION_SET = new Set([
   FAILED_DELIVERY_RESOLUTIONS.DISCARD,
 ]);
 
+async function updateOrderAfterFailedDeliveryResolution(
+  client,
+  { orderId, newStatus, normalizedResolution, adminUserId }
+) {
+  const params = [newStatus, normalizedResolution, adminUserId, normalizedResolution, orderId];
+  try {
+    await client.query(
+      `UPDATE orders SET
+         status = $1,
+         failed_delivery_resolution = $2,
+         failed_delivery_resolved_at = NOW(),
+         failed_delivery_resolved_by = $3,
+         payment_status = CASE
+           WHEN $4 = 'REFUND' THEN 'REFUNDED'
+           WHEN $4 = 'DISCARD' AND UPPER(payment_mode) = 'ONLINE' THEN 'REFUNDED'
+           ELSE payment_status
+         END,
+         updated_at = NOW()
+       WHERE id = $5`,
+      params
+    );
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    logger.warn('failed_delivery_resolve_fallback_update', { orderId, code: err.code });
+    await client.query(
+      `UPDATE orders SET
+         status = $1,
+         failed_delivery_resolution = $2,
+         payment_status = CASE
+           WHEN $3 = 'REFUND' THEN 'REFUNDED'
+           WHEN $3 = 'DISCARD' AND UPPER(payment_mode) = 'ONLINE' THEN 'REFUNDED'
+           ELSE payment_status
+         END
+       WHERE id = $4`,
+      [newStatus, normalizedResolution, normalizedResolution, orderId]
+    );
+  }
+}
+
+async function cancelAssignmentsForRedelivery(client, orderId) {
+  try {
+    await client.query(
+      `UPDATE order_assignments SET status = 'CANCELLED', updated_at = NOW() WHERE order_id = $1`,
+      [orderId]
+    );
+  } catch (err) {
+    if (err?.code !== '42703') throw err;
+    await client.query(
+      `UPDATE order_assignments SET status = 'CANCELLED' WHERE order_id = $1`,
+      [orderId]
+    );
+  }
+}
+
 async function createAdminTask(client, { taskType, orderId, payload = {} }) {
   const db = client || { query };
   const { rows } = await db.query(
@@ -458,31 +512,19 @@ async function resolveFailedDelivery({ orderId, adminUserId, resolution, io = nu
       newStatus = 'CANCELLED';
     }
 
-    await client.query(
-      `UPDATE orders SET
-         status = $1,
-         failed_delivery_resolution = $2,
-         failed_delivery_resolved_at = NOW(),
-         failed_delivery_resolved_by = $3,
-         payment_status = CASE
-           WHEN $4 = 'REFUND' THEN 'REFUNDED'
-           WHEN $4 = 'DISCARD' AND UPPER(payment_mode) = 'ONLINE' THEN 'REFUNDED'
-           ELSE payment_status
-         END,
-         updated_at = NOW()
-       WHERE id = $5`,
-      [newStatus, normalizedResolution, adminUserId, normalizedResolution, orderId]
-    );
+    await updateOrderAfterFailedDeliveryResolution(client, {
+      orderId,
+      newStatus,
+      normalizedResolution,
+      adminUserId,
+    });
 
     if (normalizedResolution === FAILED_DELIVERY_RESOLUTIONS.REFUND) {
       await restoreStockForOrder(client, orderId);
     }
 
     if (normalizedResolution === FAILED_DELIVERY_RESOLUTIONS.REDELIVER) {
-      await client.query(
-        `UPDATE order_assignments SET status = 'CANCELLED', updated_at = NOW() WHERE order_id = $1`,
-        [orderId]
-      );
+      await cancelAssignmentsForRedelivery(client, orderId);
     }
 
     await resolveAdminTask(client, {
@@ -537,17 +579,24 @@ async function resolveFailedDelivery({ orderId, adminUserId, resolution, io = nu
   };
   const msg = customerMessages[normalizedResolution];
 
-  await sendNotification({
-    userId: result.customerId,
-    role: ROLES.CUSTOMER,
-    type: 'failed_delivery_resolved',
-    title: msg.title,
-    body: msg.body,
-    data: { orderId, resolution: normalizedResolution },
-    priority: 'high',
-    channels: ['socket', 'push'],
-    io,
-  });
+  try {
+    await sendNotification({
+      userId: result.customerId,
+      role: ROLES.CUSTOMER,
+      type: 'failed_delivery_resolved',
+      title: msg.title,
+      body: msg.body,
+      data: { orderId, resolution: normalizedResolution },
+      priority: 'high',
+      channels: ['socket', 'push'],
+      io,
+    });
+  } catch (notifyErr) {
+    logger.warn('failed_delivery_resolve_notify_failed', {
+      orderId,
+      error: notifyErr.message,
+    });
+  }
 
   if (io) {
     io.to(`customer_${result.customerId}`).emit('order:status_updated', {

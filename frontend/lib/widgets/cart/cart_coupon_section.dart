@@ -33,30 +33,29 @@ class _CartCouponSectionState extends State<CartCouponSection> {
     super.dispose();
   }
 
-  Future<void> _apply() async {
+  Future<bool> _apply() async {
     final code = _controller.text.trim();
-    if (code.isEmpty) return;
+    if (code.isEmpty) return false;
 
     setState(() => _isApplying = true);
     HapticFeedback.lightImpact();
 
     final success = await widget.onApply(code);
 
-    if (!mounted) return;
+    if (!mounted) return false;
     setState(() => _isApplying = false);
 
     if (success) {
       _controller.clear();
       FocusScope.of(context).unfocus();
     }
+    return success;
   }
 
   @override
   Widget build(BuildContext context) {
     final mv = context.meatvo;
     final textTheme = Theme.of(context).textTheme;
-    final couponCode = widget.appliedCode;
-    final hasCoupon = couponCode != null && couponCode.isNotEmpty;
 
     final cardDecoration = BoxDecoration(
       color: mv.surfaceCard,
@@ -64,98 +63,77 @@ class _CartCouponSectionState extends State<CartCouponSection> {
       border: Border.all(color: mv.border),
     );
 
-    if (!hasCoupon) {
-      return GestureDetector(
-        onTap: _showCouponDialog,
-        child: Container(
-          padding: EdgeInsets.all(mv.spacing.sm + 2),
-          decoration: cardDecoration,
-          child: Row(
-            children: [
-              Icon(Icons.local_offer_outlined, color: mv.brandPrimary, size: 20),
-              SizedBox(width: mv.spacing.sm),
-              Text(
-                'Apply Coupon',
-                style: textTheme.bodyMedium?.copyWith(
-                  color: mv.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Icon(Icons.chevron_right, color: mv.textMuted, size: 20),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      padding: EdgeInsets.all(mv.spacing.sm + 2),
-      decoration: cardDecoration,
-      child: Row(
-        children: [
-          Icon(Icons.check_circle, color: mv.freshBadge, size: 20),
-          SizedBox(width: mv.spacing.sm),
-          Expanded(
-            child: Text(
-              '${couponCode.toUpperCase()} — ₹${widget.appliedDiscount.toStringAsFixed(0)} saved',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+    return GestureDetector(
+      onTap: _showCouponDialog,
+      child: Container(
+        padding: EdgeInsets.all(mv.spacing.sm + 2),
+        decoration: cardDecoration,
+        child: Row(
+          children: [
+            Icon(Icons.local_offer_outlined, color: mv.brandPrimary, size: 20),
+            SizedBox(width: mv.spacing.sm),
+            Text(
+              'Apply Coupon',
               style: textTheme.bodyMedium?.copyWith(
                 color: mv.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
             ),
-          ),
-          SizedBox(width: mv.spacing.xs),
-          GestureDetector(
-            onTap: widget.onRemove,
-            child: Icon(Icons.close, color: mv.textMuted, size: 20),
-          ),
-        ],
+            const Spacer(),
+            Icon(Icons.chevron_right, color: mv.textMuted, size: 20),
+          ],
+        ),
       ),
     );
   }
 
   Future<void> _showCouponDialog() async {
-    await showDialog(
+    await showDialog<void>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Enter Coupon Code'),
-        content: TextField(
-          controller: _controller,
-          textCapitalization: TextCapitalization.characters,
-          decoration: InputDecoration(
-            hintText: 'Enter code',
-            errorText: widget.errorMessage,
-          ),
-          onSubmitted: (_) => _applyAndPop(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: _applyAndPop,
-            child: _isApplying
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Apply'),
-          ),
-        ],
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Text('Enter Coupon Code'),
+            content: TextField(
+              controller: _controller,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                hintText: 'Enter code',
+                errorText: widget.errorMessage,
+              ),
+              onSubmitted: (_) => _applyAndPop(dialogContext, setDialogState),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => _applyAndPop(dialogContext, setDialogState),
+                child: _isApplying
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Apply'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Future<void> _applyAndPop() async {
-    await _apply();
+  Future<void> _applyAndPop(
+    BuildContext dialogContext,
+    void Function(void Function()) setDialogState,
+  ) async {
+    final success = await _apply();
     if (!mounted) return;
-    if (widget.appliedCode != null && widget.appliedCode!.isNotEmpty) {
-      Navigator.pop(context);
+    setDialogState(() {});
+    if (success && dialogContext.mounted) {
+      Navigator.pop(dialogContext);
     }
   }
 }

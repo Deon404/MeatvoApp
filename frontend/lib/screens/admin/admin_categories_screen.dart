@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import '../../config/backend_resolver.dart';
 import '../../services/admin_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_image_picker_field.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
+import '../../widgets/common/error_state.dart';
 class AdminCategoriesScreen extends StatefulWidget {
   const AdminCategoriesScreen({super.key});
 
@@ -15,6 +17,7 @@ class _AdminCategoriesScreenState extends State<AdminCategoriesScreen> {
   final _adminService = AdminService();
   List<Map<String, dynamic>> _categories = [];
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -23,18 +26,28 @@ class _AdminCategoriesScreenState extends State<AdminCategoriesScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     try {
       final rows = await _adminService.getCategories();
       if (!mounted) return;
       setState(() {
         _categories = rows;
         _isLoading = false;
+        _loadError = null;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
-      _toast(e.toString(), isError: true);
+      setState(() {
+        _isLoading = false;
+        _loadError = BackendResolver.toUserMessage(
+          e,
+          fallback: 'Could not load categories.',
+        );
+        _categories = [];
+      });
     }
   }
 
@@ -194,10 +207,17 @@ class _AdminCategoriesScreenState extends State<AdminCategoriesScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
+          : _loadError != null
+              ? ErrorStateWidget(
+                  title: 'Categories unavailable',
+                  message: _loadError,
+                  onRetry: _load,
+                )
+              : RefreshIndicator(
               onRefresh: _load,
               child: _categories.isEmpty
                   ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         SizedBox(height: R.sh(6, context)),
                         const Center(child: Text('No categories yet')),

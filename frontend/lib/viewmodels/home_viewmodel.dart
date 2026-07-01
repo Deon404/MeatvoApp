@@ -17,7 +17,7 @@ import '../services/delivery_service.dart';
 import '../services/notification_service.dart';
 import '../services/product_service.dart';
 import '../services/socket_service.dart';
-import 'home_state.dart';
+import '../utils/variant_pricing.dart';
 
 export 'home_state.dart';
 
@@ -295,7 +295,12 @@ class HomeViewModel extends StateNotifier<HomeState> {
       productId: productId,
       nextQuantity: nextQuantity,
       variantId: variant?.id,
-      variantPrice: variant?.price,
+      variantPrice: variant != null
+          ? VariantPricing.salePrice(
+              variant: variant,
+              product: product.product,
+            )
+          : null,
       unit: variant?.weight ?? product.product.unit,
     );
     _cartService.applyOptimisticCart(optimisticCart);
@@ -308,6 +313,7 @@ class HomeViewModel extends StateNotifier<HomeState> {
           nextQuantity,
           unit: variant?.weight ?? product.product.unit,
           variantId: variant?.id,
+          weightGrams: VariantPricing.weightGramsFromVariant(variant),
         );
       } else if (cartItem != null && nextQuantity > 0) {
         await _cartService.updateCartItem(

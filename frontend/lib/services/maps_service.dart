@@ -86,6 +86,8 @@ class MapsService {
     LocationAccuracy accuracy = LocationAccuracy.high,
     Duration timeLimit = const Duration(seconds: 15),
     bool requestPermissionIfDenied = true,
+    int maxRetries = 2,
+    bool preferLastKnown = false,
   }) async {
     LocationPermission permission = await checkLocationPermission();
 
@@ -109,17 +111,28 @@ class MapsService {
       );
     }
 
+    if (preferLastKnown) {
+      final cached = await Geolocator.getLastKnownPosition();
+      if (cached != null) {
+        final age = DateTime.now().difference(cached.timestamp);
+        if (age < const Duration(minutes: 15)) {
+          return cached;
+        }
+      }
+    }
+
     return _fetchPositionWithNativeResolution(
       accuracy: accuracy,
       timeLimit: timeLimit,
+      maxRetries: maxRetries,
     );
   }
 
   Future<Position> _fetchPositionWithNativeResolution({
     required LocationAccuracy accuracy,
     required Duration timeLimit,
+    int maxRetries = 2,
   }) async {
-    const maxRetries = 2;
     var retryCount = 0;
 
     while (retryCount <= maxRetries) {
@@ -254,7 +267,7 @@ class MapsService {
       List<Placemark> placemarks = await placemarkFromCoordinates(
         latitude,
         longitude,
-      );
+      ).timeout(const Duration(seconds: 5));
 
       if (placemarks.isNotEmpty) {
         final place = placemarks[0];

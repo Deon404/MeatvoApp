@@ -19,11 +19,19 @@ function stringifyData(data) {
 }
 
 async function getUserFcmToken(userId) {
-  const { rows } = await query(
-    'SELECT fcm_token FROM users WHERE id = $1 AND fcm_token IS NOT NULL AND fcm_token != \'\'',
-    [userId]
-  );
-  return rows[0]?.fcm_token || null;
+  try {
+    const { rows } = await query(
+      'SELECT fcm_token FROM users WHERE id = $1 AND fcm_token IS NOT NULL AND fcm_token != \'\'',
+      [userId]
+    );
+    return rows[0]?.fcm_token || null;
+  } catch (error) {
+    if (error?.code === '42703') {
+      logger.debug('fcm_token_column_missing', { userId });
+      return null;
+    }
+    throw error;
+  }
 }
 
 function logLegacyDeprecationOnce() {

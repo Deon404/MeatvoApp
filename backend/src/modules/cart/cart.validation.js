@@ -3,6 +3,8 @@ const { z } = require('zod');
 const cartItemSchema = z.object({
   productId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).refine(id => Number(id) > 0, 'Invalid product ID'),
   quantity: z.coerce.number().int().min(1).max(10),
+  variantId: z.union([z.string(), z.number()]).transform((v) => String(v).trim()).optional(),
+  weightGrams: z.coerce.number().int().min(50).max(50000).optional(),
 });
 
 const getCartSchema = z.object({
@@ -23,6 +25,8 @@ const updateCartItemSchema = z.object({
   body: z.object({
     productId: cartItemSchema.shape.productId.optional(),
     quantity: z.coerce.number().int().min(0).max(10),
+    variantId: cartItemSchema.shape.variantId,
+    weightGrams: cartItemSchema.shape.weightGrams,
   }),
 }).superRefine((data, ctx) => {
   const bodyId = data.body?.productId;
@@ -72,4 +76,3 @@ module.exports = {
   clearCartSchema,
   getCartCountSchema
 };
-

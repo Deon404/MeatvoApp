@@ -4,7 +4,7 @@ import '../../core/constants/app_constants.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/responsive_helper.dart';
 import '../../utils/order_display_util.dart';
-import '../orders/order_detail_screen.dart';
+import 'admin_orders_screen.dart';
 
 /// Admin User Detail Screen
 /// Shows complete user information, order history, and management options
@@ -757,7 +757,8 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
     final status = order['status'] as String? ?? 'placed';
     final totalPrice = (order['total_price'] as num?)?.toDouble() ?? 0.0;
     final createdAt = order['created_at'] as String?;
-    final items = order['items'] as List<dynamic>? ?? [];
+    final itemsCount = (order['items_count'] as num?)?.toInt() ??
+        (order['items'] as List<dynamic>? ?? []).length;
 
     Color statusColor;
     switch (status) {
@@ -786,7 +787,7 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (context) => OrderDetailScreen(orderId: orderId),
+              builder: (context) => AdminOrdersScreen(initialOrderId: orderId),
             ),
           );
         },
@@ -837,10 +838,10 @@ class _AdminUserDetailScreenState extends State<AdminUserDetailScreen> {
                   ),
                 ),
               ],
-              if (items.isNotEmpty) ...[
+              if (itemsCount > 0) ...[
                 const SizedBox(height: 8),
                 Text(
-                  '${items.length} item${items.length > 1 ? 's' : ''}',
+                  '$itemsCount item${itemsCount > 1 ? 's' : ''}',
                   style: const TextStyle(
                     fontSize: 14,
                     color: AppColors.textSecondary,

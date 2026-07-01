@@ -16,6 +16,7 @@ import '../../ui/shells/offline_state_view.dart';
 import '../../widgets/location/unserviceable_location_view.dart';
 import '../../viewmodels/home_state.dart';
 import '../../widgets/error_states/error_state_widget.dart';
+import '../../widgets/skeletons/home_content_skeleton.dart';
 import '../../screens/search/search_screen.dart';
 import '../../providers/store_settings_provider.dart';
 import '../../utils/ordering_gate.dart';
@@ -83,6 +84,13 @@ class HomeBody extends ConsumerWidget {
     if (state.defaultAddress != null && state.isDeliveryServiceable == false) {
       return UnserviceableLocationView(
         onChangeLocation: onChangeLocation ?? () {},
+      );
+    }
+
+    if (state.isInitialLoading && !state.hasContent) {
+      return const SliverFillRemaining(
+        hasScrollBody: true,
+        child: HomeContentSkeleton(),
       );
     }
 

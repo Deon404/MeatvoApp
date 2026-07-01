@@ -95,8 +95,6 @@ abstract final class ApiAdminPaths {
   static const users = '/admin/users';
   static const deliveryPartners = '/admin/delivery-partners';
   static const uploadImage = '/admin/upload/image';
-  static const deliveryRouteOptimize = '/admin/delivery/route/optimize';
-  static const deliveryAssignRoutes = '/admin/delivery/assign-routes';
   static const coupons = '/admin/coupons';
   static const analytics = '/admin/analytics';
   static const opsMetrics = '/admin/ops-metrics';
@@ -113,11 +111,11 @@ abstract final class ApiAdminPaths {
   static String resolveAssignmentFailure(String orderId) =>
       '/admin/orders/$orderId/resolve-assignment-failure';
   static const adminTasks = '/admin/tasks';
-  static const operationalEvents = '/admin/operational-events';
   static const capacitySuggestion = '/admin/store/capacity-suggestion';
   static const capacitySuggestionDismiss = '/admin/store/capacity-suggestion/dismiss';
 
   static String orderTimeline(String orderId) => '/admin/orders/$orderId/timeline';
+  static String assignRider(String orderId) => '/admin/orders/$orderId/assign-rider';
 }
 
 abstract final class ApiRiderPaths {

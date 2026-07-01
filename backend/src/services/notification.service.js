@@ -73,7 +73,15 @@ async function sendNotification({
     await persistNotification(notification);
 
     if (channels.includes('push')) {
-      await sendPushToUser(userId, { title, body, data: { ...data, type } });
+      try {
+        await sendPushToUser(userId, { title, body, data: { ...data, type } });
+      } catch (pushError) {
+        logger.warn('notification_push_failed', {
+          error: pushError.message,
+          userId,
+          type,
+        });
+      }
     }
 
     logger.info('notification_sent', {

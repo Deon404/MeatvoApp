@@ -6,6 +6,7 @@ import '../../services/delivery_service.dart';
 import '../../services/maps_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/address_display_util.dart';
+import '../../utils/address_input_validator.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/location/location_flow_helper.dart';
 import '../../widgets/location/inline_location_map_panel.dart';
@@ -483,12 +484,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                           filled: true,
                           fillColor: Colors.white,
                         ),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Please enter house/flat number';
-                          }
-                          return null;
-                        },
+                        validator: AddressInputValidator.validateHouseNumber,
                       ),
                       const SizedBox(height: 16),
                       
@@ -504,6 +500,14 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                           filled: true,
                           fillColor: Colors.white,
                         ),
+                        validator: (value) {
+                          final v = value?.trim() ?? '';
+                          if (v.isEmpty) return null;
+                          if (AddressInputValidator.looksLikeGibberish(v)) {
+                            return 'Please enter a valid street name';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
                       
@@ -523,6 +527,9 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                           if (value == null || value.trim().isEmpty) {
                             return 'Please enter locality';
                           }
+                          if (AddressInputValidator.looksLikeGibberish(value)) {
+                            return 'Please enter a valid locality name';
+                          }
                           return null;
                         },
                       ),
@@ -540,6 +547,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                           filled: true,
                           fillColor: Colors.white,
                         ),
+                        validator: AddressInputValidator.validateLandmark,
                       ),
                       const SizedBox(height: 24),
                       

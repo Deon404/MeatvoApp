@@ -1,5 +1,6 @@
 import 'product_model.dart';
 import '../utils/product_unit_helper.dart';
+import '../utils/variant_pricing.dart';
 
 /// Product Variant Model - Different weight/price options for products
 class ProductVariantModel {
@@ -68,7 +69,10 @@ class ProductVariantModel {
       id: (json['id'] ?? '').toString(),
       productId: (json['product_id'] ?? '').toString(),
       weight: (json['weight'] ?? '1kg').toString(),
-      weightValue: parseDouble(json['weight_value'], 1.0),
+      weightValue: VariantPricing.parseWeightValue(
+        json['weight_value'] ?? json['weightValue'],
+        json['weight'],
+      ),
       price: parseDouble(json['price'], 0.0),
       stock: parseInt(json['stock'], 0),
       isAvailable: parseBool(json['is_available'], true),

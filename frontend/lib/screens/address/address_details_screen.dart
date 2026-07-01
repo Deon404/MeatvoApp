@@ -7,6 +7,7 @@ import '../../services/address_service.dart';
 import '../../services/delivery_service.dart';
 import '../../services/maps_service.dart';
 import '../../utils/address_display_util.dart';
+import '../../utils/address_input_validator.dart';
 import 'map_pin_screen.dart';
 
 /// Zappfresh-style minimal address details step.
@@ -29,6 +30,7 @@ class AddressDetailsScreen extends StatefulWidget {
 }
 
 class _AddressDetailsScreenState extends State<AddressDetailsScreen> {
+  final _formKey = GlobalKey<FormState>();
   final _houseController = TextEditingController();
   final _floorController = TextEditingController();
   final _towerController = TextEditingController();
@@ -76,14 +78,9 @@ class _AddressDetailsScreenState extends State<AddressDetailsScreen> {
   }
 
   Future<void> _save() async {
-    final house = _houseController.text.trim();
-    if (house.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter house number')),
-      );
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
 
+    final house = _houseController.text.trim();
     setState(() => _isSaving = true);
     try {
       await _deliveryService.ensureDeliveryAvailable(
@@ -175,11 +172,14 @@ class _AddressDetailsScreenState extends State<AddressDetailsScreen> {
       body: Column(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
+            child: Form(
+              key: _formKey,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                   _LocationPreviewCard(
                     latitude: widget.latitude,
                     longitude: widget.longitude,
@@ -259,21 +259,25 @@ class _AddressDetailsScreenState extends State<AddressDetailsScreen> {
                   _FilledField(
                     controller: _houseController,
                     hint: 'House number',
+                    validator: AddressInputValidator.validateHouseNumber,
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   _FilledField(
                     controller: _floorController,
                     hint: 'Floor',
+                    validator: AddressInputValidator.validateFloor,
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   _FilledField(
                     controller: _towerController,
                     hint: 'Tower / Block (optional)',
+                    validator: AddressInputValidator.validateTowerBlock,
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   _FilledField(
                     controller: _landmarkController,
                     hint: 'Nearby landmark (optional)',
+                    validator: AddressInputValidator.validateLandmark,
                   ),
                 ],
               ),
@@ -429,20 +433,35 @@ class _LabelChip extends StatelessWidget {
 class _FilledField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
+  final String? Function(String?)? validator;
 
-  const _FilledField({required this.controller, required this.hint});
+  const _FilledField({
+    required this.controller,
+    required this.hint,
+    this.validator,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    return TextFormField(
       controller: controller,
+      validator: validator,
       decoration: InputDecoration(
         hintText: hint,
         filled: true,
         fillColor: AppColors.greyLight,
+        errorMaxLines: 2,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppRadius.button),
           borderSide: BorderSide.none,
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: const BorderSide(color: AppColors.error),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+          borderSide: const BorderSide(color: AppColors.error, width: 1.5),
         ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.md,

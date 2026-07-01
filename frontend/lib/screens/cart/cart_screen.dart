@@ -348,14 +348,15 @@ class _CartScreenState extends State<CartScreen> {
         children: [
           ...items.map(_buildDismissibleItem),
           SizedBox(height: mv.spacing.md),
-          CartCouponSection(
-            appliedCode: _appliedCouponCode,
-            appliedDiscount: _couponDiscount,
-            errorMessage: _couponErrorMessage,
-            onApply: _applyCoupon,
-            onRemove: _removeCoupon,
-          ),
-          SizedBox(height: mv.spacing.md),
+          if (_appliedCouponCode == null)
+            CartCouponSection(
+              appliedCode: _appliedCouponCode,
+              appliedDiscount: _couponDiscount,
+              errorMessage: _couponErrorMessage,
+              onApply: _applyCoupon,
+              onRemove: _removeCoupon,
+            ),
+          if (_appliedCouponCode == null) SizedBox(height: mv.spacing.md),
           CartBillSummary(
             itemTotal: _subtotal,
             productDiscount: _productDiscount,
@@ -364,6 +365,8 @@ class _CartScreenState extends State<CartScreen> {
             grandTotal: _total,
             itemCount: _itemCount,
             isFreeDelivery: _pricing.isFreeDelivery,
+            appliedCouponCode: _appliedCouponCode,
+            onRemoveCoupon: _appliedCouponCode != null ? _removeCoupon : null,
           ),
           SizedBox(height: mv.spacing.md),
           CartFloatingCheckout(

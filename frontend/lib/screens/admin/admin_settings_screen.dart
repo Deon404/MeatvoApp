@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../config/backend_resolver.dart';
 import '../../services/admin_service.dart';
 import '../../services/store_status_service.dart';
 import '../../core/constants/app_constants.dart';
 import '../../utils/responsive_helper.dart';
 import '../../widgets/admin/admin_navigation_drawer.dart';
 import '../../widgets/admin/capacity_suggestion_card.dart';
+import '../../widgets/common/error_state.dart';
 
-class AdminSettingsScreen extends StatefulWidget {
+class AdminSettingsScreen extends ConsumerStatefulWidget {
   const AdminSettingsScreen({super.key});
 
   @override
-  State<AdminSettingsScreen> createState() => _AdminSettingsScreenState();
+  ConsumerState<AdminSettingsScreen> createState() => _AdminSettingsScreenState();
 }
 
-class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
-  final _adminService = AdminService();
+class _AdminSettingsScreenState extends ConsumerState<AdminSettingsScreen> {
+  AdminService get _adminService => ref.read(adminServiceProvider);
   final _storeStatusService = StoreStatusService();
   final _deliveryChargeController = TextEditingController();
   final _minOrderController = TextEditingController();
@@ -23,6 +26,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   TimeOfDay _closeTime = const TimeOfDay(hour: 21, minute: 0);
 
   bool _isLoading = true;
+  String? _loadError;
   bool _isSaving = false;
   StoreAcceptanceMode _acceptanceMode = StoreAcceptanceMode.accepting;
   StoreAcceptanceMode _effectiveAcceptanceMode = StoreAcceptanceMode.accepting;
@@ -107,7 +111,10 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     try {
       final results = await Future.wait([
         _adminService.getStoreSettings(),
@@ -140,11 +147,17 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
             ? capacityResponse?.suggestion
             : null;
         _isLoading = false;
+        _loadError = null;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _isLoading = false);
-      _toast(e.toString(), isError: true);
+      setState(() {
+        _isLoading = false;
+        _loadError = BackendResolver.toUserMessage(
+          e,
+          fallback: 'Could not load store settings.',
+        );
+      });
     }
   }
 
@@ -269,7 +282,13 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+          : _loadError != null
+              ? ErrorStateWidget(
+                  title: 'Settings unavailable',
+                  message: _loadError,
+                  onRetry: _load,
+                )
+              : SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
                 20,
                 20,
