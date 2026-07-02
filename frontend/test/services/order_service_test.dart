@@ -5,14 +5,13 @@ import '../helpers/test_setup.dart';
 
 /// Unit tests for OrderService
 /// 
-/// Note: These tests require Supabase to be properly configured.
-/// For full integration tests, use a test Supabase instance.
+/// Uses local fakes; backend-connected order flows belong in integration tests.
 void main() {
   group('OrderService', () {
     late OrderService orderService;
 
     setUpAll(() async {
-      await TestSetup.initializeSupabase();
+      await TestSetup.initializeTestEnvironment();
     });
 
     setUp(() {

@@ -405,7 +405,7 @@ const createOrder = asyncHandler(async (req, res) => {
     if (validatedAddressId) {
       address.addressId = validatedAddressId;
     }
-    const status = payment_mode === 'COD' ? 'CONFIRMED' : 'PLACED';
+    const status = payment_mode === 'COD' ? 'CONFIRMED' : 'PAYMENT_PENDING';
 
     const oRes = await client.query(
       `INSERT INTO orders (customer_id, status, total_amount, coupon_id, address, payment_mode)
@@ -612,6 +612,16 @@ const getOrder = asyncHandler(async (req, res) => {
       }
     : null;
 
+  const { rows: paymentRows } = await query(
+    `SELECT gateway_payment_id, gateway_order_id, gateway_transaction_id, gateway_response
+     FROM payment_transactions
+     WHERE order_id = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [orderId]
+  );
+  const latestPayment = paymentRows[0] || null;
+
   const orderWithRider = order && assignment
     ? {
         ...order,
@@ -691,6 +701,18 @@ const getOrder = asyncHandler(async (req, res) => {
   const orderForResponse = {
     ...orderWithRider,
     ...pricing,
+    payment_id:
+      latestPayment?.gateway_payment_id ||
+      latestPayment?.gateway_transaction_id ||
+      null,
+    payment_method_details: latestPayment
+      ? {
+          ...(latestPayment.gateway_response || {}),
+          gateway_payment_id: latestPayment.gateway_payment_id || null,
+          gateway_order_id: latestPayment.gateway_order_id || null,
+          gateway_transaction_id: latestPayment.gateway_transaction_id || null,
+        }
+      : null,
   };
 
   return ok(
@@ -852,8 +874,12 @@ const cancelOrder = asyncHandler(async (req, res) => {
   if (Number(order.customer_id) !== customerId) {
     return fail(res, 403, 'Not your order');
   }
-  if (!['PLACED', 'CONFIRMED'].includes(order.status)) {
-    return fail(res, 400, 'Order can only be cancelled from PLACED or CONFIRMED');
+  if (!['PLACED', 'PAYMENT_PENDING', 'CONFIRMED'].includes(order.status)) {
+    return fail(
+      res,
+      400,
+      'Order can only be cancelled from PLACED, PAYMENT_PENDING or CONFIRMED'
+    );
   }
 
   const io = req.app.get('io');
@@ -900,7 +926,7 @@ const getOrders = asyncHandler(async (req, res) => {
 
   const params = [customerId, limit, offset];
   const { rows } = await query(
-    `SELECT id, status, total_amount, address, payment_mode, created_at,
+    `SELECT id, status, total_amount, address, payment_mode, payment_status, created_at,
             estimated_delivery_time, eta_minutes
      FROM orders WHERE customer_id = $1 
      ORDER BY created_at DESC LIMIT $2 OFFSET $3`,

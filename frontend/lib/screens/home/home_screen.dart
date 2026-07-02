@@ -18,6 +18,7 @@ import '../../viewmodels/home_provider.dart';
 import '../../viewmodels/home_state.dart';
 import '../../widgets/home/home_body.dart';
 import '../../widgets/location/delivery_location_sheet.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({
@@ -96,59 +97,61 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       body: SafeArea(
         top: false,
         bottom: true,
-        child: Stack(
-          children: [
-            RefreshIndicator(
-              color: context.meatvo.brandAccent,
-              onRefresh: () =>
-                  ref.read(homeViewModelProvider.notifier).refresh(),
-              child: CustomScrollView(
-                physics: const BouncingScrollPhysics(
-                  parent: AlwaysScrollableScrollPhysics(),
-                ),
-                slivers: [
-                  SliverPersistentHeader(
-                    pinned: true,
-                    delegate: HomeTopBarDelegate(
-                      topPadding: MediaQuery.paddingOf(context).top,
-                      locationTitle: _locationTitle(state),
-                      locationSubtitle: _locationSubtitle(state),
-                      unreadCount: state.unreadNotificationCount,
-                      onAddressTap: _openAddressBook,
-                      onNotificationTap: _openNotifications,
+        child: ActiveFlowBackground(
+          child: Stack(
+            children: [
+              RefreshIndicator(
+                color: context.meatvo.brandAccent,
+                onRefresh: () =>
+                    ref.read(homeViewModelProvider.notifier).refresh(),
+                child: CustomScrollView(
+                  physics: const BouncingScrollPhysics(
+                    parent: AlwaysScrollableScrollPhysics(),
+                  ),
+                  slivers: [
+                    SliverPersistentHeader(
+                      pinned: true,
+                      delegate: HomeTopBarDelegate(
+                        topPadding: MediaQuery.paddingOf(context).top,
+                        locationTitle: _locationTitle(state),
+                        locationSubtitle: _locationSubtitle(state),
+                        unreadCount: state.unreadNotificationCount,
+                        onAddressTap: _openAddressBook,
+                        onNotificationTap: _openNotifications,
+                      ),
                     ),
-                  ),
-                  HomeBody(
-                    state: state,
-                    onOpenCategories: _openCategories,
-                    onOpenCategory: _openCategory,
-                    onRetryHome: () =>
-                        ref.read(homeViewModelProvider.notifier).refresh(),
-                    onRetryCategories: () => ref
-                        .read(homeViewModelProvider.notifier)
-                        .fetchCategories(),
-                    onRetryFeatured: () => ref
-                        .read(homeViewModelProvider.notifier)
-                        .fetchFeaturedProducts(),
-                    onRetryPopular: () => ref
-                        .read(homeViewModelProvider.notifier)
-                        .fetchBestSellers(),
-                    onRetryAllProducts: () => ref
-                        .read(homeViewModelProvider.notifier)
-                        .fetchAllProducts(),
-                    onBannerTap: _handleBannerTap,
-                    onProductTap: _openProduct,
-                    onQuantityChange: ref
-                        .read(homeViewModelProvider.notifier)
-                        .changeCartQuantity,
-                    bottomPadding: bottomPad,
-                    onChangeLocation: _openAddressBook,
-                  ),
-                ],
+                    HomeBody(
+                      state: state,
+                      onOpenCategories: _openCategories,
+                      onOpenCategory: _openCategory,
+                      onRetryHome: () =>
+                          ref.read(homeViewModelProvider.notifier).refresh(),
+                      onRetryCategories: () => ref
+                          .read(homeViewModelProvider.notifier)
+                          .fetchCategories(),
+                      onRetryFeatured: () => ref
+                          .read(homeViewModelProvider.notifier)
+                          .fetchFeaturedProducts(),
+                      onRetryPopular: () => ref
+                          .read(homeViewModelProvider.notifier)
+                          .fetchBestSellers(),
+                      onRetryAllProducts: () => ref
+                          .read(homeViewModelProvider.notifier)
+                          .fetchAllProducts(),
+                      onBannerTap: _handleBannerTap,
+                      onProductTap: _openProduct,
+                      onQuantityChange: ref
+                          .read(homeViewModelProvider.notifier)
+                          .changeCartQuantity,
+                      bottomPadding: bottomPad,
+                      onChangeLocation: _openAddressBook,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            if (offline) const OfflineBanner(),
-          ],
+              if (offline) const OfflineBanner(),
+            ],
+          ),
         ),
       ),
     );

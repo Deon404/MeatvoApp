@@ -27,19 +27,7 @@ class SendOtpResult {
   final int? remainingSeconds;
 }
 
-/// Authentication via custom Node backend ([EnvConfig.apiBaseUrl]) — **no Supabase**.
-///
-/// Supabase → replacement mapping (calling code should use these APIs only):
-///
-/// | Former Supabase | Replacement |
-/// |-----------------|-------------|
-/// | `supabase.auth.signInWithOtp(...)` | [signInWithOtp] → `POST /api/auth/send-otp` |
-/// | `supabase.auth.verifyOtp(...)` | [verifyOtp] / [verifyOTP] → `POST /api/auth/verify-otp` |
-/// | `supabase.auth.signOut()` | [signOut] / [logout] → `POST /api/auth/logout` |
-/// | `supabase.auth.currentUser` | [currentUser] / [currentUserAsync] → [StorageService.getUser] |
-/// | `supabase.auth.session` | [session] → [StorageService.getAccessToken] |
-/// | `supabase.auth.onAuthStateChange` | **removed** — use local state / Riverpod after login/logout |
-///
+/// Authentication via custom Node backend ([EnvConfig.apiBaseUrl]).
 /// Dio [ApiService] uses `baseUrl = {backendRoot}/api` (see [kBaseUrl]), so paths are `/auth/...`.
 class AuthService {
   final ApiService _api = ApiService();
@@ -61,13 +49,13 @@ class AuthService {
     return token != null && token.isNotEmpty;
   }
 
-  /// Cached user from [FlutterSecureStorage] (replaces `supabase.auth.currentUser`).
+  /// Cached user from [FlutterSecureStorage].
   Future<UserModel?> get currentUser => _storage.getUser();
 
   /// Alias for [currentUser] — kept for older call sites.
   Future<UserModel?> get currentUserAsync => _storage.getUser();
 
-  /// Access token string (replaces `supabase.auth.session` / JWT access).
+  /// Access token string for backend JWT access.
   Future<String?> get session => _storage.getAccessToken();
 
   // ── OTP flow ────────────────────────────────────────────────────────────
@@ -78,9 +66,7 @@ class AuthService {
     return result.devOtp;
   }
 
-  /// Same intent as former `supabase.auth.signInWithOtp` — sends OTP to phone.
-  ///
-  /// Extra Supabase parameters are ignored; backend only needs [phone].
+  /// Sends OTP to phone through the Node backend.
   Future<void> signInWithOtp({
     required String phone,
     String? email,

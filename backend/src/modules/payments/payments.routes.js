@@ -4,7 +4,7 @@ const router = express.Router();
 
 const { protect } = require('../../middlewares/auth.middleware');
 const { validate } = require('../../middlewares/validate.middleware');
-const { initiatePayment, handlePhonePeWebhook } = require('./payments.controller');
+const { paymentLogger } = require('./secure-logger');
 const cashfreeController = require('./cashfree.controller');
 const paymentSecurity = require('../../security/payment.security');
 const {
@@ -15,6 +15,16 @@ const {
 
 const { fail } = require('../../utils/response');
 
+const phonePeRetired = (req, res) =>
+  fail(res, 410, 'PhonePe is retired for the MVP release. Use Cashfree payment endpoints.', {
+    supportedGateway: 'CASHFREE',
+    canonicalEndpoints: {
+      initiate: '/api/payments/cashfree/initiate',
+      verify: '/api/payments/cashfree/verify',
+      webhook: '/api/payments/cashfree/webhook',
+    },
+  });
+
 // Rate limiting for payment initiation (per user)
 const paymentRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -24,12 +34,11 @@ const paymentRateLimit = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   handler: (req, res) => {
-    const { paymentLogger } = require('./payments.controller');
     const { logger } = require('../../utils/logger');
     paymentLogger.security.rateLimitExceeded(logger, {
       clientIP: req.ip,
       userAgent: req.headers['user-agent'],
-      endpoint: '/api/payments/phonepe/initiate',
+      endpoint: req.originalUrl || '/api/payments/cashfree/initiate',
     });
     return fail(res, 429, 'Too many payment attempts', { code: 'RATE_LIMITED', retryAfter: '1 minute' });
   },
@@ -47,22 +56,22 @@ const webhookRateLimit = rateLimit({
   },
 });
 
-// Protected payment routes
-router.post('/phonepe/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
-router.post('/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, initiatePayment);
-router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, cashfreeController.verifyPayment);
-router.post('/phonepe/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, cashfreeController.verifyPayment);
-
-router.post('/cashfree/initiate', protect, paymentRateLimit, paymentSecurity.fraudDetection.bind(paymentSecurity), cashfreeController.initiatePayment);
+// Cashfree is the canonical online payment gateway for the MVP release.
+router.post('/cashfree/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, paymentSecurity.fraudDetection.bind(paymentSecurity), cashfreeController.initiatePayment);
 router.post('/cashfree/abandon', protect, paymentRateLimit, cashfreeController.abandonPayment);
 router.post('/cashfree/webhook', webhookRateLimit, cashfreeController.handleWebhook);
-router.get('/cashfree/:orderId/status', protect, paymentRateLimit, cashfreeController.getPaymentStatus);
-router.post('/cashfree/verify', protect, paymentRateLimit, cashfreeController.verifyPayment);
+router.get('/cashfree/:orderId/status', protect, validate(getPaymentStatusSchema), paymentRateLimit, cashfreeController.getPaymentStatus);
+router.post('/cashfree/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, cashfreeController.verifyPayment);
 
+// Generic aliases kept only as wrappers for older clients.
+router.post('/initiate', protect, validate(initiatePaymentSchema), paymentRateLimit, paymentSecurity.fraudDetection.bind(paymentSecurity), cashfreeController.initiatePayment);
+router.post('/verify', protect, validate(verifyPaymentSchema), paymentRateLimit, cashfreeController.verifyPayment);
 router.get('/:orderId/status', protect, validate(getPaymentStatusSchema), paymentRateLimit, cashfreeController.getPaymentStatus);
 
-// Public webhook route with rate limiting
-router.post('/phonepe/webhook', webhookRateLimit, handlePhonePeWebhook);
-router.post('/webhook', webhookRateLimit, handlePhonePeWebhook);
+// Retired PhonePe/webhook aliases stay explicit so stale clients fail loudly.
+router.post('/phonepe/initiate', phonePeRetired);
+router.post('/phonepe/verify', phonePeRetired);
+router.post('/phonepe/webhook', webhookRateLimit, phonePeRetired);
+router.post('/webhook', webhookRateLimit, phonePeRetired);
 
 module.exports = router;

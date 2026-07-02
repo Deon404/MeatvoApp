@@ -111,12 +111,6 @@ class EnvConfig {
     return backendRootUrl;
   }
 
-  // ── Supabase (optional — realtime / legacy docs) ──────────────────────────
-
-  static String get supabaseUrl => get('SUPABASE_URL');
-
-  static String get supabaseAnonKey => get('SUPABASE_ANON_KEY');
-
   // ── Secure storage key names (identifiers only — not JWT values) ───────────
 
   static String get secureStorageAccessTokenKey => _envOrDefault(

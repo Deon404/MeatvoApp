@@ -19,6 +19,7 @@ import '../../screens/cart/cart_screen.dart';
 import '../../ui/shells/meatvo_layout.dart';
 import '../../utils/app_transitions.dart';
 import '../../widgets/cart/floating_cart_bar.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/animations/hero_image_widget.dart';
 import '../../widgets/cached_image_widget.dart';
 import '../../widgets/common/empty_state.dart';
@@ -461,6 +462,21 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  mv.brandAccent.withValues(alpha: 0.18),
+                  mv.surfaceWarm,
+                  mv.surfaceWarm,
+                ],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+          ),
+        ),
         Align(
           alignment: Alignment.topCenter,
           child: SizedBox(
@@ -557,6 +573,32 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       style: AppTextStyles.caption.copyWith(
                         color: mv.textSecondary,
                       ),
+                    ),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        ActiveFlowMetricPill(
+                          label: 'Rating',
+                          value: _reviewCount > 0
+                              ? '${_averageRating.toStringAsFixed(1)} • $_reviewCount'
+                              : 'New product',
+                          icon: Icons.star_rounded,
+                        ),
+                        ActiveFlowMetricPill(
+                          label: 'Availability',
+                          value: _isInStock ? 'In stock' : 'Out of stock',
+                          icon: _isInStock
+                              ? Icons.check_circle_outline
+                              : Icons.error_outline,
+                        ),
+                        ActiveFlowMetricPill(
+                          label: 'Delivery',
+                          value: 'Fast slot',
+                          icon: Icons.bolt_rounded,
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     const Divider(height: 1, color: AppThemeColors.divider),
@@ -1012,14 +1054,17 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         decoration: BoxDecoration(
           color: mv.surfaceCard,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: mv.border),
           boxShadow: [
             BoxShadow(
-              color: mv.border,
-              blurRadius: 12,
-              offset: const Offset(0, -4),
+              color: mv.textPrimary.withValues(alpha: 0.08),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
             ),
           ],
         ),

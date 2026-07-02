@@ -47,9 +47,9 @@ abstract final class ApiCouponPaths {
 }
 
 abstract final class ApiPaymentPaths {
-  static const initiate = '/payments/initiate';
-  static const verify = '/payments/verify';
-  static const status = '/payments/status';
+  static const initiate = '/payments/cashfree/initiate';
+  static const verify = '/payments/cashfree/verify';
+  static String status(String orderId) => '/payments/cashfree/$orderId/status';
 }
 
 abstract final class ApiDeliveryPaths {
@@ -168,7 +168,8 @@ class ApiConfig {
 
   static String get initiatePayment => '$baseUrl${ApiPaymentPaths.initiate}';
   static String get verifyPayment => '$baseUrl${ApiPaymentPaths.verify}';
-  static String get paymentStatus => '$baseUrl${ApiPaymentPaths.status}';
+  static String paymentStatus(String orderId) =>
+      '$baseUrl${ApiPaymentPaths.status(orderId)}';
 
   static String get deliverySlots => '$baseUrl${ApiDeliveryPaths.slots}';
   static String get deliveryOrders => '$baseUrl${ApiDeliveryPaths.orders}';

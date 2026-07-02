@@ -1,6 +1,9 @@
 import '../models/order_model.dart';
 import 'order_status_util.dart';
 
+String _rawOrderStatusKey(OrderModel order) =>
+    order.status.trim().toLowerCase().replaceAll('-', '_');
+
 /// Whether the gateway has marked this order as paid.
 bool isOrderPaid(OrderModel order) {
   final paymentStatus = order.paymentStatus?.toLowerCase();
@@ -19,10 +22,10 @@ bool isOrderAwaitingPayment(OrderModel order) {
   if (isOrderPaid(order)) return false;
   if (isPaymentFailed(order)) return false;
 
-  final status = normalizeOrderStatus(order.status);
-  return status == 'placed' ||
-      status == 'pending' ||
-      status == 'payment_pending';
+  final rawStatus = _rawOrderStatusKey(order);
+  return rawStatus == 'placed' ||
+      rawStatus == 'pending' ||
+      rawStatus == 'payment_pending';
 }
 
 /// Active delivery tracking (map, ETA, rider) — excludes unpaid online orders.

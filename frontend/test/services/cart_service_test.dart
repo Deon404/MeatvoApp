@@ -5,16 +5,13 @@ import '../helpers/test_setup.dart';
 
 /// Unit tests for CartService
 /// 
-/// Note: These tests require Supabase to be properly initialized.
-/// For full integration tests, use a test Supabase instance.
-/// 
-/// To run these tests, ensure Supabase is initialized in test setup.
+/// Uses local fakes; backend-connected cart flows belong in integration tests.
 void main() {
   group('CartService', () {
     late CartService cartService;
 
     setUpAll(() async {
-      await TestSetup.initializeSupabase();
+      await TestSetup.initializeTestEnvironment();
     });
 
     setUp(() {

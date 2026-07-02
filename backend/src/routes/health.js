@@ -175,12 +175,11 @@ router.get('/external', adminOnly, async (req, res) => {
     services.msg91 = { status: HEALTH_STATUS.UNHEALTHY, error: error.message };
   }
 
-  // PhonePe
-  try {
-    await axios.get('https://api.phonepe.com/health', { timeout: 5000 });
-    services.phonepe = { status: HEALTH_STATUS.HEALTHY, responseTime: `${Date.now() - start}ms` };
-  } catch (error) {
-    services.phonepe = { status: HEALTH_STATUS.UNHEALTHY, error: error.message };
+  // Cashfree config presence. Runtime gateway status is verified by payment APIs/webhooks.
+  if (process.env.CASHFREE_APP_ID && process.env.CASHFREE_SECRET_KEY) {
+    services.cashfree = { status: HEALTH_STATUS.HEALTHY, configured: true };
+  } else {
+    services.cashfree = { status: HEALTH_STATUS.UNHEALTHY, error: 'Cashfree credentials missing' };
   }
 
   // Google Maps

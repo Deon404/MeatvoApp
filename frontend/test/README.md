@@ -39,17 +39,16 @@ flutter test --coverage
 ## Test Requirements
 
 ### Service Tests
-Service tests require Supabase to be initialized. The test setup will:
-1. Attempt to load environment variables from `.env` file
-2. Check if credentials are available
-3. **Skip Supabase initialization** (platform channels not available in unit tests)
-4. Tests will gracefully skip if Supabase is not initialized
+Service tests use local fakes. The test setup will:
+1. Create fake service instances
+2. Avoid backend/network calls in unit tests
+3. Keep full backend-connected flows for integration tests
 
 **Important:** 
-- Unit tests **cannot** initialize Supabase due to missing platform channels (SharedPreferences)
-- Tests check `TestSetup.isSupabaseInitialized` and skip gracefully if false
-- For full integration tests with Supabase, use the `integration_test` package
-- Model tests (pure unit tests) always run and don't require Supabase
+- Unit tests do not bootstrap external services.
+- Tests use `TestSetup.initializeTestEnvironment()`.
+- For full integration tests, target the Node backend with `integration_test`.
+- Model tests are pure unit tests and do not require external dependencies.
 
 ### Model Tests
 Model tests are pure unit tests and don't require external dependencies - they always run.

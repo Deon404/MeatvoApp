@@ -6,14 +6,14 @@ import 'package:meatvo_official/services/order_service.dart';
 
 /// Shared test setup for service tests.
 class TestSetup {
-  static bool isSupabaseInitialized = false;
+  static bool isTestEnvironmentInitialized = false;
 
   static late CartService cartService;
   static late OrderService orderService;
 
-  static Future<void> initializeSupabase() async {
-    // Supabase is not required for these unit tests.
-    isSupabaseInitialized = false;
+  static Future<void> initializeTestEnvironment() async {
+    // Unit tests run against lightweight fakes.
+    isTestEnvironmentInitialized = true;
   }
 
   static void setUp() {

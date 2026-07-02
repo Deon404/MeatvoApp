@@ -24,6 +24,7 @@ const {
   ACTOR_TYPES,
 } = require('../../utils/operationalEvents.util');
 const { addressToText, addressToObject, cleanAddressText } = require('../../utils/address');
+const { emitOrderLifecycleEvent } = require('../../utils/orderSocketEmit');
 
 const ADMIN_PENDING_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
 const ADMIN_UNASSIGNED_STATUSES = ['PLACED', 'CONFIRMED', 'PACKED'];
@@ -480,7 +481,10 @@ const acceptOrder = asyncHandler(async (req, res) => {
     }
 
     if (assignment) {
-      await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', ['ACCEPTED', orderId]);
+      await client.query(
+        'UPDATE order_assignments SET status = $1, updated_at = NOW() WHERE order_id = $2',
+        ['ACCEPTED', orderId]
+      );
     } else {
       const claimed = await tryClaimBroadcastOrder(orderId, deliveryPartnerId);
       if (!claimed) {
@@ -490,8 +494,8 @@ const acceptOrder = asyncHandler(async (req, res) => {
       }
 
       const { rows: insertRows } = await client.query(
-        `INSERT INTO order_assignments (order_id, delivery_partner_id, status)
-         VALUES ($1,$2,'ACCEPTED')
+        `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at, updated_at)
+         VALUES ($1,$2,'ACCEPTED', NOW(), NOW())
          ON CONFLICT (order_id) DO NOTHING
          RETURNING id`,
         [orderId, deliveryPartnerId]
@@ -510,7 +514,7 @@ const acceptOrder = asyncHandler(async (req, res) => {
     }
 
     const { rows: updatedRows } = await client.query(
-      `UPDATE orders SET status = 'OUT_FOR_DELIVERY' WHERE id = $1
+      `UPDATE orders SET status = 'OUT_FOR_DELIVERY', updated_at = NOW() WHERE id = $1
        RETURNING id, customer_id, status, total_amount, coupon_id, address, payment_mode, created_at`,
       [orderId]
     );
@@ -540,15 +544,15 @@ const acceptOrder = asyncHandler(async (req, res) => {
     );
     const partner = partnerRows[0];
 
-    io.to(`customer_${updatedOrder.customer_id}`).emit('order:status_updated', {
-      orderId: orderId,
-      status: 'OUT_FOR_DELIVERY',
-      updatedAt: new Date().toISOString()
-    });
-    io.to(`customer_${updatedOrder.customer_id}`).emit('order:status_update', {
-      orderId: orderId,
-      status: 'OUT_FOR_DELIVERY',
-      timestamp: new Date().toISOString(),
+    emitOrderLifecycleEvent(io, {
+      orderId,
+      customerId: updatedOrder.customer_id,
+      riderUserId: userId,
+      payload: {
+        orderId,
+        status: 'OUT_FOR_DELIVERY',
+        updatedAt: new Date().toISOString(),
+      },
     });
 
     if (partner) {
@@ -567,11 +571,6 @@ const acceptOrder = asyncHandler(async (req, res) => {
       io.to(`customer_${updatedOrder.customer_id}`).emit('order:partner_assigned', partnerPayload);
     }
 
-    io.to('admin_room').emit('order:updated', {
-      orderId: orderId,
-      status: 'OUT_FOR_DELIVERY',
-      updatedAt: new Date().toISOString()
-    });
   }
 
   instrumentRiderAcceptedAndDispatched(io, {
@@ -705,11 +704,16 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
       DELIVERED: 'DELIVERED',
     };
     const assignmentStatus = assignmentStatusByOrderStatus[status] ?? status;
-    await client.query('UPDATE order_assignments SET status = $1 WHERE order_id = $2', [
-      assignmentStatus,
-      orderId,
-    ]);
-    await client.query('UPDATE orders SET status = $1 WHERE id = $2', [status, orderId]);
+    await client.query(
+      `UPDATE order_assignments
+       SET status = $1,
+           updated_at = NOW(),
+           delivered_at = CASE WHEN $1 = 'DELIVERED' THEN NOW() ELSE delivered_at END,
+           delivery_notes = COALESCE($3, delivery_notes)
+       WHERE order_id = $2`,
+      [assignmentStatus, orderId, deliveryNotes || null]
+    );
+    await client.query('UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2', [status, orderId]);
 
     // LIFECYCLE FIX: mark COD payment collected when delivery completes
     if (status === 'DELIVERED') {
@@ -741,21 +745,16 @@ const updateDeliveryOrderStatus = asyncHandler(async (req, res) => {
   // Emit to customer and admin rooms
   const io = req.app.get('io');
   if (io && rows[0]) {
-    io.to(`customer_${rows[0].customer_id}`).emit('order:status_updated', {
-      orderId: orderId,
-      status: status,
-      updatedAt: new Date().toISOString()
-    });
-    io.to(`customer_${rows[0].customer_id}`).emit('order:status_update', {
-      orderId: orderId,
-      status: status,
-      timestamp: new Date().toISOString(),
-    });
-    
-    io.to('admin_room').emit('order:updated', {
-      orderId: orderId,
-      status: status,
-      updatedAt: new Date().toISOString()
+    emitOrderLifecycleEvent(io, {
+      orderId,
+      customerId: rows[0].customer_id,
+      riderUserId: userId,
+      payload: {
+        orderId,
+        status,
+        previousStatus: previousOrderStatus,
+        updatedAt: new Date().toISOString(),
+      },
     });
   }
 

@@ -16,6 +16,7 @@ import '../../widgets/admin/failed_delivery_alert_banner.dart';
 import '../../widgets/admin/failed_delivery_resolution_dialog.dart';
 import '../../widgets/admin/admin_order_timeline_section.dart';
 import '../../widgets/admin/new_order_alert_banner.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/skeletons/order_card_skeleton.dart';
 
 /// Admin Orders Management Screen
@@ -650,7 +651,7 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
             ),
         ],
       ),
-      body: _buildBody(),
+      body: ActiveFlowBackground(child: _buildBody()),
     );
   }
 
@@ -726,6 +727,8 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
           if (index == 0) {
             return Column(
               children: [
+                _buildOpsSummary(),
+                const SizedBox(height: 12),
                 FailedDeliveryPendingBanner(
                   count: _failedDeliveryPendingCount,
                   onTap: _showFailedDeliveryOrders,
@@ -742,69 +745,97 @@ class _AdminOrdersScreenState extends ConsumerState<AdminOrdersScreen> {
   }
 
   Widget _buildFilterSection() {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: AppColors.divider, width: 1),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Filters',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+    return ActiveFlowSurfaceCard(
+      borderRadius: 20,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Filters',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: AppColors.textPrimary,
             ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _statusFilters.map((filter) {
-                final isSelected = _selectedStatus == filter['value'];
-                return ChoiceChip(
-                  label: Text(filter['label'] ?? ''),
-                  selected: isSelected,
-                  onSelected: (_) {
-                    setState(() {
-                      _selectedStatus = filter['value'];
-                    });
-                    _loadOrders();
-                  },
-                  selectedColor: AppColors.primary.withValues(alpha: 0.1),
-                  labelStyle: TextStyle(
-                    color: isSelected
-                        ? AppColors.primary
-                        : AppColors.textSecondary,
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _selectDateRange,
-                    icon: const Icon(Icons.date_range),
-                    label: Text(
-                      _selectedDateRange == null
-                          ? 'Select Date Range'
-                          : '${DateFormat('MMM d').format(_selectedDateRange!.start)} - ${DateFormat('MMM d').format(_selectedDateRange!.end)}',
-                      overflow: TextOverflow.ellipsis,
-                    ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _statusFilters.map((filter) {
+              final isSelected = _selectedStatus == filter['value'];
+              return ChoiceChip(
+                label: Text(filter['label'] ?? ''),
+                selected: isSelected,
+                onSelected: (_) {
+                  setState(() {
+                    _selectedStatus = filter['value'];
+                  });
+                  _loadOrders();
+                },
+                selectedColor: AppColors.primary.withValues(alpha: 0.1),
+                labelStyle: TextStyle(
+                  color: isSelected
+                      ? AppColors.primary
+                      : AppColors.textSecondary,
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _selectDateRange,
+                  icon: const Icon(Icons.date_range),
+                  label: Text(
+                    _selectedDateRange == null
+                        ? 'Select Date Range'
+                        : '${DateFormat('MMM d').format(_selectedDateRange!.start)} - ${DateFormat('MMM d').format(_selectedDateRange!.end)}',
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ],
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildOpsSummary() {
+    final awaitingPayment = _orders.where(_isAwaitingPayment).length;
+    final activeOrders = _orders.where((order) {
+      final status = _normalizedStatus(order['status']);
+      return !_isCancelled(status) && status != 'delivered';
+    }).length;
+
+    return ActiveFlowHeroCard(
+      eyebrow: 'Operations snapshot',
+      title: '${_orders.length} orders under watch',
+      subtitle:
+          'Track payment holds, rider assignment gaps, and status progression from one queue.',
+      metrics: [
+        ActiveFlowMetricPill(
+          label: 'Active',
+          value: '$activeOrders',
+          icon: Icons.timelapse_rounded,
+          inverted: true,
+        ),
+        ActiveFlowMetricPill(
+          label: 'Awaiting pay',
+          value: '$awaitingPayment',
+          icon: Icons.payments_outlined,
+          inverted: true,
+        ),
+        ActiveFlowMetricPill(
+          label: 'Failed delivery',
+          value: '$_failedDeliveryPendingCount',
+          icon: Icons.warning_amber_rounded,
+          inverted: true,
+        ),
+      ],
     );
   }
 

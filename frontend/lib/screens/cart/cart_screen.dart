@@ -13,6 +13,7 @@ import '../../widgets/cart/cart_bill_summary.dart';
 import '../../widgets/cart/cart_coupon_section.dart';
 import '../../widgets/cart/cart_floating_checkout.dart';
 import '../../widgets/cart/cart_item_tile.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/common/empty_state.dart';
 import '../../widgets/common/error_state.dart';
 import '../../widgets/common/shimmer_loader.dart';
@@ -310,18 +311,20 @@ class _CartScreenState extends State<CartScreen> {
     return Scaffold(
       resizeToAvoidBottomInset: true,
       backgroundColor: mv.surfaceWarm,
-      body: _isLoading
-          ? _buildLoadingState()
-          : _errorMessage != null
-              ? _buildErrorState()
-              : !hasItems
-                  ? _buildEmptyState()
-                  : Column(
-                      children: [
-                        _buildHeader(),
-                        Expanded(child: _buildCartContent()),
-                      ],
-                    ),
+      body: ActiveFlowBackground(
+        child: _isLoading
+            ? _buildLoadingState()
+            : _errorMessage != null
+                ? _buildErrorState()
+                : !hasItems
+                    ? _buildEmptyState()
+                    : Column(
+                        children: [
+                          _buildHeader(),
+                          Expanded(child: _buildCartContent()),
+                        ],
+                      ),
+      ),
     );
   }
 
@@ -411,40 +414,44 @@ class _CartScreenState extends State<CartScreen> {
 
   Widget _buildHeader() {
     final mv = context.meatvo;
-    final textTheme = Theme.of(context).textTheme;
+    final remainingForFreeDelivery =
+        (_freeDeliveryThreshold - _subtotal).clamp(0, double.infinity);
 
-    return Container(
-      width: double.infinity,
-      color: mv.surfaceWarm,
-      child: SafeArea(
-        bottom: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            mv.spacing.md,
-            mv.spacing.sm,
-            mv.spacing.md,
-            mv.spacing.sm,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Your Cart',
-                style: textTheme.headlineSmall?.copyWith(
-                  color: mv.textPrimary,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.4,
-                ),
-              ),
-              SizedBox(height: mv.spacing.xxs),
-              Text(
-                '($_itemCount ${_itemCount == 1 ? 'item' : 'items'})',
-                style: textTheme.bodyMedium?.copyWith(
-                  color: mv.textSecondary,
-                ),
-              ),
-            ],
-          ),
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          mv.spacing.md,
+          mv.spacing.sm,
+          mv.spacing.md,
+          mv.spacing.sm,
+        ),
+        child: ActiveFlowHeroCard(
+          eyebrow: 'Cart overview',
+          title: 'Your cart is almost ready',
+          subtitle: _pricing.isFreeDelivery
+              ? 'Free delivery is unlocked. Review the bill and move straight into checkout.'
+              : 'Add ₹${remainingForFreeDelivery.toStringAsFixed(0)} more to unlock free delivery before you place the order.',
+          metrics: [
+            ActiveFlowMetricPill(
+              label: 'Items',
+              value: '$_itemCount',
+              icon: Icons.shopping_bag_outlined,
+              inverted: true,
+            ),
+            ActiveFlowMetricPill(
+              label: 'Savings',
+              value: '₹${(_productDiscount + _couponDiscount).toStringAsFixed(0)}',
+              icon: Icons.sell_outlined,
+              inverted: true,
+            ),
+            ActiveFlowMetricPill(
+              label: 'Payable',
+              value: '₹${_total.toStringAsFixed(0)}',
+              icon: Icons.payments_outlined,
+              inverted: true,
+            ),
+          ],
         ),
       ),
     );

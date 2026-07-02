@@ -60,6 +60,7 @@ const mapCashfreeOrderStatus = (orderStatus) => {
 };
 
 const UNCONFIRMED_ORDER_STATUSES = new Set(['PLACED', 'PAYMENT_PENDING']);
+const CASHFREE_FAILURE_STATUSES = new Set(['FAILED', 'CANCELLED', 'EXPIRED']);
 
 const applyPaymentFailure = async (client, { paymentId, orderId, customerId, io }) => {
   await client.query(
@@ -90,7 +91,7 @@ const applyPaymentFailure = async (client, { paymentId, orderId, customerId, io 
   });
 };
 
-/** User cancelled SDK checkout — keep order retryable, mark payment as failed. */
+/** User cancelled SDK checkout — keep order retryable in PAYMENT_PENDING. */
 const applyPaymentAbandon = async (
   client,
   { paymentId, orderId, customerId, io, reason = 'user_abandoned' }
@@ -118,7 +119,7 @@ const applyPaymentAbandon = async (
     customerId,
     payload: {
       orderId,
-      status: 'PLACED',
+      status: 'PAYMENT_PENDING',
       paymentStatus: 'FAILED',
       message: 'Payment was not completed',
       reason,
@@ -392,6 +393,14 @@ const resolveSuccessfulCashfreePayment = async (orderId, storedAmount) => {
   return successfulPayment.cf_payment_id || successfulPayment.payment_id || null;
 };
 
+const resolveLiveCashfreeOrderStatus = async (orderId) => {
+  const liveStatus = await cashfreeService.getOrderStatus(String(orderId));
+  return {
+    ...liveStatus,
+    mappedStatus: mapCashfreeOrderStatus(liveStatus.order_status),
+  };
+};
+
 /**
  * @route GET /api/payments/cashfree/:orderId/status
  */
@@ -456,12 +465,21 @@ const getPaymentStatus = async (req, res) => {
     };
 
     if (status === 'PENDING' || status === 'INITIATED') {
-      const liveStatus = await cashfreeService.getOrderStatus(String(orderId));
-      const liveMapped = mapCashfreeOrderStatus(liveStatus.order_status);
+      const liveStatus = await resolveLiveCashfreeOrderStatus(orderId);
+      const liveMapped = liveStatus.mappedStatus;
       paymentSessionId = liveStatus.payment_session_id || paymentSessionId;
 
       if (liveMapped === 'SUCCESS') {
         await confirmIfPaidAtGateway();
+      } else if (CASHFREE_FAILURE_STATUSES.has(liveMapped)) {
+        await applyPaymentFailure(client, {
+          paymentId: payment.id,
+          orderId,
+          customerId: payment.customer_id,
+          io,
+        });
+        status = 'FAILED';
+        orderStatus = 'CANCELLED';
       } else {
         status = liveMapped;
       }
@@ -552,6 +570,19 @@ const verifyPayment = async (req, res) => {
       return ok(res, { verified: false, status: 'FAILED' }, 'Payment failed');
     }
 
+    const liveStatus = await resolveLiveCashfreeOrderStatus(orderId);
+    if (CASHFREE_FAILURE_STATUSES.has(liveStatus.mappedStatus)) {
+      const io = req.app.get('io');
+      await applyPaymentFailure(client, {
+        paymentId: payment.id,
+        orderId: payment.order_id,
+        customerId: payment.customer_id,
+        io,
+      });
+      await client.query('COMMIT');
+      return ok(res, { verified: false, status: 'FAILED' }, 'Payment failed');
+    }
+
     const payments = await cashfreeService.getPayments(String(orderId));
     const successfulPayment = payments.find(
       (entry) => String(entry.payment_status || '').toUpperCase() === 'SUCCESS'
@@ -609,7 +640,7 @@ const verifyPayment = async (req, res) => {
 
 /**
  * @route POST /api/payments/cashfree/abandon
- * User dismissed Cashfree checkout — order stays PLACED for retry.
+ * User dismissed Cashfree checkout — order stays PAYMENT_PENDING for retry.
  */
 const abandonPayment = async (req, res) => {
   const orderId = Number(req.body?.orderId);

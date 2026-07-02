@@ -1,11 +1,10 @@
 /**
- * Payment reconciliation — polls stale PENDING payments (PhonePe + Cashfree)
- * and applies success or cancels on failure.
+ * Payment reconciliation - polls stale Cashfree payments and applies success
+ * or cancels on failure.
  */
 
 const { query, getClient } = require('../db/postgres');
 const { logger } = require('../utils/logger');
-const phonepeService = require('../modules/payments/phonepe.service');
 const cashfreeService = require('../modules/payments/cashfree.service');
 const { applyPaymentSuccess } = require('../modules/payments/payment-success');
 const { resolveSuccessfulCashfreePayment } = require('../modules/payments/cashfree.controller');
@@ -51,82 +50,6 @@ async function cancelOrderForPaymentFailure(orderId, customerId, io, reason = 'p
 async function reconcileStalePayments(io = null) {
   let checked = 0;
   let updated = 0;
-
-  const { rows } = await query(
-    `SELECT pt.id, pt.order_id, pt.gateway_transaction_id, pt.status,
-            o.customer_id, o.payment_mode, o.status AS order_status
-     FROM payment_transactions pt
-     JOIN orders o ON o.id = pt.order_id
-     WHERE pt.status IN ('INITIATED', 'PENDING')
-       AND o.payment_mode = 'ONLINE'
-       AND o.status IN ('PLACED', 'PAYMENT_PENDING')
-       AND pt.created_at < NOW() - ($1::text || ' minutes')::interval
-     ORDER BY pt.created_at ASC
-     LIMIT 50`,
-    [String(DEFAULT_TIMEOUT_MINUTES)]
-  );
-
-  checked += rows.length;
-
-  for (const payment of rows) {
-    if (!payment.gateway_transaction_id) continue;
-
-    try {
-      const statusResponse = await phonepeService.checkPaymentStatus(payment.gateway_transaction_id);
-      if (!statusResponse.success) continue;
-
-      const state = statusResponse.data?.state;
-
-      if (state === 'COMPLETED') {
-        const client = await getClient();
-        try {
-          await client.query('BEGIN');
-          const result = await applyPaymentSuccess(client, {
-            paymentId: payment.id,
-            orderId: payment.order_id,
-            customerId: payment.customer_id,
-            io,
-            gatewayResponse: statusResponse.data,
-          });
-          if (result.applied) {
-            await client.query('COMMIT');
-            updated += 1;
-            logger.info('payment_reconcile_success', { orderId: payment.order_id });
-          } else {
-            await client.query('ROLLBACK');
-            logger.info('payment_reconcile_success_skipped', {
-              orderId: payment.order_id,
-              reason: result.reason,
-            });
-          }
-        } catch (err) {
-          try {
-            await client.query('ROLLBACK');
-          } catch (_) {
-            /* ignore rollback errors */
-          }
-          throw err;
-        } finally {
-          client.release();
-        }
-      } else if (state === 'FAILED') {
-        await query(
-          `UPDATE payment_transactions
-           SET status = 'FAILED', gateway_response = $1, updated_at = NOW()
-           WHERE id = $2`,
-          [JSON.stringify(statusResponse.data), payment.id]
-        );
-        await cancelOrderForPaymentFailure(payment.order_id, payment.customer_id, io);
-        updated += 1;
-        logger.info('payment_reconcile_failed_cancelled', { orderId: payment.order_id });
-      }
-    } catch (err) {
-      logger.error('payment_reconcile_item_failed', {
-        orderId: payment.order_id,
-        error: err.message,
-      });
-    }
-  }
 
   const { rows: cashfreeRows } = await query(
     `SELECT pt.id, pt.order_id, pt.amount, pt.gateway_order_id, pt.status,

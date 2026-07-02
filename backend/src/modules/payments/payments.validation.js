@@ -17,15 +17,9 @@ const getPaymentStatusSchema = z.object({
 });
 
 const verifyPaymentSchema = z.object({
-  body: z
-    .object({
-      transactionId: z.string().trim().min(1).optional(),
-      merchantTransactionId: z.string().trim().min(1).optional(),
-    })
-    .refine(
-      (body) => Boolean(body.transactionId || body.merchantTransactionId),
-      { message: 'transactionId or merchantTransactionId is required' }
-    ),
+  body: z.object({
+    orderId: z.coerce.number().int().positive(),
+  }),
   params: z.object({}).optional(),
   query: z.object({}).optional(),
 });

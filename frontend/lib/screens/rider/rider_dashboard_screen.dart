@@ -17,6 +17,7 @@ import '../../services/maps_service.dart';
 import '../../utils/role_access.dart';
 import '../../utils/role_access_exception.dart';
 import '../../widgets/skeletons/shimmer_base.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import 'rider_orders_screen.dart';
 import 'rider_profile_screen.dart';
 import 'batch_delivery_screen.dart';
@@ -805,64 +806,80 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
       resizeToAvoidBottomInset: true,
       backgroundColor: const Color(0xFFFAF9F7),
       body: SafeArea(
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(
-                  color: Color(0xFFC8102E),
-                ),
-              )
-            : _loadError != null && _riderProfile == null && _activeOrders.isEmpty
-                ? _buildLoadErrorState()
-                : Column(
-                children: [
-                  Expanded(
-                    child: RefreshIndicator(
-                      onRefresh: _loadDashboardData,
-                      color: const Color(0xFFC8102E),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildRiderInfoCardSimple(),
-                            const SizedBox(height: 12),
-                            _buildStatsCard(),
-                            const SizedBox(height: 20),
-                            if (_isLoadingOrders)
-                              const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 32),
-                                child: Center(
-                                  child: CircularProgressIndicator(
-                                    color: Color(0xFFC8102E),
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                              )
-                            else if (_ordersError != null)
-                              _buildOrdersErrorState()
-                            else if (_activeOrders.isEmpty)
-                              _buildEmptyState(isOnline)
-                            else ...[
-                              const Text(
-                                'Active Orders',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF1A1A1A),
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              ..._activeOrders.map((order) => _buildOrderCardNew(order)),
-                            ],
-                            const SizedBox(height: 24),
-                          ],
-                        ),
-                      ),
-                    ),
+        child: ActiveFlowBackground(
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(
+                    color: Color(0xFFC8102E),
                   ),
-                  _buildSwipeToggleBottom(isOnline),
-                ],
-              ),
+                )
+              : _loadError != null && _riderProfile == null && _activeOrders.isEmpty
+                  ? _buildLoadErrorState()
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: RefreshIndicator(
+                            onRefresh: _loadDashboardData,
+                            color: const Color(0xFFC8102E),
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildRiderInfoCardSimple(),
+                                  const SizedBox(height: 12),
+                                  _buildStatsCard(),
+                                  const SizedBox(height: 20),
+                                  if (_isLoadingOrders)
+                                    const Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 32),
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          color: Color(0xFFC8102E),
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                    )
+                                  else if (_ordersError != null)
+                                    _buildOrdersErrorState()
+                                  else if (_activeOrders.isEmpty)
+                                    _buildEmptyState(isOnline)
+                                  else ...[
+                                    ActiveFlowHeroCard(
+                                      eyebrow: 'Live assignment queue',
+                                      title: '${_activeOrders.length} active deliveries',
+                                      subtitle:
+                                          'Open the next order, confirm pickup, and keep the customer updated from one place.',
+                                      metrics: [
+                                        ActiveFlowMetricPill(
+                                          label: 'Status',
+                                          value: isOnline ? 'Online' : 'Offline',
+                                          icon: isOnline
+                                              ? Icons.toggle_on_rounded
+                                              : Icons.toggle_off_rounded,
+                                          inverted: true,
+                                        ),
+                                        ActiveFlowMetricPill(
+                                          label: 'Trips',
+                                          value: '${_activeOrders.length}',
+                                          icon: Icons.delivery_dining,
+                                          inverted: true,
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    ..._activeOrders.map((order) => _buildOrderCardNew(order)),
+                                  ],
+                                  const SizedBox(height: 24),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        _buildSwipeToggleBottom(isOnline),
+                      ],
+                    ),
+        ),
       ),
     );
   }
@@ -976,51 +993,36 @@ class _RiderDashboardScreenState extends ConsumerState<RiderDashboardScreen> {
                           'N/A';
     final initial = riderName.isNotEmpty ? riderName[0].toUpperCase() : 'R';
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundColor: const Color(0xFFC8102E),
-            child: Text(
-              initial,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 18,
-              ),
-            ),
+    return ActiveFlowHeroCard(
+      eyebrow: 'Rider profile',
+      title: riderName,
+      subtitle: 'Vehicle $vehicleNumber',
+      trailing: CircleAvatar(
+        radius: 22,
+        backgroundColor: Colors.white.withValues(alpha: 0.16),
+        child: Text(
+          initial,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontSize: 18,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  riderName,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF1A1A1A),
-                  ),
-                ),
-                Text(
-                  vehicleNumber,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF6B6B6B),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
+      metrics: [
+        ActiveFlowMetricPill(
+          label: 'Active orders',
+          value: '${_activeOrders.length}',
+          icon: Icons.route_rounded,
+          inverted: true,
+        ),
+        ActiveFlowMetricPill(
+          label: 'Status',
+          value: _getCurrentStatus() == 'available' ? 'Online' : 'Offline',
+          icon: Icons.online_prediction,
+          inverted: true,
+        ),
+      ],
     );
   }
 

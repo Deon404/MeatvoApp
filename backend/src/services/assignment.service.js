@@ -119,10 +119,13 @@ const activeAssignmentStatuses = activeAssignmentStatusSet;
 const persistPartnerAssignment = async (orderId, partnerId) => {
   await withTransaction(async (client) => {
     await client.query(
-      `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at)
-       VALUES ($1, $2, 'ASSIGNED', NOW())
+      `INSERT INTO order_assignments (order_id, delivery_partner_id, status, assigned_at, updated_at)
+       VALUES ($1, $2, 'ASSIGNED', NOW(), NOW())
        ON CONFLICT (order_id)
-       DO UPDATE SET delivery_partner_id = EXCLUDED.delivery_partner_id, status = 'ASSIGNED', assigned_at = NOW()`,
+       DO UPDATE SET delivery_partner_id = EXCLUDED.delivery_partner_id,
+                     status = 'ASSIGNED',
+                     assigned_at = NOW(),
+                     updated_at = NOW()`,
       [orderId, partnerId]
     );
   });

@@ -220,16 +220,6 @@ class PaymentService {
   }
 
   Future<void> _logCashfreeError(CFErrorResponse error, String orderId) async {
-    // Force print even in release mode for debugging (remove after root-cause found).
-    print('=== CASHFREE ERROR ===');
-    print('Message: ${error.getMessage()}');
-    print('Code: ${error.getCode()}');
-    print('Type: ${error.getType()}');
-    print('Status: ${error.getStatus()}');
-    print('Environment: $_cashfreeEnvironment');
-    print('OrderId: $orderId');
-    print('=== END CASHFREE ERROR ===');
-
     final details = <String, String?>{
       'orderId': orderId,
       'message': error.getMessage(),
@@ -503,9 +493,9 @@ class PaymentService {
   }
 
   Future<Map<String, dynamic>> verifyPayment({
-    required String transactionId,
+    required String orderId,
   }) =>
-      _verifyPaymentRequest(transactionId);
+      _verifyPaymentRequest(orderId);
 
   Future<Map<String, dynamic>> getPaymentStatusForOrder(String orderId) async {
     try {

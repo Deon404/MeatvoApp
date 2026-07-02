@@ -5,7 +5,7 @@ description: "Meatvo - Fresh Raw Meat Delivery App built with Flutter"
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
 
-version: 1.0.1+29
+version: 1.0.1+30
 
 environment:
   sdk: ^3.9.2
@@ -33,7 +33,7 @@ dependencies:
   # HTTP & API
   http: ^1.2.0
   dio: ^5.4.0
-  crypto: ^3.0.3  # For PhonePe checksum generation
+  crypto: ^3.0.3
   
   # Maps & Location
   google_maps_flutter: ^2.5.0  # Google Maps integration
@@ -42,7 +42,6 @@ dependencies:
   widget_to_marker: ^1.0.6
   
   # Payments
-  # phonepe_payment_sdk: ^2.0.1  # PhonePe payment gateway - Temporarily disabled, enable when PhonePe business account ready
   flutter_cashfree_pg_sdk: ^2.4.0+52
   
   # Notifications
@@ -75,7 +74,7 @@ dependencies:
   share_plus: ^7.2.2
   uuid: ^4.3.3
   
-  # Real-time (backend has socket.js — replaces Supabase Realtime)
+  # Real-time via backend Socket.IO
   socket_io_client: ^2.0.3+1
   web_socket_channel: ^2.4.0
 

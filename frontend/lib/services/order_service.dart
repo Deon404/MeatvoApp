@@ -151,6 +151,14 @@ class OrderService {
     if (m['payment_status'] != null) {
       m['payment_status'] = m['payment_status'].toString().toLowerCase();
     }
+    m['payment_id'] ??= m['paymentId'];
+    m['payment_id'] ??= m['gateway_payment_id'];
+    m['payment_id'] ??= m['gatewayPaymentId'];
+    m['payment_id'] ??= m['gateway_transaction_id'];
+    m['payment_id'] ??= m['gatewayTransactionId'];
+    m['payment_method_details'] ??= m['paymentMethodDetails'];
+    m['payment_method_details'] ??= m['gateway_response'];
+    m['payment_method_details'] ??= m['gatewayResponse'];
     m['delivery_address'] ??= m['deliveryAddress'];
     m['delivery_address'] ??= _normalizeAddress(m['address']);
     final addressObj = m['address'];

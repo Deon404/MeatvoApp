@@ -4,6 +4,7 @@ import '../../services/rider_service.dart';
 import '../../services/socket_service.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/skeletons/shimmer_base.dart';
 import 'rider_order_detail_screen.dart';
 
@@ -114,10 +115,12 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
           tabs: _tabs.map((t) => Tab(text: t)).toList(),
         ),
       ),
-      body: RefreshIndicator(
-        color: AppColors.primary,
-        onRefresh: _loadOrders,
-        child: _buildBody(filtered),
+      body: ActiveFlowBackground(
+        child: RefreshIndicator(
+          color: AppColors.primary,
+          onRefresh: _loadOrders,
+          child: _buildBody(filtered),
+        ),
       ),
     );
   }
@@ -197,20 +200,49 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      itemCount: filtered.length,
-      itemBuilder: (context, index) => _OrderCard(
-        assignment: filtered[index],
-        onTap: () async {
-          final assignmentId = filtered[index]['id']?.toString() ?? '';
-          if (assignmentId.isEmpty) return;
-          await Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => RiderOrderDetailScreen(assignmentId: assignmentId),
+      itemCount: filtered.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: ActiveFlowHeroCard(
+              eyebrow: 'Orders overview',
+              title: '${filtered.length} ${_tabs[_tabController.index].toLowerCase()} orders',
+              subtitle:
+                  'Switch between live deliveries, completed work, and the full assignment history without leaving this queue.',
+              metrics: [
+                ActiveFlowMetricPill(
+                  label: 'Active',
+                  value: '${_orders.where((a) => (a['status'] as String? ?? '').toLowerCase() != 'delivered' && (a['status'] as String? ?? '').toLowerCase() != 'cancelled').length}',
+                  icon: Icons.delivery_dining,
+                  inverted: true,
+                ),
+                ActiveFlowMetricPill(
+                  label: 'Completed',
+                  value: '${_orders.where((a) => (a['status'] as String? ?? '').toLowerCase() == 'delivered').length}',
+                  icon: Icons.check_circle_outline,
+                  inverted: true,
+                ),
+              ],
             ),
           );
-          if (mounted) await _loadOrders();
-        },
-      ),
+        }
+
+        final assignment = filtered[index - 1];
+        return _OrderCard(
+          assignment: assignment,
+          onTap: () async {
+            final assignmentId = assignment['id']?.toString() ?? '';
+            if (assignmentId.isEmpty) return;
+            await Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => RiderOrderDetailScreen(assignmentId: assignmentId),
+              ),
+            );
+            if (mounted) await _loadOrders();
+          },
+        );
+      },
     );
   }
 }
@@ -242,20 +274,16 @@ class _OrderCard extends StatelessWidget {
       _ => (AppColors.primary, status),
     };
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: accent.withValues(alpha: 0.25)),
-            ),
+          borderRadius: BorderRadius.circular(20),
+          child: ActiveFlowSurfaceCard(
+            borderColor: accent.withValues(alpha: 0.2),
+            borderRadius: 20,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -276,7 +304,7 @@ class _OrderCard extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         color: accent.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         label,
@@ -307,7 +335,7 @@ class _OrderCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     Text(

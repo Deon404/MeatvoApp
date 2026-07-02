@@ -25,6 +25,7 @@ import '../../widgets/checkout/checkout_payment_types.dart';
 import '../../widgets/checkout/checkout_place_order_bar.dart';
 import '../../widgets/checkout/checkout_quick_pay_sheet.dart';
 import '../../widgets/checkout/checkout_success_overlay.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/location/delivery_location_sheet.dart';
 import '../../widgets/store/store_closed_sheet.dart';
 import '../orders/order_confirmation_screen.dart';
@@ -71,6 +72,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _showSuccessOverlay = false;
   String? _errorMessage;
   String? _placeOrderError;
+  String? _couponCode;
+  double _couponDiscount = 0;
 
   CheckoutPaymentOption? _paymentOption;
   CheckoutUpiSelection _upiSelection = CheckoutUpiSelection.nativePicker;
@@ -95,7 +98,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   OrderPricingBreakdown get _pricing => OrderPricingCalculator.calculate(
         subtotal: _activeCart.subtotal,
-        discount: _productDiscount + widget.couponDiscount,
+        discount: _productDiscount + _couponDiscount,
         deliveryChargeAmount: _deliveryFeeAmount,
         freeDeliveryThreshold: _freeDeliveryThreshold,
       );
@@ -109,6 +112,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     super.initState();
     _cart = widget.cart;
     _selectedAddress = widget.selectedAddress;
+    _couponCode = widget.couponCode;
+    _couponDiscount = widget.couponDiscount;
     _loadAddresses();
     _loadStoreStatus(showClosedSheet: true);
     _syncCartFromServer();
@@ -442,22 +447,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (context.mounted) setState(() => _cart = cart);
 
       // Re-validate coupon if one was applied
-      double effectiveCouponDiscount = widget.couponDiscount;
-      if (widget.couponCode != null && widget.couponCode!.isNotEmpty) {
+      double effectiveCouponDiscount = _couponDiscount;
+      if (_couponCode != null && _couponCode!.isNotEmpty) {
         final couponResult = await CouponService().validateCoupon(
-          widget.couponCode!,
+          _couponCode!,
           cart.subtotal,
         );
         if (!mounted) return;
         if (!couponResult.isValid) {
-          setState(() => _isPlacingOrder = false);
+          final invalidCoupon = _couponCode;
+          setState(() {
+            _isPlacingOrder = false;
+            _couponCode = null;
+            _couponDiscount = 0;
+          });
           _showMessage(
-            'Your coupon "${widget.couponCode}" is no longer valid: '
+            'Your coupon "${invalidCoupon ?? ""}" is no longer valid: '
             '${couponResult.errorMessage ?? "Please remove it and try again."}',
           );
           return;
         }
         effectiveCouponDiscount = couponResult.discountAmount;
+        if (_couponDiscount != effectiveCouponDiscount) {
+          setState(() => _couponDiscount = effectiveCouponDiscount);
+        }
       }
 
       final validation = await _deliveryService.validateDeliveryAddress(
@@ -490,7 +503,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         cart: cart,
         deliveryAddress: deliveryAddressJson,
         paymentMethod: _paymentMethod,
-        couponCode: widget.couponCode,
+        couponCode: _couponCode,
       );
 
       if (!mounted) return;
@@ -596,85 +609,89 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                         message: _errorMessage,
                         onRetry: _loadAddresses,
                       )
-                    : SingleChildScrollView(
-                        padding: const EdgeInsets.only(bottom: 150),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (_addresses.isEmpty)
-                                EmptyStateWidget(
-                                  title: 'No saved address',
-                                  message:
-                                      'Add a delivery address to continue checkout.',
-                                  buttonLabel: 'Add address',
-                                  onAction: _openAddAddress,
-                                  fullScreen: false,
-                                )
-                              else ...[
-                                CheckoutOrderSummary(
-                                  subtotal: _subtotal,
-                                  productDiscount: _productDiscount,
-                                  couponDiscount: widget.couponDiscount,
-                                  deliveryCharge: _calculatedDeliveryCharge,
-                                  total: _total,
-                                ),
-                                const SizedBox(height: 20),
-                                const CheckoutCancellationPolicy(),
-                                const SizedBox(height: 20),
-                                if (_storeStatusError) ...[
-                                  Container(
-                                    width: double.infinity,
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.warning_amber_rounded,
-                                          color: const Color(0xFFF59E0B),
-                                          size: 20,
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            'Unable to verify store status. Please try again.',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .bodySmall
-                                                ?.copyWith(
-                                                  color: mv.textPrimary,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                    : ActiveFlowBackground(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.only(bottom: 150),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (_addresses.isEmpty)
+                                  EmptyStateWidget(
+                                    title: 'No saved address',
+                                    message:
+                                        'Add a delivery address to continue checkout.',
+                                    buttonLabel: 'Add address',
+                                    onAction: _openAddAddress,
+                                    fullScreen: false,
+                                  )
+                                else ...[
+                                  _buildCheckoutHero(canPlaceOrder),
+                                  const SizedBox(height: 20),
+                                  CheckoutOrderSummary(
+                                    subtotal: _subtotal,
+                                    productDiscount: _productDiscount,
+                                    couponDiscount: _couponDiscount,
+                                    deliveryCharge: _calculatedDeliveryCharge,
+                                    total: _total,
                                   ),
                                   const SizedBox(height: 20),
+                                  const CheckoutCancellationPolicy(),
+                                  const SizedBox(height: 20),
+                                  if (_storeStatusError) ...[
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(12),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: const Color(0xFFF59E0B).withValues(alpha: 0.35),
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.warning_amber_rounded,
+                                            color: const Color(0xFFF59E0B),
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Text(
+                                              'Unable to verify store status. Please try again.',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                    color: mv.textPrimary,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 20),
+                                  ],
+                                  CheckoutDeliverySection(
+                                    selectedAddress: _selectedAddress,
+                                    isEmptyAddress: _selectedAddress == null,
+                                    onChangeAddress: _selectAddress,
+                                    onAddAddress: _openAddAddress,
+                                    isStoreOpen: _isStoreOpen,
+                                    storeClosedMessage: _isStoreOpen
+                                        ? null
+                                        : (_storeStatus?.displayClosedMessage ??
+                                            'We are not accepting orders right now — please check back soon.'),
+                                  ),
                                 ],
-                                CheckoutDeliverySection(
-                                  selectedAddress: _selectedAddress,
-                                  isEmptyAddress: _selectedAddress == null,
-                                  onChangeAddress: _selectAddress,
-                                  onAddAddress: _openAddAddress,
-                                  isStoreOpen: _isStoreOpen,
-                                  storeClosedMessage: _isStoreOpen
-                                      ? null
-                                      : (_storeStatus?.displayClosedMessage ??
-                                          'We are not accepting orders right now — please check back soon.'),
-                                ),
                               ],
-                            ],
+                            ),
                           ),
                         ),
                       ),
@@ -709,6 +726,41 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ? 'Opening secure payment…'
                 : 'Your fresh order is on its way.',
           ),
+      ],
+    );
+  }
+
+  Widget _buildCheckoutHero(bool canPlaceOrder) {
+    final addressLabel = _selectedAddress?.label.name ?? 'Address pending';
+    final paymentLabel = _paymentOption?.label ?? 'Choose payment';
+
+    return ActiveFlowHeroCard(
+      eyebrow: 'Review before you place the order',
+      title: canPlaceOrder
+          ? 'Everything is lined up for payment'
+          : 'One more step before we place this order',
+      subtitle: canPlaceOrder
+          ? 'Confirm the address, review the bill, and pay with your preferred method.'
+          : 'Finish the delivery setup below so the order can move straight into confirmation.',
+      metrics: [
+        ActiveFlowMetricPill(
+          label: 'Address',
+          value: addressLabel,
+          icon: Icons.location_on_outlined,
+          inverted: true,
+        ),
+        ActiveFlowMetricPill(
+          label: 'Payment',
+          value: paymentLabel,
+          icon: Icons.payments_outlined,
+          inverted: true,
+        ),
+        ActiveFlowMetricPill(
+          label: 'Total',
+          value: '₹${_total.toStringAsFixed(0)}',
+          icon: Icons.receipt_long_outlined,
+          inverted: true,
+        ),
       ],
     );
   }

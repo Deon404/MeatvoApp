@@ -10,6 +10,7 @@ import '../../config/store_config.dart';
 import '../../utils/address_display_util.dart';
 import '../../utils/order_display_util.dart';
 import '../../utils/responsive_helper.dart';
+import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/maps/rider_location_tracker.dart';
 import '../../widgets/maps/rider_navigation_map.dart';
 import 'batch_delivery_screen.dart';
@@ -925,45 +926,47 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(
-                  color: Color(0xFFC8102E),
-                ),
-              )
-            : _errorMessage != null
-                ? _buildErrorState()
-                : _assignment == null
-                    ? _buildEmptyState()
-                    : Column(
-                        children: [
-                          Expanded(
-                            child: RefreshIndicator(
-                              onRefresh: _loadOrderDetails,
-                              color: const Color(0xFFC8102E),
-                              child: SingleChildScrollView(
-                                padding: const EdgeInsets.all(16),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildTopCard(),
-                                    const SizedBox(height: 12),
-                                    _buildAddressCard(),
-                                    const SizedBox(height: 12),
-                                    _buildPaymentCard(),
-                                    const SizedBox(height: 12),
-                                    _buildOrderItemsCard(),
-                                    const SizedBox(height: 12),
-                                    _buildNavigateButton(),
-                                    const SizedBox(height: 80),
-                                  ],
+        child: ActiveFlowBackground(
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(
+                    color: Color(0xFFC8102E),
+                  ),
+                )
+              : _errorMessage != null
+                  ? _buildErrorState()
+                  : _assignment == null
+                      ? _buildEmptyState()
+                      : Column(
+                          children: [
+                            Expanded(
+                              child: RefreshIndicator(
+                                onRefresh: _loadOrderDetails,
+                                color: const Color(0xFFC8102E),
+                                child: SingleChildScrollView(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      _buildTopCard(),
+                                      const SizedBox(height: 12),
+                                      _buildAddressCard(),
+                                      const SizedBox(height: 12),
+                                      _buildPaymentCard(),
+                                      const SizedBox(height: 12),
+                                      _buildOrderItemsCard(),
+                                      const SizedBox(height: 12),
+                                      _buildNavigateButton(),
+                                      const SizedBox(height: 80),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                          _buildStickyBottom(),
-                        ],
-                      ),
+                            _buildStickyBottom(),
+                          ],
+                        ),
+        ),
       ),
     );
   }
@@ -986,65 +989,65 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
         ?.toString()
         .trim();
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(
-                topLabel,
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFF6B6B6B),
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFC8102E).withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  badgeText,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFFC8102E),
-                  ),
-                ),
-              ),
-            ],
+    return ActiveFlowHeroCard(
+      eyebrow: topLabel,
+      title: '#${formatOrderDisplayId(orderId)}',
+      subtitle: _buildTopCardSubtitle(resolvedStatus),
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          badgeText,
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
           ),
-          const SizedBox(height: 8),
-          Text(
-            '#${formatOrderDisplayId(orderId)}',
-            style: const TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF1A1A1A),
-            ),
-          ),
-          if (customerName != null && customerName.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              customerName,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1A1A1A),
-              ),
-            ),
-          ],
-        ],
+        ),
       ),
+      metrics: [
+        if (customerName != null && customerName.isNotEmpty)
+          ActiveFlowMetricPill(
+            label: 'Customer',
+            value: customerName,
+            icon: Icons.person_outline,
+            inverted: true,
+          ),
+        ActiveFlowMetricPill(
+          label: 'Flow',
+          value: resolvedStatus.replaceAll('_', ' '),
+          icon: Icons.route_outlined,
+          inverted: true,
+        ),
+      ],
     );
+  }
+
+  String _buildTopCardSubtitle(String resolvedStatus) {
+    final statusLabel = resolvedStatus.replaceAll('_', ' ');
+    switch (resolvedStatus) {
+      case 'preparing':
+        return 'The store is still packing this order. Stay nearby and wait for pickup readiness.';
+      case 'assigned':
+        return 'This assignment is waiting for acceptance. Review the details and respond quickly.';
+      case 'accepted':
+        return 'The order has been accepted. Head to the store and prepare for pickup.';
+      case 'picked_up':
+        return 'Items are collected. Keep the customer updated and move toward the drop point.';
+      case 'on_the_way':
+        return 'You are en route to the customer. Navigation and proof-of-delivery actions are below.';
+      case 'awaiting_return':
+        return 'The order needs to be returned to the store so the manager can resolve it.';
+      case 'return_confirmed':
+        return 'Return has been confirmed. The store team will take it from here.';
+      case 'delivered':
+        return 'Delivery is complete. The trip is closed and recorded in history.';
+      default:
+        return 'Current status: $statusLabel. Follow the next action to keep the trip moving.';
+    }
   }
 
   Future<void> _handleContactCall(String phone) async {
@@ -1461,14 +1464,17 @@ class _RiderOrderDetailScreenState extends State<RiderOrderDetailScreen> {
     final status = _resolveActionStatus();
 
     return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       padding: const EdgeInsets.all(16),
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFF0DFDB)),
+        boxShadow: const [
           BoxShadow(
             color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, -2),
+            blurRadius: 16,
+            offset: Offset(0, 4),
           ),
         ],
       ),
