@@ -3,9 +3,6 @@ import 'package:flutter/services.dart';
 
 import '../../design_system/tokens/meatvo_colors.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
-import '../../screens/checkout/checkout_payment_options_screen.dart';
-import '../../services/payment_service.dart';
-import 'checkout_payment_methods.dart';
 import 'checkout_payment_types.dart';
 
 /// Result from quick-pay sheet when user confirms payment.
@@ -28,20 +25,17 @@ class CheckoutQuickPaySheet extends StatefulWidget {
     required this.total,
     required this.initialUpiSelection,
     this.initialUpiPackageId,
-    this.paymentService,
   });
 
   final double total;
   final CheckoutUpiSelection initialUpiSelection;
   final String? initialUpiPackageId;
-  final PaymentService? paymentService;
 
   static Future<CheckoutQuickPayResult?> show(
     BuildContext context, {
     required double total,
     CheckoutUpiSelection upiSelection = CheckoutUpiSelection.nativePicker,
     String? upiPackageId,
-    PaymentService? paymentService,
   }) {
     return showModalBottomSheet<CheckoutQuickPayResult>(
       context: context,
@@ -51,7 +45,6 @@ class CheckoutQuickPaySheet extends StatefulWidget {
         total: total,
         initialUpiSelection: upiSelection,
         initialUpiPackageId: upiPackageId,
-        paymentService: paymentService,
       ),
     );
   }
@@ -63,57 +56,16 @@ class CheckoutQuickPaySheet extends StatefulWidget {
 class _CheckoutQuickPaySheetState extends State<CheckoutQuickPaySheet> {
   late CheckoutUpiSelection _upiSelection;
   String? _upiPackageId;
-  String _methodLabel = 'Pay Online';
-  List<InstalledUpiApp> _installedApps = const [];
+  late String _methodLabel;
 
   @override
   void initState() {
     super.initState();
-    _upiSelection = widget.initialUpiSelection;
-    _upiPackageId = widget.initialUpiPackageId;
-    _loadUpiApps();
-  }
-
-  Future<void> _loadUpiApps() async {
-    final service = widget.paymentService ?? PaymentService();
-    final apps = await service.getInstalledUpiApps();
-    if (!mounted) return;
-    setState(() {
-      _installedApps = apps;
-      _methodLabel = _resolveMethodLabel(apps);
-    });
-  }
-
-  String _resolveMethodLabel(List<InstalledUpiApp> apps) {
-    if (_upiSelection == CheckoutUpiSelection.installedApp &&
-        _upiPackageId != null) {
-      final match = apps.where((a) => a.packageId == _upiPackageId);
-      if (match.isNotEmpty) return match.first.displayName;
-    }
-    if (_upiSelection == CheckoutUpiSelection.nativePicker) {
-      return 'All UPI apps';
-    }
-    return 'Pay Online';
-  }
-
-  Future<void> _openMoreOptions() async {
-    final result = await Navigator.of(context).push<CheckoutPaymentOptionsResult>(
-      MaterialPageRoute(
-        builder: (_) => CheckoutPaymentOptionsScreen(
-          total: widget.total,
-          initialOption: CheckoutPaymentOption.online,
-          initialUpiSelection: _upiSelection,
-          initialUpiPackageId: _upiPackageId,
-          paymentService: widget.paymentService,
-        ),
-      ),
-    );
-    if (result == null || !mounted) return;
-    setState(() {
-      _upiSelection = result.upiSelection;
-      _upiPackageId = result.upiPackageId;
-      _methodLabel = _resolveMethodLabel(_installedApps);
-    });
+    // Let Cashfree own UPI app detection and logos instead of maintaining
+    // a custom app picker in-app.
+    _upiSelection = CheckoutUpiSelection.nativePicker;
+    _upiPackageId = null;
+    _methodLabel = 'UPI apps in Cashfree';
   }
 
   void _confirmPay() {
@@ -178,42 +130,52 @@ class _CheckoutQuickPaySheetState extends State<CheckoutQuickPaySheet> {
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _upiPackageId != null
-                    ? upiAppAvatar(_upiPackageId!, _methodLabel, size: 28)
-                    : Container(
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: mv.brandPrimary.withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.apps_rounded,
-                          size: 16,
-                          color: mv.brandPrimary,
-                        ),
-                      ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    _methodLabel,
-                    style: textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: mv.brandPrimary.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.account_balance_wallet_outlined,
+                    size: 16,
+                    color: mv.brandPrimary,
                   ),
                 ),
-                GestureDetector(
-                  onTap: _openMoreOptions,
-                  child: Text(
-                    'More Options',
-                    style: textTheme.labelLarge?.copyWith(
-                      color: mv.brandPrimary,
-                      fontWeight: FontWeight.w700,
-                    ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _methodLabel,
+                        style: textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Cashfree will detect installed UPI apps automatically.',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: mv.textMuted,
+                          height: 1.35,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
+            ),
+          ),
+          SizedBox(height: mv.spacing.sm),
+          Text(
+            'Cards, netbanking and more payment methods stay available inside Cashfree checkout.',
+            style: textTheme.bodySmall?.copyWith(
+              color: mv.textMuted,
+              height: 1.4,
             ),
           ),
           SizedBox(height: mv.spacing.lg),
@@ -230,7 +192,7 @@ class _CheckoutQuickPaySheetState extends State<CheckoutQuickPaySheet> {
                 ),
               ),
               child: Text(
-                'Pay',
+                'Continue to Cashfree',
                 style: textTheme.titleSmall?.copyWith(
                   color: MeatvoColors.white,
                   fontWeight: FontWeight.w700,

@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../constants/home_strings.dart';
@@ -12,12 +15,14 @@ import '../../ui/shells/meatvo_layout.dart';
 import '../../ui/shells/offline_banner.dart';
 import '../../design_system/theme/meatvo_theme_extensions.dart';
 import '../../utils/app_transitions.dart';
+import '../../utils/media_url_resolver.dart';
 import '../../utils/responsive_helper.dart';
 import '../../providers/store_settings_provider.dart';
 import '../../viewmodels/home_provider.dart';
 import '../../viewmodels/home_state.dart';
 import '../../widgets/home/home_body.dart';
 import '../../widgets/location/delivery_location_sheet.dart';
+import '../../widgets/skeletons/home_content_skeleton.dart';
 import '../../widgets/active_flow/active_flow_shell.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
@@ -39,6 +44,9 @@ class HomeScreen extends ConsumerStatefulWidget {
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
   bool _wasOffline = false;
+  bool _warmupAttempted = false;
+  bool _imageWarmupInFlight = false;
+  bool _firstImageWarmupDone = false;
 
   @override
   void initState() {
@@ -69,12 +77,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     R.init(context);
     ref.listen<HomeState>(homeViewModelProvider, (previous, next) {
       final message = next.cartErrorMessage;
-      if (message == null || previous?.cartErrorMessage == message || !mounted) {
+      if (message == null ||
+          previous?.cartErrorMessage == message ||
+          !mounted) {
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
       ref.read(homeViewModelProvider.notifier).clearCartError();
     });
 
@@ -88,8 +98,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     final state = ref.watch(homeViewModelProvider);
     final offline = ref.watch(isOfflineProvider).value ?? false;
+    final shouldWarmInitialImages =
+        !_firstImageWarmupDone &&
+        !_warmupAttempted &&
+        !state.isInitialLoading &&
+        state.hasContent;
+    if (shouldWarmInitialImages) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_warmHomeImages(state));
+      });
+    }
 
     final bottomPad = MeatvoLayout.homeScrollBottomInset(context);
+    final showInitialImageCover =
+        !_firstImageWarmupDone &&
+        ((state.isInitialLoading && !state.hasContent) ||
+            (state.hasContent && (!_warmupAttempted || _imageWarmupInFlight)));
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -149,6 +174,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   ],
                 ),
               ),
+              if (showInitialImageCover)
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: ColoredBox(
+                      color: Colors.white,
+                      child: SafeArea(
+                        top: false,
+                        bottom: true,
+                        child: HomeContentSkeleton(),
+                      ),
+                    ),
+                  ),
+                ),
               if (offline) const OfflineBanner(),
             ],
           ),
@@ -221,7 +259,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final name = category.name.trim();
     if (name.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This category is not available right now.')),
+        const SnackBar(
+          content: Text('This category is not available right now.'),
+        ),
       );
       return;
     }
@@ -236,10 +276,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     ProductWithVariants? initialProduct,
   }) async {
     await context.pushScale(
-      ProductDetailScreen(
-        productId: productId,
-        initialProduct: initialProduct,
-      ),
+      ProductDetailScreen(productId: productId, initialProduct: initialProduct),
     );
     if (mounted) {
       await ref.read(homeViewModelProvider.notifier).refreshCart();
@@ -247,10 +284,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   Future<void> _openProduct(ProductWithVariants product) async {
-    await _openProductId(
-      product.product.id,
-      initialProduct: product,
-    );
+    await _openProductId(product.product.id, initialProduct: product);
   }
 
   String _locationTitle(HomeState state) {
@@ -273,7 +307,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     final landmark = address.landmark?.trim() ?? '';
     if (landmark.isNotEmpty) {
-      return landmark.length <= 20 ? landmark : '${landmark.substring(0, 20)}...';
+      return landmark.length <= 20
+          ? landmark
+          : '${landmark.substring(0, 20)}...';
     }
 
     final local = address.shortAddress.trim();
@@ -282,5 +318,78 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
 
     return HomeStrings.selectLocation;
+  }
+
+  Future<void> _warmHomeImages(HomeState state) async {
+    if (_warmupAttempted || _firstImageWarmupDone || !mounted) return;
+
+    final urls = _collectWarmupImageUrls(state);
+    setState(() {
+      _warmupAttempted = true;
+      _imageWarmupInFlight = urls.isNotEmpty;
+    });
+
+    if (urls.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _firstImageWarmupDone = true;
+        _imageWarmupInFlight = false;
+      });
+      return;
+    }
+
+    try {
+      final warmup = Future.wait(
+        urls.map((url) async {
+          final cacheKey = MediaUrlResolver.cacheKey(url);
+          try {
+            await precacheImage(
+              CachedNetworkImageProvider(url, cacheKey: cacheKey),
+              context,
+            );
+          } catch (_) {
+            // Best-effort only; the product card still renders its fallback.
+          }
+        }),
+      );
+
+      await warmup.timeout(const Duration(milliseconds: 1800));
+    } catch (_) {
+      // Slow networks should not keep the home screen blocked forever.
+    } finally {
+      if (mounted) {
+        setState(() {
+          _imageWarmupInFlight = false;
+          _firstImageWarmupDone = true;
+        });
+      }
+    }
+  }
+
+  List<String> _collectWarmupImageUrls(HomeState state) {
+    final urls = <String>[];
+    final seen = <String>{};
+
+    void addProduct(ProductWithVariants item) {
+      final resolved = MediaUrlResolver.resolve(item.product.primaryImageUrl);
+      if (resolved == null || resolved.isEmpty) return;
+      final key = MediaUrlResolver.cacheKey(resolved) ?? resolved;
+      if (seen.add(key)) {
+        urls.add(resolved);
+      }
+    }
+
+    for (final product in state.bestSellingProducts.take(4)) {
+      addProduct(product);
+    }
+    for (final product in state.featuredProducts.take(4)) {
+      addProduct(product);
+    }
+    for (final product in state.allProducts.take(8)) {
+      addProduct(product);
+      if (urls.length >= 8) break;
+    }
+
+    return urls;
   }
 }

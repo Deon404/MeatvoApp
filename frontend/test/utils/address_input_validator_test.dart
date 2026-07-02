@@ -9,6 +9,7 @@ void main() {
       expect(AddressInputValidator.validateHouseNumber('Flat 302'), isNull);
       expect(AddressInputValidator.validateHouseNumber('H.No. 12A'), isNull);
       expect(AddressInputValidator.validateHouseNumber('H7'), isNull);
+      expect(AddressInputValidator.validateHouseNumber('Rose Villa'), isNull);
     });
 
     test('rejects gibberish house numbers', () {
@@ -19,6 +20,21 @@ void main() {
       expect(
         AddressInputValidator.validateHouseNumber('wueh'),
         isNotNull,
+      );
+    });
+
+    test('returns customer-friendly validation messages', () {
+      expect(
+        AddressInputValidator.validateFloor('@@'),
+        "Use only letters, numbers, spaces, and common symbols like - / # . , ( ) ' &",
+      );
+      expect(
+        AddressInputValidator.validateTowerBlock('A' * 41),
+        'Tower or block details are too long. Please keep them under 40 characters.',
+      );
+      expect(
+        AddressInputValidator.validateLandmark('ab'),
+        'Please enter a clearer nearby landmark.',
       );
     });
 

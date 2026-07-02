@@ -37,6 +37,7 @@ import '../../theme/app_theme.dart' show AppThemeColors;
 /// Product Detail Screen - Full product information with variants and add to cart
 class ProductDetailScreen extends ConsumerStatefulWidget {
   static const _imageHeight = 260.0;
+  static const _sheetOverlap = 28.0;
   final String productId;
   final ProductWithVariants? initialProduct;
 
@@ -47,7 +48,8 @@ class ProductDetailScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<ProductDetailScreen> createState() => _ProductDetailScreenState();
+  ConsumerState<ProductDetailScreen> createState() =>
+      _ProductDetailScreenState();
 }
 
 class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
@@ -171,8 +173,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
 
   Future<void> _toggleWishlist() async {
     HapticFeedback.lightImpact();
-    final wasInWishlist =
-        ref.read(wishlistProvider).contains(widget.productId);
+    final wasInWishlist = ref.read(wishlistProvider).contains(widget.productId);
 
     try {
       await ref.read(wishlistProvider.notifier).toggle(widget.productId);
@@ -200,13 +201,17 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       );
     }
   }
+
   Future<void> _loadProductRating() async {
     if (_product == null) return;
     try {
-      final ratingData = await _productService.getProductRating(widget.productId);
+      final ratingData = await _productService.getProductRating(
+        widget.productId,
+      );
       if (!mounted) return;
       setState(() {
-        _averageRating = (ratingData['averageRating'] as num?)?.toDouble() ?? 0.0;
+        _averageRating =
+            (ratingData['averageRating'] as num?)?.toDouble() ?? 0.0;
         _reviewCount = ratingData['reviewCount'] as int? ?? 0;
       });
     } catch (_) {
@@ -343,13 +348,17 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
         );
       }
 
-      final refreshedCart = await _cartService.getCart().catchError((_) => _cart);
+      final refreshedCart = await _cartService.getCart().catchError(
+        (_) => _cart,
+      );
       if (!mounted) return;
       setState(() {
         _cart = refreshedCart;
       });
     } catch (e) {
-      final refreshedCart = await _cartService.getCart().catchError((_) => _cart);
+      final refreshedCart = await _cartService.getCart().catchError(
+        (_) => _cart,
+      );
       if (!mounted) return;
       setState(() => _cart = refreshedCart);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -407,8 +416,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         message: err.toString().replaceFirst('Exception: ', ''),
                         buttonLabel: 'Retry',
                         icon: Icons.error_outline,
-                        onRetry: () =>
-                            ref.refresh(productDetailProvider(widget.productId)),
+                        onRetry: () => ref.refresh(
+                          productDetailProvider(widget.productId),
+                        ),
                       );
                     },
                     data: (product) {
@@ -430,9 +440,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               context,
               hasBottomBar: hasBottomBar,
             ),
-            child: FloatingCartBar(
-              onViewCartTapped: _openCart,
-            ),
+            child: FloatingCartBar(onViewCartTapped: _openCart),
           ),
         ],
       ),
@@ -451,204 +459,256 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     final product = activeProduct.product;
     final isInWishlist = ref.watch(wishlistProvider).contains(widget.productId);
     final description = (product.description ?? '').trim();
-    final resolvedVariant =
-        _selectedVariant ?? _defaultVariant(activeProduct);
+    final resolvedVariant = _selectedVariant ?? _defaultVariant(activeProduct);
     final currentPrice = _priceFor(activeProduct, variant: resolvedVariant);
-    final originalPrice = _originalPriceFor(activeProduct, variant: resolvedVariant);
-    final showOriginalPrice = product.hasDiscount && originalPrice > currentPrice;
+    final originalPrice = _originalPriceFor(
+      activeProduct,
+      variant: resolvedVariant,
+    );
+    final showOriginalPrice =
+        product.hasDiscount && originalPrice > currentPrice;
     final categoryName = (product.categoryName ?? '').trim();
     final bottomInset = MeatvoLayout.productDetailScrollBottomInset(context);
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  mv.brandAccent.withValues(alpha: 0.18),
-                  mv.surfaceWarm,
-                  mv.surfaceWarm,
-                ],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final sheetHeight = constraints.maxHeight <= 0
+            ? MediaQuery.sizeOf(context).height
+            : constraints.maxHeight;
+        // Keep the sheet visually attached to the hero image across screen sizes.
+        final collapsedSheetSize =
+            (1 -
+                    ((ProductDetailScreen._imageHeight -
+                            ProductDetailScreen._sheetOverlap) /
+                        sheetHeight))
+                .clamp(0.62, 0.74)
+                .toDouble();
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      mv.brandAccent.withValues(alpha: 0.18),
+                      mv.surfaceWarm,
+                      mv.surfaceWarm,
+                    ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-        Align(
-          alignment: Alignment.topCenter,
-          child: SizedBox(
-            height: ProductDetailScreen._imageHeight,
-            width: double.infinity,
-            child: _buildProductImage(activeProduct, isInWishlist: isInWishlist),
-          ),
-        ),
-        DraggableScrollableSheet(
-          initialChildSize: 0.55,
-          minChildSize: 0.5,
-          maxChildSize: 0.92,
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: mv.surfaceCard,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                height: ProductDetailScreen._imageHeight,
+                width: double.infinity,
+                child: _buildProductImage(
+                  activeProduct,
+                  isInWishlist: isInWishlist,
+                ),
               ),
-              child: RefreshIndicator(
-                onRefresh: () => _loadProduct(forceRefresh: true),
-                color: mv.brandAccent,
-                child: ListView(
-                  controller: scrollController,
-                  physics: const BouncingScrollPhysics(
-                    parent: AlwaysScrollableScrollPhysics(),
-                  ),
-                  padding: EdgeInsets.fromLTRB(20, 16, 20, bottomInset),
-                  children: [
-                    StoreClosedBanner(
-                      status: ref.watch(storeSettingsSyncProvider),
-                      padding: EdgeInsets.zero,
+            ),
+            DraggableScrollableSheet(
+              initialChildSize: collapsedSheetSize,
+              minChildSize: collapsedSheetSize,
+              maxChildSize: 0.92,
+              snap: true,
+              snapSizes: [collapsedSheetSize, 0.92],
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: mv.surfaceCard,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(28),
                     ),
-                    Text(
-                      product.name,
-                      style: AppTextStyles.h2.copyWith(color: mv.textPrimary),
-                    ),
-                    if (categoryName.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: mv.brandAccent.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          categoryName,
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w500,
-                            color: mv.brandAccent,
-                          ),
-                        ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: mv.textPrimary.withValues(alpha: 0.08),
+                        blurRadius: 24,
+                        offset: const Offset(0, -6),
                       ),
                     ],
-                    const SizedBox(height: 12),
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.end,
-                      spacing: 4,
-                      runSpacing: 4,
+                  ),
+                  child: RefreshIndicator(
+                    onRefresh: () => _loadProduct(forceRefresh: true),
+                    color: mv.brandAccent,
+                    child: ListView(
+                      controller: scrollController,
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      padding: EdgeInsets.fromLTRB(20, 12, 20, bottomInset),
                       children: [
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 5,
+                            decoration: BoxDecoration(
+                              color: mv.border.withValues(alpha: 0.7),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        StoreClosedBanner(
+                          status: ref.watch(storeSettingsSyncProvider),
+                          padding: EdgeInsets.zero,
+                        ),
                         Text(
-                          '₹${currentPrice.toStringAsFixed(0)}',
-                          style: AppTextStyles.h1.copyWith(color: mv.brandAccent),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            '/$_displayUnit',
-                            style: AppTextStyles.caption.copyWith(
-                              color: mv.textSecondary,
-                            ),
+                          product.name,
+                          style: AppTextStyles.h2.copyWith(
+                            color: mv.textPrimary,
                           ),
                         ),
-                        if (showOriginalPrice)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              'MRP ₹${originalPrice.toStringAsFixed(0)}',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: mv.textSecondary,
-                                decoration: TextDecoration.lineThrough,
-                              ),
+                        if (categoryName.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      'Fresh • Hygienically Packed • No Additives',
-                      style: AppTextStyles.caption.copyWith(
-                        color: mv.textSecondary,
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        ActiveFlowMetricPill(
-                          label: 'Rating',
-                          value: _reviewCount > 0
-                              ? '${_averageRating.toStringAsFixed(1)} • $_reviewCount'
-                              : 'New product',
-                          icon: Icons.star_rounded,
-                        ),
-                        ActiveFlowMetricPill(
-                          label: 'Availability',
-                          value: _isInStock ? 'In stock' : 'Out of stock',
-                          icon: _isInStock
-                              ? Icons.check_circle_outline
-                              : Icons.error_outline,
-                        ),
-                        ActiveFlowMetricPill(
-                          label: 'Delivery',
-                          value: 'Fast slot',
-                          icon: Icons.bolt_rounded,
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    const Divider(height: 1, color: AppThemeColors.divider),
-                    const SizedBox(height: 16),
-                    if (activeProduct.variants.isNotEmpty)
-                      _buildVariantSelector(activeProduct),
-                    if (activeProduct.variants.isNotEmpty) const SizedBox(height: 16),
-                    _buildRatingRow(),
-                    const SizedBox(height: 16),
-                    if (description.isNotEmpty) ...[
-                      Text(
-                        description,
-                        maxLines: _isDescriptionExpanded ? null : 3,
-                        overflow: _isDescriptionExpanded
-                            ? TextOverflow.visible
-                            : TextOverflow.ellipsis,
-                        style: AppTextStyles.body.copyWith(
-                          color: mv.textSecondary,
-                        ),
-                      ),
-                      if (description.length > 120)
-                        GestureDetector(
-                          onTap: () {
-                            HapticFeedback.lightImpact();
-                            setState(() {
-                              _isDescriptionExpanded = !_isDescriptionExpanded;
-                            });
-                          },
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 4),
+                            decoration: BoxDecoration(
+                              color: mv.brandAccent.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
                             child: Text(
-                              _isDescriptionExpanded ? 'Read less' : 'Read more',
+                              categoryName,
                               style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
                                 color: mv.brandAccent,
                               ),
                             ),
                           ),
+                        ],
+                        const SizedBox(height: 12),
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.end,
+                          spacing: 4,
+                          runSpacing: 4,
+                          children: [
+                            Text(
+                              '₹${currentPrice.toStringAsFixed(0)}',
+                              style: AppTextStyles.h1.copyWith(
+                                color: mv.brandAccent,
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '/$_displayUnit',
+                                style: AppTextStyles.caption.copyWith(
+                                  color: mv.textSecondary,
+                                ),
+                              ),
+                            ),
+                            if (showOriginalPrice)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4),
+                                child: Text(
+                                  'MRP ₹${originalPrice.toStringAsFixed(0)}',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: mv.textSecondary,
+                                    decoration: TextDecoration.lineThrough,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
-                    ],
-                    const SizedBox(height: 24),
-                    _buildRelatedSection(),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
+                        const SizedBox(height: 14),
+                        Text(
+                          'Fresh • Hygienically Packed • No Additives',
+                          style: AppTextStyles.caption.copyWith(
+                            color: mv.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            ActiveFlowMetricPill(
+                              label: 'Rating',
+                              value: _reviewCount > 0
+                                  ? '${_averageRating.toStringAsFixed(1)} • $_reviewCount'
+                                  : 'New product',
+                              icon: Icons.star_rounded,
+                            ),
+                            ActiveFlowMetricPill(
+                              label: 'Availability',
+                              value: _isInStock ? 'In stock' : 'Out of stock',
+                              icon: _isInStock
+                                  ? Icons.check_circle_outline
+                                  : Icons.error_outline,
+                            ),
+                            ActiveFlowMetricPill(
+                              label: 'Delivery',
+                              value: 'Fast slot',
+                              icon: Icons.bolt_rounded,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        const Divider(height: 1, color: AppThemeColors.divider),
+                        const SizedBox(height: 16),
+                        if (activeProduct.variants.isNotEmpty)
+                          _buildVariantSelector(activeProduct),
+                        if (activeProduct.variants.isNotEmpty)
+                          const SizedBox(height: 16),
+                        _buildRatingRow(),
+                        const SizedBox(height: 16),
+                        if (description.isNotEmpty) ...[
+                          Text(
+                            description,
+                            maxLines: _isDescriptionExpanded ? null : 3,
+                            overflow: _isDescriptionExpanded
+                                ? TextOverflow.visible
+                                : TextOverflow.ellipsis,
+                            style: AppTextStyles.body.copyWith(
+                              color: mv.textSecondary,
+                            ),
+                          ),
+                          if (description.length > 120)
+                            GestureDetector(
+                              onTap: () {
+                                HapticFeedback.lightImpact();
+                                setState(() {
+                                  _isDescriptionExpanded =
+                                      !_isDescriptionExpanded;
+                                });
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  _isDescriptionExpanded
+                                      ? 'Read less'
+                                      : 'Read more',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: mv.brandAccent,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                        const SizedBox(height: 24),
+                        _buildRelatedSection(),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -689,9 +749,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   height: 72,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      mv.brandAccent,
-                    ),
+                    valueColor: AlwaysStoppedAnimation<Color>(mv.brandAccent),
                   ),
                 ),
               ),
@@ -760,10 +818,12 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           ),
         ),
         Text(
-          hasRating ? '$_averageRating ($_reviewCount reviews)' : 'No reviews yet',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppThemeColors.textSecondary,
-              ),
+          hasRating
+              ? '$_averageRating ($_reviewCount reviews)'
+              : 'No reviews yet',
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: AppThemeColors.textSecondary),
         ),
         Container(
           padding: EdgeInsets.symmetric(
@@ -771,17 +831,18 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
             vertical: AppSpacing.xs,
           ),
           decoration: BoxDecoration(
-            color: (_isInStock ? AppThemeColors.success : AppThemeColors.warning)
-                .withValues(alpha: 0.12),
+            color:
+                (_isInStock ? AppThemeColors.success : AppThemeColors.warning)
+                    .withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
             _isInStock ? 'In Stock' : 'Out of Stock',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: _isInStock
-                      ? AppThemeColors.success
-                      : AppThemeColors.warning,
-                ),
+              color: _isInStock
+                  ? AppThemeColors.success
+                  : AppThemeColors.warning,
+            ),
           ),
         ),
       ],
@@ -870,11 +931,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   : mv.brandAccent,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(
-              icon,
-              size: 18,
-              color: mv.surfaceCard,
-            ),
+            child: Icon(icon, size: 18, color: mv.surfaceCard),
           ),
         ),
       ),
@@ -895,9 +952,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
       children: [
         Text(
           'Related products',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: AppThemeColors.textPrimary,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleLarge?.copyWith(color: AppThemeColors.textPrimary),
         ),
         SizedBox(height: AppSpacing.sm),
         // Related products now use `MeatvoProductCard` (production-safe)
@@ -923,8 +980,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               // Local non-null capture pattern — drops every `relatedCartItem.itemId!`
               // bang downstream. The closures are scheduled asynchronously,
               // so an instance-field-level `!` could hit a stale rebuild.
-              final relatedCartItem =
-                  _cart.findItemByProductId(related.product.id);
+              final relatedCartItem = _cart.findItemByProductId(
+                related.product.id,
+              );
               final localItemId = relatedCartItem?.itemId;
               final localCartQty = relatedCartItem?.quantity.round() ?? 0;
               final storeStatus = ref.watch(storeSettingsSyncProvider);
@@ -941,18 +999,19 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                   action: () async {
                     final preferredVariant =
                         related.availableVariants.isNotEmpty
-                            ? related.availableVariants.first
-                            : (related.variants.isNotEmpty
-                                ? related.variants.first
-                                : null);
+                        ? related.availableVariants.first
+                        : (related.variants.isNotEmpty
+                              ? related.variants.first
+                              : null);
                     if (localCartQty == 0 && next > 0) {
                       await _cartService.addToCart(
                         related.product.id,
                         1,
                         unit: preferredVariant?.weight ?? related.product.unit,
                         variantId: preferredVariant?.id,
-                        weightGrams:
-                            VariantPricing.weightGramsFromVariant(preferredVariant),
+                        weightGrams: VariantPricing.weightGramsFromVariant(
+                          preferredVariant,
+                        ),
                       );
                     } else if (localItemId != null &&
                         localItemId.isNotEmpty &&
@@ -964,8 +1023,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                       await _cartService.removeFromCart(localItemId);
                     }
                     if (mounted) {
-                      final refreshedCart =
-                          await _cartService.getCart().catchError((_) => _cart);
+                      final refreshedCart = await _cartService
+                          .getCart()
+                          .catchError((_) => _cart);
                       setState(() => _cart = refreshedCart);
                     }
                   },
@@ -1101,8 +1161,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                         },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: mv.brandAccent,
-                    disabledBackgroundColor:
-                        mv.brandAccent.withValues(alpha: 0.4),
+                    disabledBackgroundColor: mv.brandAccent.withValues(
+                      alpha: 0.4,
+                    ),
                     foregroundColor: mv.surfaceCard,
                     elevation: 0,
                     minimumSize: const Size(160, 48),
@@ -1111,7 +1172,9 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     ),
                   ),
                   child: Text(
-                    storeClosedButInStock ? 'Not accepting orders' : 'Add to Cart',
+                    storeClosedButInStock
+                        ? 'Not accepting orders'
+                        : 'Add to Cart',
                     style: AppTextStyles.button.copyWith(
                       fontSize: 15,
                       color: mv.surfaceCard,
@@ -1153,16 +1216,16 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
           _stepperButton(
             icon: Icons.add,
             onTap: () async {
-                    final storeStatus = ref.read(storeSettingsSyncProvider);
-                    if (!storeStatus.isAcceptingOrders) {
-                      await StoreClosedSheet.show(context, storeStatus);
-                      return;
-                    }
-                    setState(() {
-                      _quantity++;
-                    });
-                    _saveCart();
-                  },
+              final storeStatus = ref.read(storeSettingsSyncProvider);
+              if (!storeStatus.isAcceptingOrders) {
+                await StoreClosedSheet.show(context, storeStatus);
+                return;
+              }
+              setState(() {
+                _quantity++;
+              });
+              _saveCart();
+            },
           ),
         ],
       ),
@@ -1199,11 +1262,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
               ),
             ],
           ),
-          child: Icon(
-            icon,
-            color: iconColor,
-            size: 20,
-          ),
+          child: Icon(icon, color: iconColor, size: 20),
         ),
       ),
     );
@@ -1241,11 +1300,7 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
                     color: mv.textSecondary.withValues(alpha: 0.6),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    Icons.close,
-                    color: mv.surfaceCard,
-                    size: 24,
-                  ),
+                  child: Icon(Icons.close, color: mv.surfaceCard, size: 24),
                 ),
                 onPressed: () => Navigator.of(dialogContext).pop(),
               ),
@@ -1263,10 +1318,8 @@ class _ProductDetailScreenState extends ConsumerState<ProductDetailScreen> {
     showDialog(
       context: context,
       barrierColor: mv.textPrimary.withValues(alpha: 0.87),
-      builder: (context) => _ImageGalleryDialog(
-        images: images,
-        initialIndex: initialIndex,
-      ),
+      builder: (context) =>
+          _ImageGalleryDialog(images: images, initialIndex: initialIndex),
     );
   }
 }
@@ -1276,10 +1329,7 @@ class _ImageGalleryDialog extends StatefulWidget {
   final List<String> images;
   final int initialIndex;
 
-  const _ImageGalleryDialog({
-    required this.images,
-    this.initialIndex = 0,
-  });
+  const _ImageGalleryDialog({required this.images, this.initialIndex = 0});
 
   @override
   State<_ImageGalleryDialog> createState() => _ImageGalleryDialogState();
@@ -1366,11 +1416,7 @@ class _ImageGalleryDialogState extends State<_ImageGalleryDialog> {
                   color: mv.textSecondary.withValues(alpha: 0.6),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(
-                  Icons.close,
-                  color: mv.surfaceCard,
-                  size: 24,
-                ),
+                child: Icon(Icons.close, color: mv.surfaceCard, size: 24),
               ),
               onPressed: () => Navigator.of(context).pop(),
             ),

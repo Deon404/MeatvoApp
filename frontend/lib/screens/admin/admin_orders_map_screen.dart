@@ -30,6 +30,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
 
   DateTime _selectedDate = DateTime.now();
   List<Map<String, dynamic>> _orders = [];
+  List<Map<String, dynamic>> _activeOrders = [];
   List<Map<String, dynamic>> _routeStops = [];
   Map<String, dynamic>? _selectedStop;
 
@@ -77,7 +78,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   }
 
   String get _locationSummaryLabel {
-    final withoutLocation = _orders.length - _routeStops.length;
+    final withoutLocation = _activeOrders.length - _routeStops.length;
     if (withoutLocation <= 0) return 'all located';
     return '$withoutLocation without location';
   }
@@ -98,7 +99,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       );
       final end = start;
 
-      final orders = await _adminService.getAllOrders(fromDate: start, toDate: end);
+      final orders = await _adminService.getAllOrders(
+        fromDate: start,
+        toDate: end,
+      );
       final center = await _adminService.resolveStoreCenter();
       final activeOrders = orders.where(_isActiveOrder).toList();
 
@@ -106,7 +110,8 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
       setState(() {
         _storeLat = center.lat;
         _storeLng = center.lng;
-        _orders = activeOrders;
+        _orders = orders;
+        _activeOrders = activeOrders;
         _routeStops = _buildStopsFromOrderList(activeOrders);
         _isLoading = false;
       });
@@ -118,6 +123,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         _loadError = e.toString();
         _isLoading = false;
         _orders = [];
+        _activeOrders = [];
         _routeStops = [];
       });
     }
@@ -150,7 +156,7 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   }
 
   List<Map<String, dynamic>> _buildStopsFromOrders() =>
-      _buildStopsFromOrderList(_orders);
+      _buildStopsFromOrderList(_activeOrders);
 
   List<Map<String, dynamic>> _buildStopsFromOrderList(
     List<Map<String, dynamic>> orders,
@@ -654,7 +660,8 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
         border: Border.all(color: AppColors.divider),
       ),
       child: Text(
-        '$_dateChipLabel: ${_orders.length} active orders | '
+        '$_dateChipLabel: ${_activeOrders.length} active orders | '
+        '${_orders.length} total | '
         '${_routeStops.length} on map | $_locationSummaryLabel',
         style: const TextStyle(
           fontSize: 13,
@@ -672,10 +679,10 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
 
     if (stops.isEmpty) {
       return EmptyStateWidget(
-        title: _orders.isEmpty ? 'No active orders' : 'No locations on map',
-        message: _orders.isEmpty
+        title: _activeOrders.isEmpty ? 'No active orders' : 'No locations on map',
+        message: _activeOrders.isEmpty
             ? 'Active orders for $_dateChipLabel will appear here.'
-            : '${_orders.length} active order(s) found but none have delivery coordinates.',
+            : '${_activeOrders.length} active order(s) found but none have delivery coordinates.',
         illustration: const Icon(
           Icons.location_off_outlined,
           size: 48,
@@ -740,8 +747,8 @@ class _AdminOrdersMapScreenState extends State<AdminOrdersMapScreen>
   Widget _buildAllOrdersTab(ScrollController scrollController) {
     if (_orders.isEmpty) {
       return EmptyStateWidget(
-        title: 'No active orders',
-        message: 'Active orders for $_dateChipLabel will appear here.',
+        title: 'No orders',
+        message: 'Orders for $_dateChipLabel will appear here.',
         illustration: const Icon(
           Icons.receipt_long,
           size: 48,

@@ -228,6 +228,102 @@ class _AuthOrderUpdatesToggleState extends State<AuthOrderUpdatesToggle> {
   }
 }
 
+/// Required consent checkbox for auth with legal-policy links.
+class AuthConsentCheckbox extends StatelessWidget {
+  const AuthConsentCheckbox({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+  });
+
+  final bool value;
+  final ValueChanged<bool?> onChanged;
+  final bool enabled;
+
+  void _openLegalScreen(BuildContext context, Widget screen) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => screen),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mv = context.meatvo;
+    final theme = Theme.of(context);
+
+    final linkStyle = theme.textTheme.labelSmall!.copyWith(
+      color: mv.brandPrimary,
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: mv.brandPrimary,
+      height: 1.4,
+    );
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.only(top: mv.spacing.xxs),
+          child: Checkbox(
+            value: value,
+            onChanged: enabled ? onChanged : null,
+            activeColor: mv.brandPrimary,
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+        ),
+        SizedBox(width: mv.spacing.xs),
+        Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(top: mv.spacing.xs),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'I agree to the following:',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: mv.textSecondary,
+                    height: 1.35,
+                  ),
+                ),
+                SizedBox(height: mv.spacing.xxs),
+                Wrap(
+                  spacing: mv.spacing.sm,
+                  runSpacing: mv.spacing.xxs,
+                  children: [
+                    GestureDetector(
+                      onTap: () => _openLegalScreen(
+                        context,
+                        const TermsOfServiceScreen(),
+                      ),
+                      child: Text('T&C', style: linkStyle),
+                    ),
+                    GestureDetector(
+                      onTap: () => _openLegalScreen(
+                        context,
+                        const RefundsPolicyScreen(),
+                      ),
+                      child: Text('Refunds Policy', style: linkStyle),
+                    ),
+                    GestureDetector(
+                      onTap: () => _openLegalScreen(
+                        context,
+                        const PrivacyPolicyScreen(),
+                      ),
+                      child: Text('Privacy Policy', style: linkStyle),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// Bottom legal footer with T&C, Refunds Policy, and Privacy Policy links.
 class AuthLegalFooter extends StatelessWidget {
   const AuthLegalFooter({super.key});

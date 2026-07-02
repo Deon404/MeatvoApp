@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../core/constants/app_constants.dart';
+import '../utils/media_url_resolver.dart';
 
 /// Optimized cached network image widget with placeholder and error handling
 /// This widget provides:
@@ -42,9 +43,11 @@ class CachedImageWidget extends StatelessWidget {
     if (url == null || url.isEmpty) {
       return _buildPlaceholder();
     }
+    final cacheKey = MediaUrlResolver.cacheKey(url);
 
     Widget imageWidget = CachedNetworkImage(
       imageUrl: url,
+      cacheKey: cacheKey,
       fit: fit,
       width: width,
       height: height,
@@ -75,11 +78,7 @@ class CachedImageWidget extends StatelessWidget {
       height: height,
       color: placeholderColor ?? const Color(0xFFF5F5F5),
       child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 40,
-          color: Colors.grey[300],
-        ),
+        child: Icon(Icons.image_outlined, size: 40, color: Colors.grey[300]),
       ),
     );
   }
@@ -90,11 +89,7 @@ class CachedImageWidget extends StatelessWidget {
       height: height,
       color: errorColor ?? const Color(0xFFF5F5F5),
       child: Center(
-        child: Icon(
-          Icons.image_outlined,
-          size: 40,
-          color: Colors.grey[300],
-        ),
+        child: Icon(Icons.image_outlined, size: 40, color: Colors.grey[300]),
       ),
     );
   }
@@ -122,37 +117,27 @@ class CachedCircleImageWidget extends StatelessWidget {
     // Smart-cast local — `imageUrl!` bangs removed.
     final url = imageUrl;
     final hasUrl = url != null && url.isNotEmpty;
+    final cacheKey = hasUrl ? MediaUrlResolver.cacheKey(url) : null;
 
     return CircleAvatar(
       radius: radius,
       backgroundColor: backgroundColor ?? AppColors.divider,
       child: !hasUrl
           ? (placeholder ??
-              Icon(
-                Icons.person,
-                size: radius,
-                color: AppColors.surface,
-              ))
+                Icon(Icons.person, size: radius, color: AppColors.surface))
           : ClipOval(
               child: CachedNetworkImage(
                 imageUrl: url,
+                cacheKey: cacheKey,
                 fit: BoxFit.cover,
                 width: radius * 2,
                 height: radius * 2,
                 placeholder: (context, url) =>
                     placeholder ??
-                    Icon(
-                      Icons.person,
-                      size: radius,
-                      color: AppColors.surface,
-                    ),
+                    Icon(Icons.person, size: radius, color: AppColors.surface),
                 errorWidget: (context, url, error) =>
                     errorWidget ??
-                    Icon(
-                      Icons.person,
-                      size: radius,
-                      color: AppColors.surface,
-                    ),
+                    Icon(Icons.person, size: radius, color: AppColors.surface),
                 fadeInDuration: const Duration(milliseconds: 300),
                 maxWidthDiskCache: 400,
                 maxHeightDiskCache: 400,
@@ -161,4 +146,3 @@ class CachedCircleImageWidget extends StatelessWidget {
     );
   }
 }
-

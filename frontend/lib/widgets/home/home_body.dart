@@ -13,7 +13,6 @@ import '../../models/banner_model.dart';
 import '../../models/home_category_item.dart';
 import '../../models/product_variant_model.dart';
 import '../../ui/shells/offline_state_view.dart';
-import '../../widgets/active_flow/active_flow_shell.dart';
 import '../../widgets/location/unserviceable_location_view.dart';
 import '../../viewmodels/home_state.dart';
 import '../../widgets/error_states/error_state_widget.dart';
@@ -143,56 +142,6 @@ class HomeBody extends ConsumerWidget {
           ),
         ),
         SliverToBoxAdapter(child: StoreClosedBanner(status: storeStatus)),
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: ActiveFlowHeroCard(
-              eyebrow: state.defaultAddress == null
-                  ? 'Start with your location'
-                  : (state.isDeliveryServiceable == false
-                      ? 'Update delivery pin'
-                      : 'Fresh delivery window open'),
-              title: state.cart.totalQuantity > 0
-                  ? '${state.cart.totalQuantity.round()} items ready in your cart'
-                  : 'Fresh cuts, fast checkout, zero guesswork',
-              subtitle: state.defaultAddress == null
-                  ? 'Set your delivery pin to unlock live availability, pricing, and the fastest slot.'
-                  : state.cart.totalQuantity > 0
-                      ? 'Jump back into checkout or keep building the basket from today\'s best sellers.'
-                      : 'Browse today\'s hero offers, quick categories, and the freshest cuts without leaving this page.',
-              metrics: [
-                ActiveFlowMetricPill(
-                  label: 'Delivery',
-                  value: state.defaultAddress == null
-                      ? 'Select address'
-                      : (state.isDeliveryServiceable == false
-                          ? 'Check area'
-                          : 'Serviceable'),
-                  icon: Icons.location_on_outlined,
-                  inverted: true,
-                ),
-                ActiveFlowMetricPill(
-                  label: 'Cart',
-                  value: state.cart.totalQuantity > 0
-                      ? '${state.cart.totalQuantity.round()} items'
-                      : 'Empty for now',
-                  icon: Icons.shopping_bag_outlined,
-                  inverted: true,
-                ),
-                ActiveFlowMetricPill(
-                  label: 'Store',
-                  value: storeStatus.isAcceptingOrders
-                      ? 'Accepting orders'
-                      : 'Opens soon',
-                  icon: storeStatus.isAcceptingOrders
-                      ? Icons.bolt_rounded
-                      : Icons.schedule_rounded,
-                  inverted: true,
-                ),
-              ],
-            ),
-          ),
-        ),
         SliverToBoxAdapter(
           child: HeroBannerCarousel(
             banners: state.banners,

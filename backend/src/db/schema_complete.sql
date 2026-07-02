@@ -540,6 +540,7 @@ CREATE TABLE IF NOT EXISTS orders (
   -- Coupon
   coupon_id BIGINT REFERENCES coupons(id) ON DELETE SET NULL,
   coupon_code VARCHAR(50),
+  coupon_released_at TIMESTAMPTZ,
   
   -- Address snapshot (JSONB for immutability)
   address JSONB NOT NULL,
@@ -596,6 +597,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_order_number ON orders(order_number
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_orders_payment_mode ON orders(payment_mode);
+CREATE INDEX IF NOT EXISTS idx_orders_customer_coupon_active
+  ON orders(customer_id, coupon_id)
+  WHERE deleted_at IS NULL AND coupon_id IS NOT NULL AND coupon_released_at IS NULL;
 
 COMMENT ON TABLE orders IS 'Customer orders (partitioned by month for scalability)';
 

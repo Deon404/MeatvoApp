@@ -138,22 +138,19 @@ class MeatvoProductCard extends StatefulWidget {
 
   /// Body height scaled for accessibility text size (capped to avoid runaway grids).
   static double gridBodyHeight(BuildContext context) {
-    final scale =
-        MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.2);
+    final scale = MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.2);
     return _kBodyHeight * scale;
   }
 
   static double gridCardHeight(double screenWidth, [BuildContext? context]) {
     final cellWidth = gridCellWidth(screenWidth);
-    final bodyHeight =
-        context != null ? gridBodyHeight(context) : _kBodyHeight;
+    final bodyHeight = context != null ? gridBodyHeight(context) : _kBodyHeight;
     return cellWidth + bodyHeight;
   }
 
   /// Height for fixed-width carousel rails (e.g. home horizontal sections).
   static double carouselCardHeight(double cardWidth, [BuildContext? context]) {
-    final bodyHeight =
-        context != null ? gridBodyHeight(context) : _kBodyHeight;
+    final bodyHeight = context != null ? gridBodyHeight(context) : _kBodyHeight;
     return cardWidth + bodyHeight;
   }
 
@@ -216,11 +213,14 @@ class _MeatvoProductCardState extends State<MeatvoProductCard> {
 
         final discount = widget.discountPercent;
         final orig = widget.originalPrice;
-        final resolvedDiscount = (discount != null && discount >= 1 && discount < 100)
+        final resolvedDiscount =
+            (discount != null && discount >= 1 && discount < 100)
             ? discount
             : (orig != null && orig > widget.displayPrice + 0.01)
-                ? ((orig - widget.displayPrice) / orig * 100).clamp(1, 99).toDouble()
-                : null;
+            ? ((orig - widget.displayPrice) / orig * 100)
+                  .clamp(1, 99)
+                  .toDouble()
+            : null;
         final showDiscountBadge = resolvedDiscount != null;
 
         return SizedBox(
@@ -234,11 +234,15 @@ class _MeatvoProductCardState extends State<MeatvoProductCard> {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: mv.surfaceCard,
-                borderRadius: BorderRadius.circular(MeatvoProductCard._cardRadius),
+                borderRadius: BorderRadius.circular(
+                  MeatvoProductCard._cardRadius,
+                ),
                 boxShadow: mv.shadowCard,
               ),
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(MeatvoProductCard._cardRadius),
+                borderRadius: BorderRadius.circular(
+                  MeatvoProductCard._cardRadius,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
@@ -250,10 +254,13 @@ class _MeatvoProductCardState extends State<MeatvoProductCard> {
                         child: _ImageBlock(
                           imageUrl: widget.product.primaryImageUrl,
                           discountPercent: resolvedDiscount,
-                          showFresh: widget.showFreshBadge &&
+                          showFresh:
+                              widget.showFreshBadge &&
                               widget.inStock &&
                               widget.badgeLabel == null,
-                          badgeLabel: showDiscountBadge ? null : widget.badgeLabel,
+                          badgeLabel: showDiscountBadge
+                              ? null
+                              : widget.badgeLabel,
                           badgeVariant: widget.badgeVariant,
                           inStock: widget.inStock,
                           orderingPaused: widget.orderingPaused,
@@ -325,8 +332,9 @@ class _MeatvoProductCardState extends State<MeatvoProductCard> {
                                   orderingPaused: widget.orderingPaused,
                                   quantity: widget.quantity,
                                   isBusy: widget.isBusy,
-                                  onAdd:
-                                      widget.onAdd == null ? null : _handleAdd,
+                                  onAdd: widget.onAdd == null
+                                      ? null
+                                      : _handleAdd,
                                   onIncrement: widget.onIncrement == null
                                       ? null
                                       : _handleIncrement,
@@ -411,9 +419,9 @@ class _CartCta extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             softWrap: false,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: mv.textMuted,
-                  fontWeight: FontWeight.w700,
-                ),
+              color: mv.textMuted,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       );
@@ -443,9 +451,9 @@ class _CartCta extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 softWrap: false,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: mv.textMuted,
-                      fontWeight: FontWeight.w700,
-                    ),
+                  color: mv.textMuted,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
@@ -474,13 +482,13 @@ class _CartCta extends StatelessWidget {
         );
       },
       transitionBuilder: (child, animation) {
-        final slide = Tween<Offset>(
-          begin: const Offset(0, 0.12),
-          end: Offset.zero,
-        ).animate(CurvedAnimation(
-          parent: animation,
-          curve: MeatvoDurations.curve,
-        ));
+        final slide =
+            Tween<Offset>(
+              begin: const Offset(0, 0.12),
+              end: Offset.zero,
+            ).animate(
+              CurvedAnimation(parent: animation, curve: MeatvoDurations.curve),
+            );
         return FadeTransition(
           opacity: animation,
           child: SlideTransition(position: slide, child: child),
@@ -538,11 +546,7 @@ class _StepperSlot extends StatelessWidget {
 }
 
 class _AddButton extends StatelessWidget {
-  const _AddButton({
-    super.key,
-    required this.isBusy,
-    this.onAdd,
-  });
+  const _AddButton({super.key, required this.isBusy, this.onAdd});
 
   final bool isBusy;
   final VoidCallback? onAdd;
@@ -594,11 +598,7 @@ class _AddButton extends StatelessWidget {
                         color: Colors.white,
                       ),
                     )
-                  : Icon(
-                      Icons.add_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
+                  : Icon(Icons.add_rounded, color: Colors.white, size: 20),
             ),
           ),
         ),
@@ -616,6 +616,7 @@ class _AddButton extends StatelessWidget {
 Widget _buildImage(String? imageUrl) {
   final resolved = MediaUrlResolver.resolve(imageUrl);
   final safeUrl = resolved ?? '';
+  final cacheKey = MediaUrlResolver.cacheKey(safeUrl);
   if (safeUrl.isEmpty) {
     return Container(
       color: MeatvoColors.surfaceMuted,
@@ -630,18 +631,20 @@ Widget _buildImage(String? imageUrl) {
   }
   return CachedNetworkImage(
     imageUrl: safeUrl,
+    cacheKey: cacheKey,
     fit: BoxFit.cover,
-    fadeInDuration: const Duration(milliseconds: 280),
+    fadeInDuration: const Duration(milliseconds: 120),
+    memCacheWidth: 720,
+    memCacheHeight: 720,
+    maxWidthDiskCache: 1080,
+    maxHeightDiskCache: 1080,
     placeholder: (context, url) => Container(
       color: MeatvoColors.surfaceMuted,
-      child: const Center(
-        child: SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: MeatvoColors.brandPrimary,
-          ),
+      child: Center(
+        child: Icon(
+          Icons.image_outlined,
+          color: MeatvoColors.textMuted.withValues(alpha: 0.28),
+          size: 30,
         ),
       ),
     ),
@@ -685,8 +688,7 @@ class _ImageBlock extends StatelessWidget {
     final badge = badgeLabel;
     final showBadge = badge != null && badge.isNotEmpty;
     final discount = discountPercent;
-    final showDiscount =
-        discount != null && discount >= 1 && discount < 100;
+    final showDiscount = discount != null && discount >= 1 && discount < 100;
     final shouldDimImage = !inStock || orderingPaused;
 
     return Stack(
@@ -695,10 +697,26 @@ class _ImageBlock extends StatelessWidget {
         ColorFiltered(
           colorFilter: shouldDimImage
               ? const ColorFilter.matrix(<double>[
-                  0.2126, 0.7152, 0.0722, 0, 0,
-                  0.2126, 0.7152, 0.0722, 0, 0,
-                  0.2126, 0.7152, 0.0722, 0, 0,
-                  0, 0, 0, 1, 0,
+                  0.2126,
+                  0.7152,
+                  0.0722,
+                  0,
+                  0,
+                  0.2126,
+                  0.7152,
+                  0.0722,
+                  0,
+                  0,
+                  0.2126,
+                  0.7152,
+                  0.0722,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
                 ])
               : const ColorFilter.mode(Colors.transparent, BlendMode.dst),
           child: Opacity(
@@ -739,10 +757,7 @@ class _ImageBlock extends StatelessWidget {
           Positioned(
             top: mv.spacing.sm,
             left: mv.spacing.sm,
-            child: MeatvoBadge(
-              label: badge,
-              variant: badgeVariant,
-            ),
+            child: MeatvoBadge(label: badge, variant: badgeVariant),
           )
         else if (showFresh)
           Positioned(
@@ -772,9 +787,9 @@ class _ImageBlock extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               softWrap: false,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           )
         else if (orderingPaused)
@@ -787,9 +802,9 @@ class _ImageBlock extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               softWrap: false,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                  ),
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
       ],

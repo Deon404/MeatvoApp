@@ -41,4 +41,31 @@ abstract final class MediaUrlResolver {
         .where((u) => u.isNotEmpty)
         .toList();
   }
+
+  /// Keeps cache stable for signed upload URLs whose query string rotates.
+  ///
+  /// Product images currently come back as `/uploads/images/file.jpg?exp=...&sig=...`.
+  /// If we use the raw URL as cache key, every refresh becomes a cache miss
+  /// even when the underlying file is unchanged. For managed uploads we strip
+  /// the signature/query params and cache by the canonical file path instead.
+  static String? cacheKey(String? url) {
+    final resolved = resolve(url);
+    if (resolved == null || resolved.isEmpty) return null;
+
+    final uri = Uri.tryParse(resolved);
+    if (uri == null) return resolved;
+    if (!uri.path.contains(_uploadPathSegment)) return resolved;
+
+    if (uri.hasScheme && uri.host.isNotEmpty) {
+      return Uri(
+        scheme: uri.scheme,
+        userInfo: uri.userInfo,
+        host: uri.host,
+        port: uri.hasPort ? uri.port : null,
+        path: uri.path,
+      ).toString();
+    }
+
+    return uri.path;
+  }
 }

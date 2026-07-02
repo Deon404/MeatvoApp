@@ -286,7 +286,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       total: _total,
       upiSelection: _upiSelection,
       upiPackageId: _selectedUpiPackageId,
-      paymentService: _paymentService,
     );
   }
 
@@ -630,8 +629,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                     fullScreen: false,
                                   )
                                 else ...[
-                                  _buildCheckoutHero(canPlaceOrder),
-                                  const SizedBox(height: 20),
                                   CheckoutOrderSummary(
                                     subtotal: _subtotal,
                                     productDiscount: _productDiscount,
@@ -730,38 +727,4 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  Widget _buildCheckoutHero(bool canPlaceOrder) {
-    final addressLabel = _selectedAddress?.label.name ?? 'Address pending';
-    final paymentLabel = _paymentOption?.label ?? 'Choose payment';
-
-    return ActiveFlowHeroCard(
-      eyebrow: 'Review before you place the order',
-      title: canPlaceOrder
-          ? 'Everything is lined up for payment'
-          : 'One more step before we place this order',
-      subtitle: canPlaceOrder
-          ? 'Confirm the address, review the bill, and pay with your preferred method.'
-          : 'Finish the delivery setup below so the order can move straight into confirmation.',
-      metrics: [
-        ActiveFlowMetricPill(
-          label: 'Address',
-          value: addressLabel,
-          icon: Icons.location_on_outlined,
-          inverted: true,
-        ),
-        ActiveFlowMetricPill(
-          label: 'Payment',
-          value: paymentLabel,
-          icon: Icons.payments_outlined,
-          inverted: true,
-        ),
-        ActiveFlowMetricPill(
-          label: 'Total',
-          value: '₹${_total.toStringAsFixed(0)}',
-          icon: Icons.receipt_long_outlined,
-          inverted: true,
-        ),
-      ],
-    );
-  }
 }

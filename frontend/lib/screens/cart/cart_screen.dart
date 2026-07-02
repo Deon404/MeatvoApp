@@ -318,12 +318,7 @@ class _CartScreenState extends State<CartScreen> {
                 ? _buildErrorState()
                 : !hasItems
                     ? _buildEmptyState()
-                    : Column(
-                        children: [
-                          _buildHeader(),
-                          Expanded(child: _buildCartContent()),
-                        ],
-                      ),
+                    : SafeArea(top: true, bottom: false, child: _buildCartContent()),
       ),
     );
   }
@@ -412,51 +407,6 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildHeader() {
-    final mv = context.meatvo;
-    final remainingForFreeDelivery =
-        (_freeDeliveryThreshold - _subtotal).clamp(0, double.infinity);
-
-    return SafeArea(
-      bottom: false,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          mv.spacing.md,
-          mv.spacing.sm,
-          mv.spacing.md,
-          mv.spacing.sm,
-        ),
-        child: ActiveFlowHeroCard(
-          eyebrow: 'Cart overview',
-          title: 'Your cart is almost ready',
-          subtitle: _pricing.isFreeDelivery
-              ? 'Free delivery is unlocked. Review the bill and move straight into checkout.'
-              : 'Add ₹${remainingForFreeDelivery.toStringAsFixed(0)} more to unlock free delivery before you place the order.',
-          metrics: [
-            ActiveFlowMetricPill(
-              label: 'Items',
-              value: '$_itemCount',
-              icon: Icons.shopping_bag_outlined,
-              inverted: true,
-            ),
-            ActiveFlowMetricPill(
-              label: 'Savings',
-              value: '₹${(_productDiscount + _couponDiscount).toStringAsFixed(0)}',
-              icon: Icons.sell_outlined,
-              inverted: true,
-            ),
-            ActiveFlowMetricPill(
-              label: 'Payable',
-              value: '₹${_total.toStringAsFixed(0)}',
-              icon: Icons.payments_outlined,
-              inverted: true,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildEmptyState() {
     return EmptyStateWidget.cart(
       buttonLabel: 'Start Shopping',
@@ -482,20 +432,17 @@ class _CartScreenState extends State<CartScreen> {
 
   Widget _buildLoadingState() {
     final mv = context.meatvo;
-    return Column(
-      children: [
-        _buildHeader(),
-        Expanded(
-          child: ListView(
-            padding: EdgeInsets.all(mv.spacing.md),
-            children: const [
-              ShimmerLoader.listTile(),
-              SizedBox(height: AppSpacing.sm),
-              ShimmerLoader.listTile(),
-            ],
-          ),
-        ),
-      ],
+    return SafeArea(
+      top: true,
+      bottom: false,
+      child: ListView(
+        padding: EdgeInsets.all(mv.spacing.md),
+        children: const [
+          ShimmerLoader.listTile(),
+          SizedBox(height: AppSpacing.sm),
+          ShimmerLoader.listTile(),
+        ],
+      ),
     );
   }
 }

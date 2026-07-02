@@ -19,6 +19,7 @@ class _PhoneScreenState extends State<PhoneScreen> {
   final TextEditingController _phoneController = TextEditingController();
   final FocusNode _phoneFocusNode = FocusNode();
   final AuthService _authService = AuthService();
+  bool _acceptedLegalPolicies = false;
   bool _isLoading = false;
   String? _feedbackText;
 
@@ -30,6 +31,8 @@ class _PhoneScreenState extends State<PhoneScreen> {
 
   bool get _hasTenDigits =>
       RegExp(r'^\d{10}$').hasMatch(_phoneController.text.trim());
+
+  bool get _canContinue => _hasTenDigits && _acceptedLegalPolicies && !_isLoading;
 
   @override
   void initState() {
@@ -67,6 +70,9 @@ class _PhoneScreenState extends State<PhoneScreen> {
       return 'Enter a valid 10-digit mobile number.';
     }
     if (!_isValidPhone(phone)) return 'Enter a valid Indian mobile number.';
+    if (!_acceptedLegalPolicies) {
+      return 'Please accept T&C, Refunds Policy, and Privacy Policy.';
+    }
     return null;
   }
 
@@ -117,7 +123,6 @@ class _PhoneScreenState extends State<PhoneScreen> {
         BackendResolver.isConnectionError(_feedbackText!);
 
     return AuthScreenShell(
-      bottomFooter: const AuthLegalFooter(),
       children: [
         AuthLogoHeader(),
         SizedBox(height: mv.spacing.xxl * 2),
@@ -162,11 +167,20 @@ class _PhoneScreenState extends State<PhoneScreen> {
         AuthPrimaryButton(
           label: 'Get OTP',
           isLoading: _isLoading,
-          enabled: _hasTenDigits,
+          enabled: _canContinue,
           onPressed: _sendOtp,
         ),
         SizedBox(height: mv.spacing.lg),
         const AuthOrderUpdatesToggle(),
+        SizedBox(height: mv.spacing.md),
+        AuthConsentCheckbox(
+          value: _acceptedLegalPolicies,
+          enabled: !_isLoading,
+          onChanged: (value) => setState(() {
+            _acceptedLegalPolicies = value ?? false;
+            _feedbackText = null;
+          }),
+        ),
       ],
     );
   }

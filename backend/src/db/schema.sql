@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS orders (
   status order_status NOT NULL DEFAULT 'PLACED',
   total_amount NUMERIC(10,2) NOT NULL CHECK (total_amount >= 0),
   coupon_id BIGINT REFERENCES coupons(id) ON DELETE SET NULL,
+  coupon_released_at TIMESTAMPTZ,
   address JSONB NOT NULL,
   payment_mode payment_mode NOT NULL DEFAULT 'COD',
   delivery_slot_id BIGINT,
@@ -122,6 +123,9 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
+CREATE INDEX IF NOT EXISTS idx_orders_customer_coupon_active
+  ON orders(customer_id, coupon_id)
+  WHERE coupon_id IS NOT NULL AND coupon_released_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS order_items (
   id BIGSERIAL PRIMARY KEY,

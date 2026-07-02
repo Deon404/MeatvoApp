@@ -219,6 +219,42 @@ class PaymentService {
     );
   }
 
+  bool _shouldFallbackToWebCheckout({
+    required CashfreeCheckoutMode mode,
+    required ({String code, String message}) mapped,
+    required CFErrorResponse error,
+  }) {
+    if (mode == CashfreeCheckoutMode.webCheckout) return false;
+    if (mapped.code == 'PAYMENT_CANCELLED' || mapped.code == 'NETWORK_ERROR') {
+      return false;
+    }
+
+    final combined = [
+      mapped.code,
+      mapped.message,
+      error.getCode(),
+      error.getMessage(),
+      error.getType(),
+      error.getStatus(),
+    ].whereType<String>().join(' ').toLowerCase();
+
+    const fallbackSignals = <String>[
+      'not approved',
+      'package',
+      'activity not found',
+      'no activity',
+      'unable to open',
+      'app not found',
+      'app is not installed',
+      'intent',
+      'resolve activity',
+      'merchant is not allowed',
+      'merchant not allowed',
+    ];
+
+    return fallbackSignals.any(combined.contains);
+  }
+
   Future<void> _logCashfreeError(CFErrorResponse error, String orderId) async {
     final details = <String, String?>{
       'orderId': orderId,
@@ -268,6 +304,7 @@ class PaymentService {
     required String orderId,
     required CashfreeCheckoutMode mode,
     String? upiPackageId,
+    bool allowWebFallback = true,
   }) async {
     final completer = Completer<PaymentResult>();
     final session = _buildSession(paymentSessionId, orderId);
@@ -335,6 +372,35 @@ class PaymentService {
         if (completer.isCompleted) return;
         await _logCashfreeError(error, orderId);
         final mapped = _mapCashfreeError(error);
+
+        if (allowWebFallback &&
+            _shouldFallbackToWebCheckout(
+              mode: mode,
+              mapped: mapped,
+              error: error,
+            )) {
+          debugPrint(
+            'Cashfree $mode failed for orderId=$orderId. '
+            'Retrying with web checkout.',
+          );
+          try {
+            final fallbackResult = await _runCashfreePayment(
+              paymentSessionId: paymentSessionId,
+              orderId: orderId,
+              mode: CashfreeCheckoutMode.webCheckout,
+              allowWebFallback: false,
+            );
+            completer.complete(fallbackResult);
+            return;
+          } catch (fallbackError, fallbackStackTrace) {
+            await ErrorTrackingService.captureException(
+              fallbackError,
+              stackTrace: fallbackStackTrace,
+              tag: 'cashfree_web_fallback',
+            );
+          }
+        }
+
         await _abandonPaymentRequest(
           orderId: orderId,
           reason: _abandonReasonForCode(mapped.code),

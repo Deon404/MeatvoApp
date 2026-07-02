@@ -364,6 +364,8 @@ const createOrder = asyncHandler(async (req, res) => {
         code: couponCode,
         orderAmount: subtotal + deliveryCharge,
         userId: String(customerId),
+        db: client,
+        lockCoupon: true,
       });
       if (couponResult.valid) {
         discountAmount = couponResult.discountAmount;

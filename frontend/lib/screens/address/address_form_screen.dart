@@ -567,7 +567,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                               ),
                               validator: (value) {
                                 if (value == null || value.trim().isEmpty) {
-                                  return 'Required';
+                                  return 'Please enter your state';
                                 }
                                 return null;
                               },
@@ -578,7 +578,7 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                             child: TextFormField(
                               controller: _pincodeController,
                               keyboardType: TextInputType.number,
-                              maxLength: 6,
+                              maxLength: 14,
                               decoration: InputDecoration(
                                 labelText: 'Pincode',
                                 border: OutlineInputBorder(
@@ -588,11 +588,15 @@ class _AddressFormScreenState extends State<AddressFormScreen> {
                                 fillColor: Colors.white,
                               ),
                               validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Required';
+                                final trimmed = value?.trim() ?? '';
+                                if (trimmed.isEmpty) {
+                                  return null;
                                 }
-                                if (value.trim().length != 6) {
-                                  return '6 digits';
+                                if (!RegExp(r'^\d+$').hasMatch(trimmed)) {
+                                  return 'Use numbers only in the pincode field';
+                                }
+                                if (trimmed.length >= 15) {
+                                  return 'Pincode can be up to 14 digits';
                                 }
                                 return null;
                               },

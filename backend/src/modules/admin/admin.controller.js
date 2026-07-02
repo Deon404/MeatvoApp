@@ -84,7 +84,9 @@ const dashboard = asyncHandler(async (req, res) => {
          JOIN users u ON u.id = dp.user_id
          WHERE u.role = 'delivery'`
       ),
-      query("SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total FROM orders WHERE status = 'DELIVERED'"),
+      query(
+        "SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total FROM orders WHERE status::text = 'DELIVERED'"
+      ),
       query(
         `SELECT COUNT(*)::int AS total
          FROM orders
@@ -93,7 +95,7 @@ const dashboard = asyncHandler(async (req, res) => {
       query(
         `SELECT COALESCE(SUM(total_amount),0)::numeric(10,2) AS total
          FROM orders
-         WHERE status = 'DELIVERED' AND created_at >= CURRENT_DATE`
+         WHERE status::text = 'DELIVERED' AND created_at >= CURRENT_DATE`
       ),
       query(
         `SELECT COUNT(*)::int AS total
@@ -112,7 +114,7 @@ const dashboard = asyncHandler(async (req, res) => {
     activeRidersRows = results[6].rows;
 
     const liveResult = await query(
-      "SELECT COUNT(*)::int AS total FROM orders WHERE status NOT IN ('DELIVERED','CANCELLED','REFUNDED')"
+      "SELECT COUNT(*)::int AS total FROM orders WHERE status::text NOT IN ('DELIVERED','CANCELLED','REFUNDED')"
     );
     liveOrders = liveResult.rows;
   } catch (err) {
@@ -126,8 +128,8 @@ const dashboard = asyncHandler(async (req, res) => {
     `SELECT COUNT(*)::int AS total
      FROM orders o
      LEFT JOIN order_assignments oa
-       ON oa.order_id = o.id AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
-     WHERE o.status = 'PACKED'
+       ON oa.order_id = o.id AND oa.status::text IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+     WHERE o.status::text = 'PACKED'
        AND oa.id IS NULL`
   );
 
@@ -135,8 +137,8 @@ const dashboard = asyncHandler(async (req, res) => {
     `SELECT COUNT(*)::int AS total
      FROM orders o
      LEFT JOIN order_assignments oa
-       ON oa.order_id = o.id AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
-     WHERE o.status = 'PACKED'
+       ON oa.order_id = o.id AND oa.status::text IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+     WHERE o.status::text = 'PACKED'
        AND oa.id IS NULL
        AND o.packed_at IS NOT NULL
        AND o.packed_at <= NOW() - ($1::text || ' minutes')::interval`,
@@ -147,8 +149,8 @@ const dashboard = asyncHandler(async (req, res) => {
     `SELECT COUNT(*)::int AS total
      FROM orders o
      LEFT JOIN order_assignments oa
-       ON oa.order_id = o.id AND oa.status IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
-     WHERE o.status = 'PACKED'
+       ON oa.order_id = o.id AND oa.status::text IN ('ASSIGNED', 'ACCEPTED', 'PICKED')
+     WHERE o.status::text = 'PACKED'
        AND oa.id IS NULL
        AND o.packed_at IS NOT NULL
        AND o.packed_at <= NOW() - ($1::text || ' minutes')::interval`,
@@ -172,9 +174,9 @@ const dashboard = asyncHandler(async (req, res) => {
   const awaitingPaymentCount = await safeCount(
     `SELECT COUNT(*)::int AS total
      FROM orders
-     WHERE status = 'PLACED'
+     WHERE status::text = 'PLACED'
        AND UPPER(COALESCE(payment_mode, '')) = 'ONLINE'
-       AND UPPER(COALESCE(payment_status, 'PENDING')) NOT IN ('PAID', 'PAYMENT_VERIFIED')`
+       AND UPPER(COALESCE(payment_status::text, 'PENDING')) NOT IN ('PAID', 'PAYMENT_VERIFIED')`
   );
 
   return ok(
@@ -245,7 +247,7 @@ const customers = asyncHandler(async (req, res) => {
               (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = u.id) AS order_count,
               (SELECT COALESCE(SUM(o.total_amount),0)::numeric(10,2)
                FROM orders o
-               WHERE o.customer_id = u.id AND o.status = 'DELIVERED') AS lifetime_value,
+               WHERE o.customer_id = u.id AND o.status::text = 'DELIVERED') AS lifetime_value,
               dp.id AS partner_id,
               dp.approved,
               dp.is_online,
@@ -253,7 +255,7 @@ const customers = asyncHandler(async (req, res) => {
               (SELECT COUNT(*)::int
                FROM order_assignments oa
                JOIN orders o ON o.id = oa.order_id
-               WHERE oa.delivery_partner_id = dp.id AND o.status = 'DELIVERED') AS total_deliveries
+               WHERE oa.delivery_partner_id = dp.id AND o.status::text = 'DELIVERED') AS total_deliveries
        FROM users u
        LEFT JOIN delivery_partners dp ON dp.user_id = u.id
        WHERE u.role IN ('customer', 'delivery', 'admin')
@@ -268,7 +270,7 @@ const customers = asyncHandler(async (req, res) => {
               (SELECT COUNT(*)::int FROM orders o WHERE o.customer_id = u.id) AS order_count,
               (SELECT COALESCE(SUM(o.total_amount),0)::numeric(10,2)
                FROM orders o
-               WHERE o.customer_id = u.id AND o.status = 'DELIVERED') AS lifetime_value,
+               WHERE o.customer_id = u.id AND o.status::text = 'DELIVERED') AS lifetime_value,
               dp.id AS partner_id,
               dp.approved,
               dp.is_online,
@@ -342,7 +344,7 @@ const getUserDetail = asyncHandler(async (req, res) => {
             (SELECT COUNT(*)::int
              FROM order_assignments oa
              JOIN orders o ON o.id = oa.order_id
-             WHERE oa.delivery_partner_id = dp.id AND o.status = 'DELIVERED') AS total_deliveries
+             WHERE oa.delivery_partner_id = dp.id AND o.status::text = 'DELIVERED') AS total_deliveries
      FROM delivery_partners dp
      JOIN users u ON u.id = dp.user_id
      WHERE dp.user_id = $1`,
@@ -728,7 +730,7 @@ const listOrdersCompat = asyncHandler(async (req, res) => {
     conditions.push(`o.created_at < (${binder.ph(toDate)}::date + INTERVAL '1 day')`);
   }
   if (statusFilter) {
-    conditions.push(`o.status = ${binder.ph(String(statusFilter).trim().toUpperCase())}`);
+    conditions.push(`o.status::text = ${binder.ph(String(statusFilter).trim().toUpperCase())}`);
   }
 
   const whereClause = joinWhere(conditions);
@@ -1962,7 +1964,14 @@ const listBanners = asyncHandler(async (req, res) => {
     if (err?.code !== '42703') throw err;
     ({ rows } = await query('SELECT * FROM banners ORDER BY sort_order ASC, id DESC'));
   }
-  return ok(res, rows, 'Banners');
+  return ok(
+    res,
+    rows.map((row) => ({
+      ...row,
+      image_url: signImageField(req, row.image_url),
+    })),
+    'Banners'
+  );
 });
 
 const createBanner = asyncHandler(async (req, res) => {
@@ -2008,7 +2017,14 @@ const createBanner = asyncHandler(async (req, res) => {
     ));
   }
 
-  return ok(res, rows[0], 'Banner created');
+  return ok(
+    res,
+    {
+      ...rows[0],
+      image_url: signImageField(req, rows[0].image_url),
+    },
+    'Banner created'
+  );
 });
 
 const updateBanner = asyncHandler(async (req, res) => {
@@ -2049,7 +2065,14 @@ const updateBanner = asyncHandler(async (req, res) => {
   }
 
   if (!rows[0]) return fail(res, 404, 'Banner not found');
-  return ok(res, rows[0], 'Banner updated');
+  return ok(
+    res,
+    {
+      ...rows[0],
+      image_url: signImageField(req, rows[0].image_url),
+    },
+    'Banner updated'
+  );
 });
 
 const deleteBanner = asyncHandler(async (req, res) => {
@@ -2385,9 +2408,9 @@ const getAnalytics = asyncHandler(async (req, res) => {
     ),
     query(
       `SELECT COALESCE(u.name, u.phone) AS name,
-              COUNT(*) FILTER (WHERE o.status = 'DELIVERED')::int AS total_deliveries,
+              COUNT(*) FILTER (WHERE o.status::text = 'DELIVERED')::int AS total_deliveries,
               COALESCE(AVG(rv.rider_rating), 0)::numeric(3,2) AS avg_rating,
-              COUNT(*) FILTER (WHERE oa.status IN ('ACCEPTED', 'PICKED', 'DELIVERED'))::int AS accepted_count,
+              COUNT(*) FILTER (WHERE oa.status::text IN ('ACCEPTED', 'PICKED', 'DELIVERED'))::int AS accepted_count,
               COUNT(oa.id)::int AS assignment_count,
               dp.is_online
        FROM delivery_partners dp
@@ -2396,7 +2419,7 @@ const getAnalytics = asyncHandler(async (req, res) => {
        LEFT JOIN orders o ON o.id = oa.order_id AND o.created_at >= $1 AND o.created_at < $2
        LEFT JOIN order_reviews rv ON rv.order_id = o.id
        GROUP BY dp.id, u.name, u.phone, dp.is_online
-       HAVING COUNT(*) FILTER (WHERE o.status = 'DELIVERED') > 0
+       HAVING COUNT(*) FILTER (WHERE o.status::text = 'DELIVERED') > 0
        ORDER BY total_deliveries DESC
        LIMIT 10`,
       [start.toISOString(), end.toISOString()]

@@ -489,6 +489,12 @@ const ensureSchema = async () => {
       sql: `ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_released_at TIMESTAMPTZ`,
     },
     {
+      name: 'orders.customer_coupon_active_index',
+      sql: `CREATE INDEX IF NOT EXISTS idx_orders_customer_coupon_active
+            ON orders(customer_id, coupon_id)
+            WHERE coupon_id IS NOT NULL AND coupon_released_at IS NULL`,
+    },
+    {
       name: 'delivery_partners.updated_at',
       sql: `ALTER TABLE delivery_partners ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
     },
@@ -1003,4 +1009,3 @@ const ensureSchema = async () => {
 };
 
 module.exports = { ensureSchema };
-

@@ -871,9 +871,6 @@ class AdminService {
     }).toList();
   }
 
-  Future<List<Map<String, dynamic>>> getAllPartners() async =>
-      getAllRiders();
-
   // ── Users / Customers ─────────────────────────────────────────────────────
 
   Future<List<Map<String, dynamic>>> getUsers() async {
@@ -930,10 +927,6 @@ class AdminService {
       await ErrorTrackingService.captureException(e, stackTrace: st, tag: 'admin_get_all_users');
       throw Exception('Failed to get users: $e');
     }
-  }
-
-  Future<List<Map<String, dynamic>>> getAllCustomers() async {
-    return getAllUsers();
   }
 
   // ── Products ──────────────────────────────────────────────────────────────
@@ -1606,83 +1599,6 @@ class AdminService {
     throw Exception('Product not found');
   }
 
-  Future<List<Map<String, dynamic>>> getProductVariants(String productId) async {
-    try {
-      final product = await getAdminProductById(productId);
-      final variants = product['weight_variants'];
-      if (variants is! List || variants.isEmpty) return [];
-      return variants.map((weight) {
-        final grams = (weight as num?)?.toInt() ?? 500;
-        return {
-          'id': '${productId}_$grams',
-          'product_id': productId,
-          'weight': '${grams}g',
-          'weight_value': grams / 1000.0,
-          'stock': product['stock'],
-          'is_available': product['active'] != false,
-        };
-      }).toList();
-    } catch (_) {
-      return [];
-    }
-  }
-
-  Future<Map<String, dynamic>> createProductVariant({
-    required String productId,
-    required String weight,
-    required double weightValue,
-    int? stock,
-    bool isAvailable = true,
-  }) async {
-    final product = await getAdminProductById(productId);
-    final existing = (product['weight_variants'] as List?)?.cast<num>() ?? [];
-    final grams = (weightValue * 1000).round();
-    if (!existing.contains(grams)) {
-      existing.add(grams);
-      await updateProduct(productId, weightVariants: existing.map((e) => e.toInt()).toList());
-    }
-    return {
-      'id': '${productId}_$grams',
-      'product_id': productId,
-      'weight': weight,
-      'weight_value': weightValue,
-      'stock': stock ?? product['stock'],
-      'is_available': isAvailable,
-    };
-  }
-
-  Future<void> updateProductVariant(
-    String variantId, {
-    String? weight,
-    double? weightValue,
-    int? stock,
-    bool? isAvailable,
-  }) async {
-    final parts = variantId.split('_');
-    if (parts.length < 2) return;
-    final productId = parts.sublist(0, parts.length - 1).join('_');
-    if (stock != null) {
-      await updateProductStock(productId, stock);
-    }
-    if (isAvailable != null) {
-      await updateProduct(productId, isActive: isAvailable);
-    }
-  }
-
-  Future<void> deleteProductVariant(String variantId) async {
-    final parts = variantId.split('_');
-    if (parts.length < 2) return;
-    final productId = parts.sublist(0, parts.length - 1).join('_');
-    final grams = int.tryParse(parts.last);
-    if (grams == null) return;
-    final product = await getAdminProductById(productId);
-    final existing = (product['weight_variants'] as List?)?.cast<num>() ?? [];
-    final updated = existing.where((e) => e.toInt() != grams).toList();
-    await updateProduct(
-      productId,
-      weightVariants: updated.map((e) => e.toInt()).toList(),
-    );
-  }
 
   // ── User management (limited — uses customers endpoint) ───────────────────
 
